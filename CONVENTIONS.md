@@ -1,0 +1,206 @@
+# AdvisorDesk — Python Conventions (apps/api)
+
+**Scope:** Python only — the FastAPI backend at `apps/api/`. Frontend rules live in
+[`docs/FRONTEND-CONVENTIONS.md`](docs/FRONTEND-CONVENTIONS.md). The PRD
+([`advisordesk-prd.md`](advisordesk-prd.md)) wins on any conflict.
+
+These rules are distilled from the reference project (`reference_project/span-agent/`) and adapted
+to AdvisorDesk's PRD §3.1 layout. Two deliberate deviations from the reference are recorded in §6
+(Alembic) and in `docs/FRONTEND-CONVENTIONS.md` §2 (Material UI).
+
+---
+
+## 1. House style
+
+- Every shipped `.py` file begins with `from __future__ import annotations`.
+- Full type annotations on all public functions, methods, and module-level assignments. Private
+  `_`-prefixed helpers may omit them when obvious.
+- Docstring on every public symbol: one-sentence summary, blank line, elaboration;
+  `Args:`/`Returns:`/`Raises:` for non-trivial signatures. Docstrings explain **why**, and cite the
+  PRD section that mandates the behavior (e.g. "PRD §4.1: slugs are never reused").
+- Prefer `collections.abc` types (`Callable`, `Sequence`, `Mapping`, `Iterator`) over concrete
+  types in annotations.
+- No bare `except Exception` and no `raise Exception(...)` — use the typed family (§4).
+
+## 2. Layout & layering (import-linter-enforced)
+
+PRD §3.1 fixes the package layout:
+
+```
+apps/api/app/
+  main.py        # wiring ONLY (engine, session factory, create_app) — nothing imports main
+  factory.py     # create_app()
+  config.py      # pydantic-settings Settings
+  db.py          # engine/session-factory constructors
+  routes/        # FastAPI routers + register_error_handlers + SSE utilities
+  services/      # business logic — the ONLY layer that touches the ORM (routes AND mcp use it)
+  mcp/           # MCP server + tool definitions (wraps services; PRD §3)
+  rag/           # chunking, embeddings, pipeline, retrieval, synthesis
+  agent/         # agent loop calling MCP tools in-process
+  auth/          # Google OAuth, session cookies, require_admin
+  models/        # SQLAlchemy ORM models + Pydantic DTO schemas (models/schemas/)
+```
+
+Dependency direction (each layer may import the ones after it, never before):
+
+| Layer | May import |
+|---|---|
+| `routes/`, `mcp/`, `agent/` | `services/`, `rag/`, `auth/`, `models/`, `config` |
+| `rag/`, `auth/` | `services/`, `models/`, `config` |
+| `services/` | `models/`, `config` |
+| `models/` | (stdlib + third-party only) |
+
+Hard rules, declared as import-linter contracts in `apps/api/pyproject.toml` and enforced by
+`tests/test_import_contracts.py`:
+
+1. `app.models` imports no other `app.*` package (pure leaf).
+2. `app.services` imports only `app.models` and `app.config` from `app.*`.
+3. `app.routes` and `app.mcp` never import each other (sibling independence — they share
+   `app.services`, which is the PRD §3 "no duplicated business logic" rule made structural).
+4. Nothing imports `app.main`.
+
+**Contract-verification ritual** (run once when adding a contract): inject a deliberately violating
+import, confirm `lint-imports` exits 1, revert, confirm exit 0. A contract that has never failed is
+untested.
+
+## 3. Services
+
+- Plain functions, **session-first**: `def create_draft(session: Session, *, title: str, ...)`.
+  Never hold a module-level session or engine.
+- Services `flush()` to assign ids and surface constraint errors eagerly, but **never `commit()` or
+  `rollback()`**. The transaction boundary belongs to the caller — in HTTP requests, the
+  `get_session` dependency commits on success and rolls back on error; tests own their own
+  transactions.
+- The acting admin is passed explicitly (`actor_id: uuid.UUID | None`) and stamped into
+  `author_id`/`updated_by` per PRD §4.1 — never read from any global.
+- Soft-delete filtering is defined **once**: `app/services/queries.py::active_select(model)`
+  returns a `Select` pre-filtered on `is_deleted == False`. Every read of a soft-deletable model
+  goes through it. An ad-hoc `.where(X.is_deleted == False)` elsewhere is a review-blocking
+  defect — a missed filter is a data leak (PRD §4.1), and a test pins the helper's behavior.
+- `updated_at` is maintained by the service layer on every write (PRD §4.1). No DB triggers.
+
+## 4. Errors
+
+- Typed exception family in `app/services/errors.py` — e.g. `NotFoundError`, `ConflictError`,
+  `AuthRequiredError`, `RateLimitedError`, `EmbeddingFailedError`. Services raise these; they never
+  construct HTTP responses.
+- `app/routes/errors.py::register_error_handlers(app)` maps each exception type to a status code
+  and the PRD §9 envelope `{"error": {"code", "message"}}` exactly once. The same envelope is used
+  inside SSE `error` events.
+- **Routes contain no `try/except`.** Rollback happens in the session dependency; mapping happens
+  in the registered handlers.
+
+## 5. App construction
+
+- `app/factory.py::create_app(session_factory=None, settings=None) -> FastAPI` — no module-level
+  globals; everything request-scoped lives on `app.state` and is read back through dependencies
+  (`get_session`, `get_settings`).
+- `create_app()` must succeed **with no database and no env vars** — this is what makes the
+  OpenAPI baseline export (§8) and DB-less tests possible.
+- `app/main.py` is the only wiring point: configure logging, load settings, build engine + session
+  factory, call `create_app(...)`, expose `app`. Nothing imports `main`.
+- Every route declares an explicit, stable, unique `operation_id`. The frontends'
+  `openapi-typescript` codegen keys on them; renaming one is a breaking wire change (§8 gate).
+- All routes live under `/api/v1` (PRD §5). Health endpoint: `GET /api/v1/healthz` — no auth, no
+  DB touch, so container healthchecks can probe the bare process.
+
+## 6. SQLAlchemy & migrations
+
+- SQLAlchemy **2.0 style only**: `DeclarativeBase`, `Mapped[T]`, `mapped_column()`. The 1.x
+  `Column()` style is banned in new code.
+- Shared column helpers in `app/models/base.py`: `uuid_pk()` (server-side `gen_random_uuid()`),
+  `TimestampMixin` (`created_at`, and `updated_at` on mutable tables), `SoftDeleteMixin`
+  (`is_deleted`, PRD §4.1 scope: users/content/tags only).
+- **Alembic is the only DDL path.** No `create_all()` at startup, ever. This deviates from the
+  reference project deliberately: its README documents a production `500 UndefinedColumn` incident
+  caused by startup-DDL drift ("green tests can hide a broken prod"). Migrations run explicitly
+  (`uv run alembic upgrade head`); autogenerate output is always hand-reviewed before commit.
+- Table/column shapes come verbatim from PRD §4; the §4.1 conventions (uuid PKs, timestamptz,
+  is_deleted scope, FK indexes) are normative.
+
+## 7. Config & secrets
+
+- `app/config.py::Settings(BaseSettings)` (pydantic-settings) is the single config surface — the
+  full PRD §9 env roster with PRD defaults (`SIMILARITY_THRESHOLD=0.35`, `RATE_LIMIT_PER_MIN=10`,
+  `RATE_LIMIT_PER_DAY=50`, `SESSION_CREATE_PER_DAY=20`, `MCP_HTTP_ENABLED=false`, ...).
+- Secrets only via env. Tracked file: `.env.example` (every var, commented). Real `.env` files are
+  gitignored. **Never commit secrets.**
+
+## 8. Wire-surface baselines
+
+- `apps/api/openapi.json` — dumped by `apps/api/scripts/export_openapi.py` from a DB-less
+  `create_app()`; committed.
+- `apps/api/mcp-tools.json` — dumped by `apps/api/scripts/export_mcp_tools.py` (tool names +
+  JSON schemas); committed once the MCP server exists.
+- Both are written deterministically (`json.dumps(..., indent=2, sort_keys=True)`, `\n` newlines)
+  so `git diff --exit-code` over them proves the wire surface did not move.
+- **Gate:** any commit that changes a route, DTO, or tool schema regenerates the affected baseline
+  (and the frontends' codegen, for OpenAPI) **in the same commit**.
+
+## 9. Tooling
+
+Package manager: **uv**; single project at `apps/api` (`requires-python = ">=3.11"`). Runtime
+dependencies = exactly what shipped code imports; dev tools (`pytest`, `ruff`, `mypy`,
+`import-linter`, `httpx`) live in the dev dependency group, never in runtime deps.
+
+Ruff: `line-length = 100`, `select = ["E", "F", "I", "UP", "B"]`, plus the FastAPI DI exemption
+(the configuration FastAPI's own docs recommend):
+
+```toml
+[tool.ruff.lint.flake8-bugbear]
+extend-immutable-calls = ["fastapi.Depends", "fastapi.Query", "fastapi.Header",
+                          "fastapi.Path", "fastapi.Body"]
+```
+
+Mypy: `strict = true` over an explicit `files = ["app"]` list. A package is either listed
+(strict-clean) or not present — never partially typed. Third-party gaps get a targeted
+`ignore_missing_imports` override with a comment naming the typed wrapper that contains them.
+
+The gate commands (module form, run from `apps/api/`):
+
+```sh
+uv run ruff check .
+uv run ruff format --check .
+uv run mypy
+uv run lint-imports
+uv run pytest -q
+```
+
+All five must be clean before every commit that touches `apps/api`.
+
+## 10. Tests
+
+- Layout: `apps/api/tests/`, **no `__init__.py`** anywhere under tests (conftest scoping), unique
+  test-file basenames across the whole tree.
+- DB tests use a **throwaway schema per test**: the fixture creates `advisordesk_test_<hex>`, runs
+  `alembic upgrade head` into it through the production engine factory, yields, drops it. When
+  `TEST_DATABASE_URL` is unset, DB-fixture tests are skipped **by fixture name** in a collection
+  hook — and a skip is recorded, never counted as a pass. DB tests must actually run when the env
+  var is present; a silently-skipped gate is a gap.
+- Gates-as-tests: `tests/test_lint_clean.py` (subprocess ruff + mypy, no path args so it stays
+  aligned with the canonical config) and `tests/test_import_contracts.py` (subprocess
+  `lint-imports`) make CI = `pytest`.
+- Test what the PRD names first (§9's explicit list: chunking, lifecycle + rollback, similarity
+  pin, soft-delete visibility, tag reactivation, slug permanence, MCP happy+failure, smoke), then
+  endpoint status codes.
+- External seams are injectable, never monkeypatched at a distance: `session_factory` into
+  `create_app`, `Embedder`/LLM protocols into rag modules, clock into the rate limiter, OAuth
+  client into auth.
+
+## 11. Docker & local dev
+
+- Per-service images: multi-stage uv build for the API (builder installs into a venv; slim runtime
+  copies the venv, runs as a non-root user, stdlib-only `HEALTHCHECK` against `/api/v1/healthz`).
+- `infra/docker-compose.yml` publishes ports on loopback only. The optional Postgres
+  (`pgvector/pgvector:pg16`) sits behind `--profile local-db` (PRD §9); Supabase stays the default
+  and deployed target.
+- Migrations are invoked explicitly (`docker compose run --rm api uv run alembic upgrade head`),
+  never at container startup.
+
+## 12. Commits
+
+- Conventional Commits with a scope: `feat(api): ...`, `fix(admin): ...`, `docs(plans): ...`,
+  `chore(infra): ...`; scopes: `api` / `admin` / `client` / `infra` / `seed` / `plans` / `docs`.
+- Reference the task id in a trailing parenthetical: `feat(api): content CRUD services (phase-2
+  task-02)`.
+- **Path-scoped `git add` only** — never `git add .` / `-A`. Never stage `.env` or secrets.

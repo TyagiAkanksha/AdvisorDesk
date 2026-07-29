@@ -8,6 +8,9 @@ dependencies = [
     "psycopg[binary]",
     "alembic",
     "pgvector",
+    "fastapi",
+    "uvicorn",
+    "pydantic-settings",
 ]
 
 [dependency-groups]
@@ -61,6 +64,8 @@ forbidden_modules = [
     "app.auth",
     "app.main",
     "app.db",
+    "app.config",
+    "app.factory",
 ]
 
 [[tool.importlinter.contracts]]
@@ -75,6 +80,7 @@ forbidden_modules = [
     "app.auth",
     "app.main",
     "app.db",
+    "app.factory",
 ]
 
 [[tool.importlinter.contracts]]
@@ -83,7 +89,7 @@ type = "independence"
 modules = ["app.routes", "app.mcp"]
 
 [[tool.importlinter.contracts]]
-name = "nothing imports app.main"
+name = "nothing imports app.main; only app.main imports app.factory"
 type = "forbidden"
 source_modules = [
     "app.routes",
@@ -93,8 +99,9 @@ source_modules = [
     "app.agent",
     "app.auth",
     "app.models",
+    "app.config",
 ]
-forbidden_modules = ["app.main"]
+forbidden_modules = ["app.main", "app.factory"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

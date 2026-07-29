@@ -42,9 +42,19 @@ coverage/
 **/coverage/
 *.tsbuildinfo
 
-# secrets — never sent to the build daemon in the first place
-.env
-*.env
+# secrets — **/-anchored (verified live) so nested app envs (apps/admin/.env,
+# apps/admin/.env.local, etc.) are excluded too, not just the build-context
+# root: the previous un-anchored `.env` / `*.env` pair only matched at the
+# context root, so a `docker build` from repo root would COPY nested env
+# files straight into web images. .dockerignore patterns are evaluated
+# client-side before the context tar is sent to the daemon, so a correctly
+# anchored pattern really does keep matches off the wire. The negation below
+# is deliberately root-anchored (no `**/` prefix) — verified live that Docker
+# honors that as "only the context-root .env.example", which is exactly the
+# one tracked file this needs to re-allow; a `!**/.env.example` form was also
+# tried and rejected because it reaches inside otherwise-excluded directories
+# (e.g. it resurrected reference_project/**/.env.example files).
+**/.env*
 !.env.example
 
 # docs — not needed inside any image

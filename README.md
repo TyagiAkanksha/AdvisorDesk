@@ -33,13 +33,13 @@ docker compose -f infra/docker-compose.yml up -d --build
 docker compose -f infra/docker-compose.yml run --rm api uv run alembic upgrade head
 ```
 
-**Local Postgres (fully offline dev):** leave `.env`'s `DATABASE_URL` unset (or export it in the
-shell, which wins over `.env` — see the compose file's `${DATABASE_URL:-}` substitution) and add
-the `local-db` profile, which starts a `pgvector/pgvector:pg16` container as the `db` service:
+**Local Postgres (fully offline dev), canonical:** set `DATABASE_URL` in `.env` to
+`postgresql://postgres:postgres@db:5432/postgres` — same shape as the Supabase path above, just
+with the `local-db` profile added, which starts a `pgvector/pgvector:pg16` container as the `db`
+service:
 
 ```sh
-DATABASE_URL=postgresql://postgres:postgres@db:5432/postgres \
-  docker compose -f infra/docker-compose.yml --profile local-db up -d --build
+docker compose -f infra/docker-compose.yml --profile local-db up -d --build
 docker compose -f infra/docker-compose.yml run --rm api uv run alembic upgrade head
 ```
 
@@ -47,9 +47,26 @@ Note the `db` service name (not `localhost`) — containers reach each other ove
 network, not the host loopback. `db`'s data persists in the named volume `advisordesk_local_db`
 across restarts; `docker compose ... --profile local-db down -v` also removes it.
 
-Either way, migrations are **never** run at container startup (CONVENTIONS.md §6) — the command
-above (`uv run alembic upgrade head`) is the only DDL path, and is the one command reused verbatim
-by later phases' seed/deploy tasks.
+**Local Postgres, shell-export alternative:** if you'd rather not edit `.env` (e.g. it's already
+pointed at Supabase and you only want to swap databases for one session), export `DATABASE_URL` in
+the shell instead of setting it in `.env`. `docker compose ... up` picks up a shell-exported value
+correctly (it arrives under a side-channel name, `DATABASE_URL_SHELL_OVERRIDE`, that
+`infra/Dockerfile.api`'s `CMD` promotes to `DATABASE_URL` at container start — see the compose
+file's `environment:` comment for why it's wired that way). The migration command is different,
+though: `docker compose run <cmd>` *replaces* the image's `CMD` outright, so that promotion logic
+never runs for it — a bare `run --rm api uv run alembic upgrade head` here would resolve an empty
+`DATABASE_URL` and fail. Pass `-e DATABASE_URL="$DATABASE_URL"` on the `run` command itself instead;
+a CLI `-e` beats `env_file` for that one container (verified live):
+
+```sh
+export DATABASE_URL=postgresql://postgres:postgres@db:5432/postgres
+docker compose -f infra/docker-compose.yml --profile local-db up -d --build
+docker compose -f infra/docker-compose.yml run --rm -e DATABASE_URL="$DATABASE_URL" api uv run alembic upgrade head
+```
+
+Either way, migrations are **never** run at container startup (CONVENTIONS.md §6) — the
+`uv run alembic upgrade head` command above is the only DDL path, and is the one command reused
+verbatim by later phases' seed/deploy tasks.
 
 ### 3. Verify
 
@@ -156,3 +173,13 @@ pnpm -C apps/client test
   temporary, un-committed compose override applying `network_mode: host` to `api` only, purely
   for this check; it is not part of `infra/docker-compose.yml`, and real Supabase usage needs no
   such trick since it's reachable over the public internet from a normally-bridged container.
+- **Frontend containers never see backend secrets.** `admin`/`client` in `infra/docker-compose.yml`
+  deliberately omit `env_file: ../.env` — only `api` has it. `.env` carries backend secrets
+  (`OPENAI_API_KEY`, `SESSION_SECRET`, `GOOGLE_CLIENT_SECRET`, `DATABASE_URL`, ...); none of that
+  belongs inside a browser-served Next.js image. The frontend services get only the one value they
+  actually need, `NEXT_PUBLIC_API_URL`, passed as an explicit build `arg` instead.
+- **Runtime Python version.** `Dockerfile.api`'s runtime stage runs on `python:3.12-slim-bookworm`.
+  `apps/api/pyproject.toml` sets `requires-python = ">=3.11"` as a floor, not a pin; `3.12` is what
+  the builder stage (`ghcr.io/astral-sh/uv:python3.12-bookworm-slim`) and local dev already use, so
+  the runtime image stays version-matched to dev rather than drifting to whatever "latest 3.11+"
+  a generic base image resolves to later.

@@ -82,7 +82,15 @@ def tmp_engine() -> Iterator[Engine]:
         # DATABASE_URL/TEST_DATABASE_URL — if a developer has DATABASE_URL
         # exported too, re-resolution would connect Alembic to the wrong
         # database with a version_table_schema that only exists on this one.
-        alembic_cfg.set_main_option("sqlalchemy.url", database_url)
+        #
+        # `Config` is configparser-backed, which treats a bare `%` as the
+        # start of an interpolation token (`%(name)s`) — a percent-encoded
+        # password (routine for Supabase, the default target, e.g. `%40` for
+        # `@`) would otherwise raise on `set_main_option`/`get_main_option`.
+        # Doubling it to `%%` is configparser's own escape sequence;
+        # `get_main_option` (called internally when Alembic reads the URL
+        # back) de-interpolates it back to a single `%`.
+        alembic_cfg.set_main_option("sqlalchemy.url", database_url.replace("%", "%%"))
         previous_migrate_schema = os.environ.get("MIGRATE_SCHEMA")
         os.environ["MIGRATE_SCHEMA"] = schema
         try:

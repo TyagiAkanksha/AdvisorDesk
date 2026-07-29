@@ -28,7 +28,13 @@ config = context.config
 # Interpret the config file for Python logging.
 # This line sets up loggers basically.
 if config.config_file_name is not None:
-    fileConfig(config.config_file_name)
+    # `disable_existing_loggers=False` — the stdlib default (`True`) silently
+    # disables every logger that existed before this call, including any a
+    # caller (e.g. `pytest`, or a future embedding of Alembic inside the app
+    # process) already configured. Alembic only owns its own
+    # root/sqlalchemy/alembic loggers here (alembic.ini's `[loggers]`
+    # section); it has no business clobbering anyone else's.
+    fileConfig(config.config_file_name, disable_existing_loggers=False)
 
 # `app.models` (imported above) registers every PRD §4 table on this metadata.
 target_metadata = Base.metadata

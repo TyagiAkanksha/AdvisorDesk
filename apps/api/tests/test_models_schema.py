@@ -10,14 +10,17 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
+from typing import Any
 
 import pytest
 import sqlalchemy as sa
+from alembic.autogenerate import compare_metadata
+from alembic.runtime.migration import MigrationContext
 from sqlalchemy import Engine
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.models import Chunk, Content
+from app.models import Base, Chunk, Content
 from app.services.queries import active_select
 
 
@@ -116,3 +119,41 @@ def test_inspector_sees_hnsw_and_fk_indexes(tmp_engine: Engine) -> None:
         ).scalar_one()
     assert "USING hnsw" in index_def
     assert "vector_cosine_ops" in index_def
+
+
+def _ignore_alembic_version_table(
+    object_: Any, name: str | None, type_: str, reflected: bool, compare_to: Any
+) -> bool:
+    """`alembic.autogenerate`'s `include_object` filter: exclude Alembic's own bookkeeping table.
+
+    `alembic_version` is created by Alembic itself and has no ORM model —
+    without this filter `compare_metadata` always reports it as a
+    `remove_table` diff, which would make the parity gate below permanently
+    (and misleadingly) red.
+    """
+    return not (type_ == "table" and name == "alembic_version")
+
+
+def test_orm_metadata_matches_migration_head(tmp_engine: Engine) -> None:
+    """ORM<->migration parity gate: `Base.metadata` must match the head-migrated schema exactly.
+
+    `tmp_engine` is already migrated to head (CONVENTIONS.md §10 fixture).
+    `alembic.autogenerate.compare_metadata` diffs the live schema against
+    `Base.metadata`; `compare_server_default=True` also pins server defaults
+    (e.g. `SoftDeleteMixin.is_deleted`'s `server_default=text("false")`) —
+    without it, a model's default drifting from its migration's would go
+    undetected. This must fail whenever a model is edited without a
+    corresponding Alembic migration (verified manually — see the phase-1
+    final-review-fixes report for the prove-it-fails/revert transcript).
+    """
+    with tmp_engine.connect() as conn:
+        migration_context = MigrationContext.configure(
+            conn,
+            opts={
+                "compare_server_default": True,
+                "include_object": _ignore_alembic_version_table,
+            },
+        )
+        diffs = compare_metadata(migration_context, Base.metadata)
+
+    assert diffs == []

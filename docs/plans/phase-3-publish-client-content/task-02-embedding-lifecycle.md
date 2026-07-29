@@ -48,6 +48,12 @@ behavior for free.
   - Factory wiring: `create_app(..., chunk_pipeline=None)` now defaults to Noop only in tests;
     `main.py` passes `EmbeddingChunkPipeline(OpenAIEmbedder(settings))`.
 
+- **Embedding column typing (phase-1 final-review note):** `Chunk.embedding` is annotated
+  `list[float] | None` but pgvector returns a numpy `ndarray` at runtime. This task is the first
+  real writer/reader: decide the boundary here — either normalize to `list[float]` at the service
+  boundary (`.tolist()`) or re-annotate as `Sequence[float]`/`Any` with a comment — and pin the
+  chosen contract with a test, so retrieval (phase-4 task-01) inherits a truthful type.
+
 ## Steps (TDD)
 
 - [ ] **Step 1: Failing lifecycle tests** (`test_lifecycle.py`; DB fixture + `FakeEmbedder`

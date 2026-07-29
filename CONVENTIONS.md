@@ -48,7 +48,10 @@ Dependency direction (each layer may import the ones after it, never before):
 | `routes/`, `mcp/`, `agent/` | `services/`, `rag/`, `auth/`, `models/`, `config` |
 | `rag/`, `auth/` | `services/`, `models/`, `config` |
 | `services/` | `models/`, `config` |
+| `db` | `config` at most (engine/session factories take the URL as a parameter) |
 | `models/` | (stdlib + third-party only) |
+
+Only `main.py`, Alembic's `env.py`, and tests import `db`; it is wiring, not a request-path layer.
 
 Hard rules, declared as import-linter contracts in `apps/api/pyproject.toml` and enforced by
 `tests/test_import_contracts.py`:

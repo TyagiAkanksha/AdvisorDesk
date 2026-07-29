@@ -11,8 +11,15 @@
 #                         with DATABASE_URL=postgresql://postgres:postgres@db:5432/postgres
 #                         (service name `db`, not localhost — containers
 #                         reach each other over the compose network). Set it
-#                         in .env, or export it in the shell — shell env
-#                         wins over env_file (see `${DATABASE_URL:-}` below).
+#                         in .env, or export it in the shell — an exported
+#                         shell value wins over env_file. See the `api`
+#                         service's `environment:` comment below for exactly
+#                         how that's wired (neither the naive
+#                         `DATABASE_URL: ${DATABASE_URL:-}` form nor the
+#                         bare `- DATABASE_URL` pass-through form actually
+#                         achieves this on this Compose version — both
+#                         silently blank/drop the root .env's value instead
+#                         of falling through to it).
 #
 # Migrations are never run at container startup (CONVENTIONS.md §6) — run
 # them explicitly, against whichever DATABASE_URL is active:
@@ -29,11 +36,27 @@ services:
     image: advisordesk-api
     env_file: ../.env
     environment:
-      # Shell env overrides/feeds this — `${DATABASE_URL:-}` lets
-      # `docker compose config` resolve even when neither .env nor the
-      # shell sets it (api then fails its own startup check instead of a
-      # compose-level error — see app/main.py).
-      DATABASE_URL: ${DATABASE_URL:-}
+      # DATABASE_URL is deliberately NOT a key in this block. Verified
+      # three independent ways (`docker compose config`, `docker compose
+      # run ... env`, `docker inspect .Config.Env`) that on this Compose
+      # version (v5.1.0), ANY entry under `environment:` for a key also
+      # present in `env_file:` overrides/removes it — including the bare
+      # pass-through form `- DATABASE_URL` (no value): when the shell
+      # doesn't have DATABASE_URL set, that form resolves to a real
+      # `DATABASE_URL: null` container-env entry, which Docker treats as
+      # "unset this," not "defer to env_file." So the originally proposed
+      # `- DATABASE_URL` fix has the exact same masking bug as the mapping
+      # form it replaced — just "absent" instead of "empty" (found in
+      # review; re-confirmed empirically, see README's Implementation
+      # notes / the task-05 report's "Fix round 1"). A bare `env_file:
+      # ../.env` with NO colliding `environment:` key passes the root
+      # .env's DATABASE_URL through untouched (verified in isolation) —
+      # that alone is correct for the documented Supabase-default path. A
+      # shell-exported override must reach the container under a
+      # DIFFERENT key (reusing DATABASE_URL re-triggers the masking above);
+      # infra/Dockerfile.api's CMD promotes it to DATABASE_URL at container
+      # start only when actually non-empty (see that file's comment).
+      DATABASE_URL_SHELL_OVERRIDE: ${DATABASE_URL:-}
     ports:
       - "127.0.0.1:8000:8000"
     depends_on:

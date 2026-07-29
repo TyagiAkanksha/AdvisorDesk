@@ -54,8 +54,21 @@ EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
   CMD ["python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/v1/healthz', timeout=4)"]
 
-# --proxy-headers: trust X-Forwarded-For/Proto from a fronting reverse proxy
-# (phase-6 deployment) so request.client.host reflects the real client IP,
-# not the proxy's container IP. Safe by default here: infra/docker-compose.yml
-# never publishes this port beyond 127.0.0.1 / the compose network.
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--proxy-headers"]
+# --proxy-headers --forwarded-allow-ips "*": trust X-Forwarded-For/Proto so
+# request.client.host reflects the real client IP, not a proxy's container
+# IP. `--proxy-headers` alone would trust those headers from ANY direct
+# peer, which is too broad; pairing it with `--forwarded-allow-ips "*"` here
+# is safe only because this port is never published beyond loopback in
+# infra/docker-compose.yml (compose network / 127.0.0.1) — in phase-6
+# deployment the only direct peer is the managed platform's own proxy, so
+# "*" still means "the proxy", not "the internet". Revisit if that changes.
+#
+# DATABASE_URL_SHELL_OVERRIDE -> DATABASE_URL promotion: infra/docker-compose.yml
+# cannot let a shell-exported DATABASE_URL override env_file's DATABASE_URL
+# without ALSO blanking it whenever the shell doesn't have one set (see that
+# file's `environment:` comment for the verified reasoning) — so a shell
+# override arrives here under a different name, and this promotes it to
+# DATABASE_URL only when it's actually non-empty; otherwise env_file's value
+# (the root .env) is left untouched. `exec` hands PID 1 off to uvicorn so
+# signal handling (SIGTERM on `docker stop`) still reaches it directly.
+CMD ["sh", "-c", "if [ -n \"$DATABASE_URL_SHELL_OVERRIDE\" ]; then export DATABASE_URL=\"$DATABASE_URL_SHELL_OVERRIDE\"; fi; exec uvicorn app.main:app --host 0.0.0.0 --port 8000 --proxy-headers --forwarded-allow-ips '*'"]

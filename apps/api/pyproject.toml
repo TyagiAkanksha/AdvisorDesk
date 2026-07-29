@@ -105,3 +105,11 @@ forbidden_modules = ["app.main", "app.factory"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+filterwarnings = [
+    # starlette 1.x's TestClient nags to install `httpx2` in place of `httpx`
+    # on every use. `httpx` is the CONVENTIONS.md §9-mandated dev
+    # dependency; adopting httpx2 is a conventions-level change, deferred
+    # (tracked in SUGGESTIONS.md) — silence this one specific warning rather
+    # than leaving it as recurring test-output noise.
+    'ignore:Using `httpx` with `starlette\.testclient` is deprecated:starlette.exceptions.StarletteDeprecationWarning',
+]

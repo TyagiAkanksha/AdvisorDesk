@@ -3,7 +3,12 @@ name = "advisordesk-api"
 version = "0.1.0"
 description = "AdvisorDesk FastAPI backend"
 requires-python = ">=3.11"
-dependencies = []
+dependencies = [
+    "sqlalchemy>=2",
+    "psycopg[binary]",
+    "alembic",
+    "pgvector",
+]
 
 [dependency-groups]
 dev = [
@@ -55,6 +60,7 @@ forbidden_modules = [
     "app.agent",
     "app.auth",
     "app.main",
+    "app.db",
 ]
 
 [[tool.importlinter.contracts]]
@@ -68,6 +74,7 @@ forbidden_modules = [
     "app.agent",
     "app.auth",
     "app.main",
+    "app.db",
 ]
 
 [[tool.importlinter.contracts]]

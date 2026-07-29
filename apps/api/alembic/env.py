@@ -1,9 +1,11 @@
 """Alembic environment: targets `Base.metadata`, honors the test-schema convention.
 
 CONVENTIONS.md §6: Alembic is the only DDL path — no `create_all()` at
-startup. The database URL comes from `DATABASE_URL` (production) or
-`TEST_DATABASE_URL` (tests), falling back to `alembic.ini`'s
-`sqlalchemy.url` only if neither is set. When `MIGRATE_SCHEMA` is set (the
+startup. The database URL comes from `alembic.ini`'s `sqlalchemy.url` FIRST
+(the test fixtures pin it explicitly via `set_main_option`, so a
+`DATABASE_URL` a developer happens to have exported can never shadow the
+URL a caller pinned on purpose), falling back to `DATABASE_URL` then
+`TEST_DATABASE_URL` env vars when the ini has none set. When `MIGRATE_SCHEMA` is set (the
 test fixtures, CONVENTIONS.md §10), migrations run against that schema via
 `app.db.make_engine`'s search_path mechanism, and Alembic's own
 `alembic_version` bookkeeping table is created in that same schema so
@@ -33,11 +35,17 @@ target_metadata = Base.metadata
 
 
 def _database_url() -> str:
-    """Resolve the database URL: `DATABASE_URL`, then `TEST_DATABASE_URL`, then the ini fallback."""
+    """Resolve the database URL: `alembic.ini`'s `sqlalchemy.url` FIRST, then env vars.
+
+    The ini value wins over `DATABASE_URL`/`TEST_DATABASE_URL` so a caller
+    that pins the URL explicitly (the test fixtures, via
+    `Config.set_main_option`) can never be silently overridden by whatever a
+    developer happens to have exported in their shell.
+    """
     return (
-        os.environ.get("DATABASE_URL")
+        config.get_main_option("sqlalchemy.url")
+        or os.environ.get("DATABASE_URL")
         or os.environ.get("TEST_DATABASE_URL")
-        or config.get_main_option("sqlalchemy.url")
         or ""
     )
 

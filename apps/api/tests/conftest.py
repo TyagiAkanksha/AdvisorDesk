@@ -72,23 +72,33 @@ def tmp_engine() -> Iterator[Engine]:
         conn.execute(sa.text(f'CREATE SCHEMA "{schema}"'))
     admin_engine.dispose()
 
-    alembic_cfg = Config(str(_ALEMBIC_INI))
-    alembic_cfg.set_main_option("script_location", str(_ALEMBIC_SCRIPT_LOCATION))
-    previous_migrate_schema = os.environ.get("MIGRATE_SCHEMA")
-    os.environ["MIGRATE_SCHEMA"] = schema
+    # Everything from here on runs against a schema that now exists, so
+    # teardown (schema drop) must be unconditional — a migration failure
+    # must not leak the schema.
     try:
-        upgrade(alembic_cfg, "head")
-    finally:
-        if previous_migrate_schema is None:
-            os.environ.pop("MIGRATE_SCHEMA", None)
-        else:
-            os.environ["MIGRATE_SCHEMA"] = previous_migrate_schema
+        alembic_cfg = Config(str(_ALEMBIC_INI))
+        alembic_cfg.set_main_option("script_location", str(_ALEMBIC_SCRIPT_LOCATION))
+        # Pin the URL explicitly rather than letting env.py re-resolve it from
+        # DATABASE_URL/TEST_DATABASE_URL — if a developer has DATABASE_URL
+        # exported too, re-resolution would connect Alembic to the wrong
+        # database with a version_table_schema that only exists on this one.
+        alembic_cfg.set_main_option("sqlalchemy.url", database_url)
+        previous_migrate_schema = os.environ.get("MIGRATE_SCHEMA")
+        os.environ["MIGRATE_SCHEMA"] = schema
+        try:
+            upgrade(alembic_cfg, "head")
+        finally:
+            if previous_migrate_schema is None:
+                os.environ.pop("MIGRATE_SCHEMA", None)
+            else:
+                os.environ["MIGRATE_SCHEMA"] = previous_migrate_schema
 
-    engine = make_engine(database_url, schema=schema)
-    try:
-        yield engine
+        engine = make_engine(database_url, schema=schema)
+        try:
+            yield engine
+        finally:
+            engine.dispose()
     finally:
-        engine.dispose()
         admin_engine = make_engine(database_url)
         with admin_engine.begin() as conn:
             conn.execute(sa.text(f'DROP SCHEMA "{schema}" CASCADE'))

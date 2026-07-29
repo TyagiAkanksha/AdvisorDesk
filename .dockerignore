@@ -1,0 +1,52 @@
+# Docker build-context exclusions (phase-1 task-05).
+#
+# Both infra/Dockerfile.api and infra/Dockerfile.web build with the REPO
+# ROOT as context (`build: {context: .., dockerfile: infra/Dockerfile.*}`
+# in infra/docker-compose.yml) — without this file, every `docker build`
+# would tar up the multi-gigabyte reference_project/ vendor tree, every
+# node_modules/.venv, and language caches before the daemon even starts
+# resolving layers. None of these are COPYed by either Dockerfile, so
+# excluding them changes build context size only, not image contents.
+
+# vendored reference project — never part of any image
+reference_project/
+
+# VCS / editor / local tool state
+.git/
+.claude/
+.superpowers/
+
+# node / pnpm
+node_modules/
+**/node_modules/
+.next/
+**/.next/
+
+# python
+.venv/
+**/.venv/
+__pycache__/
+**/__pycache__/
+*.pyc
+.pytest_cache/
+**/.pytest_cache/
+.mypy_cache/
+**/.mypy_cache/
+.ruff_cache/
+**/.ruff_cache/
+.import_linter_cache/
+**/.import_linter_cache/
+
+# coverage / build artifacts
+coverage/
+**/coverage/
+*.tsbuildinfo
+
+# secrets — never sent to the build daemon in the first place
+.env
+*.env
+!.env.example
+
+# docs — not needed inside any image
+docs/
+*.md

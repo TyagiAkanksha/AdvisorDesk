@@ -7,7 +7,152 @@ MCP tool surface for the agent loop.
 
 ## Dev quickstart
 
-_TODO: filled in as the phase-1 skeleton tasks land (compose, migrations, per-app dev servers)._
+### Prerequisites
+
+- Docker + Docker Compose v2 (tested with Docker 29.2, Compose v5.1)
+- [uv](https://docs.astral.sh/uv/) — only needed for running `apps/api`'s gates outside a container
+- Node 24 + [pnpm](https://pnpm.io/) via corepack (`corepack enable`) — only needed for running the
+  frontend gates outside a container
+
+### 1. Configure environment
+
+```sh
+cp .env.example .env
+```
+
+Fill in `.env` — see PRD §9 for what each variable does. `DATABASE_URL` has two valid values,
+described next. **Never commit `.env`** (it's gitignored; only `.env.example` is tracked).
+
+### 2. Choose a database path (PRD §9)
+
+**Supabase (default, and the deployed target):** set `DATABASE_URL` in `.env` to your Supabase
+Postgres connection string, then run the stack without the `local-db` profile:
+
+```sh
+docker compose -f infra/docker-compose.yml up -d --build
+docker compose -f infra/docker-compose.yml run --rm api uv run alembic upgrade head
+```
+
+**Local Postgres (fully offline dev):** leave `.env`'s `DATABASE_URL` unset (or export it in the
+shell, which wins over `.env` — see the compose file's `${DATABASE_URL:-}` substitution) and add
+the `local-db` profile, which starts a `pgvector/pgvector:pg16` container as the `db` service:
+
+```sh
+DATABASE_URL=postgresql://postgres:postgres@db:5432/postgres \
+  docker compose -f infra/docker-compose.yml --profile local-db up -d --build
+docker compose -f infra/docker-compose.yml run --rm api uv run alembic upgrade head
+```
+
+Note the `db` service name (not `localhost`) — containers reach each other over the compose
+network, not the host loopback. `db`'s data persists in the named volume `advisordesk_local_db`
+across restarts; `docker compose ... --profile local-db down -v` also removes it.
+
+Either way, migrations are **never** run at container startup (CONVENTIONS.md §6) — the command
+above (`uv run alembic upgrade head`) is the only DDL path, and is the one command reused verbatim
+by later phases' seed/deploy tasks.
+
+### 3. Verify
+
+```sh
+curl -s localhost:8000/api/v1/healthz    # {"status":"ok"}
+curl -sI localhost:3001 | head -1        # HTTP/1.1 200 OK (admin)
+curl -sI localhost:3000 | head -1        # HTTP/1.1 200 OK (client)
+```
+
+### 4. Tear down
+
+```sh
+docker compose -f infra/docker-compose.yml --profile local-db down   # add -v to drop the local db volume too
+```
+
+(`--profile local-db` is harmless to pass even if you ran the Supabase path — compose only tears
+down services that are actually running.)
+
+### Gates (run before every commit that touches the relevant app)
+
+Python (`apps/api`):
+
+```sh
+cd apps/api
+uv run ruff check .
+uv run ruff format --check .
+uv run mypy
+uv run lint-imports
+uv run pytest -q
+```
+
+Frontend (`apps/admin`, `apps/client` — same three commands, run once per app):
+
+```sh
+pnpm -C apps/admin lint
+pnpm -C apps/admin type-check
+pnpm -C apps/admin test
+
+pnpm -C apps/client lint
+pnpm -C apps/client type-check
+pnpm -C apps/client test
+```
 
 ## Implementation notes
 
+- **Build contexts.** Both `infra/Dockerfile.api` and `infra/Dockerfile.web` build with the repo
+  root as context (`build: {context: .., dockerfile: infra/Dockerfile.*}` in
+  `infra/docker-compose.yml`) — the API image only needs `apps/api/`, but the web image needs the
+  pnpm workspace root (`package.json`, `pnpm-lock.yaml`, `pnpm-workspace.yaml`) plus the one app
+  directory selected by `--build-arg APP`.
+- **Root `.dockerignore` (added, not explicitly listed in the task brief).** Without it, every
+  `docker build` from the repo-root context would tar up `reference_project/` (~2.5 GB, vendored
+  and gitignored), `node_modules/` (~650 MB), and `apps/api/.venv/` (~170 MB) before the daemon
+  even started resolving layers. None of these are `COPY`'d by either Dockerfile, so this only
+  changes build-context size, not image contents; `.env`/`*.env` are also excluded as defense in
+  depth (neither Dockerfile `COPY`s them either).
+- **Next.js `output: 'standalone'`.** Neither `apps/admin/next.config.ts` nor
+  `apps/client/next.config.ts` set this before task-05 — both now do, since `infra/Dockerfile.web`'s
+  runtime stage needs the self-contained `.next/standalone` server bundle rather than a full
+  `pnpm install` in the runtime image.
+- **Standalone server path (checked against real build output, not guessed).** Because this is a
+  pnpm workspace with a root `package.json`, `next build`'s standalone tracer mirrors the
+  repo-relative path rather than flattening it: the runnable entrypoint is
+  `.next/standalone/apps/<app>/server.js`, with a hoisted `node_modules/` at the tree root. The
+  runtime stage copies the standalone tree's *contents* into `/app` and runs
+  `node apps/$APP/server.js`. Docker does **not** expand `ARG`/`ENV` inside exec-form
+  `CMD`/`ENTRYPOINT` arrays (only `ENV`, `LABEL`, `COPY`, etc. get variable substitution), so a
+  literal `CMD ["node", "apps/${APP}/server.js"]` would try to run a path containing the literal
+  string `${APP}`. `Dockerfile.web` instead bakes `APP` into a build-time-fixed `ENV` and runs
+  `CMD ["sh", "-c", "node apps/$APP/server.js"]` so the shell expands it at container start.
+- **Missing `public/` directories.** Neither `apps/admin` nor `apps/client` has a `public/`
+  directory yet (both use only the App Router's special files, e.g. `favicon.ico` under `src/app/`).
+  `Dockerfile.web`'s builder stage runs `mkdir -p apps/${APP}/public` before `next build` so the
+  runtime stage's `COPY --from=builder .../public ...` always has a source, even with zero static
+  assets today.
+- **`uv` binary in the API runtime image.** The task-05 interface contract fixes the migration
+  command as `docker compose ... run --rm api uv run alembic upgrade head` (reused verbatim by a
+  later phase-4 task) — that requires `uv` itself to be on `PATH` in the *runtime* image, not just
+  the `ghcr.io/astral-sh/uv` builder stage. `Dockerfile.api`'s runtime stage adds
+  `COPY --from=builder /usr/local/bin/uv /usr/local/bin/uv` for exactly this; without it, `uv run`
+  fails with `exec: "uv": executable file not found in $PATH` (observed while verifying this task).
+- **`depends_on` on a profile-gated service (verified against Compose v5.1).** A bare
+  `api: depends_on: db: condition: service_healthy` is a **hard compose-level error** whenever `db`
+  isn't part of the run — `docker compose -f infra/docker-compose.yml config` (no `--profile
+  local-db`) fails immediately with `service "api" depends on undefined service "db": invalid
+  compose project`, before any container starts; it is not a silent no-op. Adding
+  `required: false` under the `db` dependency fixes this: absent (`db` not part of the run) →
+  the dependency is skipped entirely; present (`--profile local-db` active) → `condition:
+  service_healthy` still gates `api`'s startup on `db` passing its `pg_isready` healthcheck
+  (observed directly: `up -d --profile local-db` shows `Container infra-db-1 Healthy` before
+  `Container infra-api-1 Starting` in the compose log).
+- **`5432` publish decision.** Port `127.0.0.1:5432` was free on the verification machine (only
+  `127.0.0.1:5433`, the unrelated throwaway `advisordesk-test-db` container, was occupied), so the
+  `local-db` profile's `db` service publishes `127.0.0.1:5432:5432` as specified. If `5432` is
+  occupied on your machine, drop that `ports:` entry from `infra/docker-compose.yml` — the `db`
+  service is still reachable by every other compose service over the compose network at
+  `db:5432`; only host-side (`psql` from the host, a GUI client, etc.) access needs the publish.
+- **Non-profile-path verification technique (not shipped).** To prove `docker compose up -d`
+  (no profile) boots `api`+`admin`+`client` without the `db` service, verification pointed
+  `DATABASE_URL` at the pre-existing `advisordesk-test-db` throwaway container's
+  `127.0.0.1:5433` host-published port. A container reaches a host port published to `127.0.0.1`
+  specifically (not `0.0.0.0`) only via `network_mode: host` — bridge-network gateway routing
+  (`host.docker.internal`) does not reach a `127.0.0.1`-scoped publish. This was done with a
+  temporary, un-committed compose override applying `network_mode: host` to `api` only, purely
+  for this check; it is not part of `infra/docker-compose.yml`, and real Supabase usage needs no
+  such trick since it's reachable over the public internet from a normally-bridged container.

@@ -1,0 +1,72 @@
+# syntax=docker/dockerfile:1
+# Shared Next.js image for both frontends — ARG APP selects `admin` or
+# `client`. Build from the REPO ROOT context (infra/docker-compose.yml sets
+# `context: ..`, `dockerfile: infra/Dockerfile.web`):
+#   docker build -f infra/Dockerfile.web --build-arg APP=admin  -t advisordesk-admin  .
+#   docker build -f infra/Dockerfile.web --build-arg APP=client -t advisordesk-client .
+#
+# NEXT_PUBLIC_API_URL is a BUILD-time arg: Next.js inlines NEXT_PUBLIC_* into
+# the JS bundle at `next build` time. ONE IMAGE PER ENVIRONMENT — changing
+# it means a rebuild, not a restart (see infra/docker-compose.yml).
+
+# ---------- Stage 1: install + build ----------
+FROM node:24-slim AS builder
+
+ARG APP
+
+ENV COREPACK_ENABLE_DOWNLOAD_PROMPT=0
+RUN corepack enable
+
+WORKDIR /app
+
+# Workspace root manifests + only the target app (task-05 ambiguity
+# resolution: the web image needs the workspace root, not the whole
+# monorepo) — layer-cached until a dependency changes.
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+COPY apps/${APP} apps/${APP}
+
+RUN pnpm install --frozen-lockfile --filter "./apps/${APP}..."
+
+# Build-time environment (inlined into the JS bundle by `next build`).
+ARG NEXT_PUBLIC_API_URL=http://localhost:8000
+ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL
+
+# Next's standalone tracer never writes apps/${APP}/public itself, and
+# neither app ships one yet — create it so stage 2's COPY always has a
+# source, even for an app with zero static assets.
+RUN mkdir -p apps/${APP}/public
+
+RUN pnpm --filter "./apps/${APP}" build
+
+# ---------- Stage 2: runtime (Next standalone output) ----------
+FROM node:24-slim AS runner
+
+ARG APP
+# Baked in at build time (see ARG-in-CMD note below) — one image per app.
+ENV APP=${APP}
+ENV NODE_ENV=production PORT=3000 HOSTNAME=0.0.0.0
+
+WORKDIR /app
+
+# `next build` with `output: 'standalone'` traces the workspace from its
+# root (this monorepo has a root package.json), so the standalone tree
+# already mirrors repo-relative paths (apps/${APP}/server.js, hoisted
+# node_modules/ at the tree root) — copy its CONTENTS straight into /app.
+COPY --from=builder --chown=node:node /app/apps/${APP}/.next/standalone/. ./
+COPY --from=builder --chown=node:node /app/apps/${APP}/.next/static ./apps/${APP}/.next/static
+COPY --from=builder --chown=node:node /app/apps/${APP}/public ./apps/${APP}/public
+
+USER node
+EXPOSE 3000
+
+# node:24-slim has no curl/wget; a plain TCP probe via Node's own net module
+# keeps the healthcheck stdlib-only (CONVENTIONS.md §11 pattern, applied to
+# the Node runtime).
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+  CMD ["node", "-e", "require('http').get('http://127.0.0.1:3000/', r => process.exit(r.statusCode < 500 ? 0 : 1)).on('error', () => process.exit(1))"]
+
+# Docker does NOT expand ARG/ENV inside exec-form CMD/ENTRYPOINT arrays, so
+# a literal ["node","apps/${APP}/server.js"] would try to run a path
+# containing the string "${APP}" — go through a shell so $APP (baked above
+# as a build-time-fixed ENV) is expanded at container start.
+CMD ["sh", "-c", "node apps/$APP/server.js"]

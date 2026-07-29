@@ -1,0 +1,92 @@
+# infra/docker-compose.yml — AdvisorDesk local orchestration (PRD §3.1, §9).
+#
+# DATABASE_URL points at EITHER Supabase (default, deployed target — PRD §9)
+# or the local-db profile's `db` service:
+#
+#   Supabase (default):  set DATABASE_URL in .env to the Supabase connection
+#                         string, then:
+#                           docker compose -f infra/docker-compose.yml up -d
+#
+#   Local Postgres:       docker compose -f infra/docker-compose.yml --profile local-db up -d
+#                         with DATABASE_URL=postgresql://postgres:postgres@db:5432/postgres
+#                         (service name `db`, not localhost — containers
+#                         reach each other over the compose network). Set it
+#                         in .env, or export it in the shell — shell env
+#                         wins over env_file (see `${DATABASE_URL:-}` below).
+#
+# Migrations are never run at container startup (CONVENTIONS.md §6) — run
+# them explicitly, against whichever DATABASE_URL is active:
+#   docker compose -f infra/docker-compose.yml run --rm api uv run alembic upgrade head
+#
+# See README.md "Dev quickstart" for both paths end to end, including the
+# observed depends_on-under-an-inactive-profile behavior noted below.
+
+services:
+  api:
+    build:
+      context: ..
+      dockerfile: infra/Dockerfile.api
+    image: advisordesk-api
+    env_file: ../.env
+    environment:
+      # Shell env overrides/feeds this — `${DATABASE_URL:-}` lets
+      # `docker compose config` resolve even when neither .env nor the
+      # shell sets it (api then fails its own startup check instead of a
+      # compose-level error — see app/main.py).
+      DATABASE_URL: ${DATABASE_URL:-}
+    ports:
+      - "127.0.0.1:8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+        # Without this, `depends_on: db` is a HARD compose-level error
+        # whenever `db` isn't part of the run (default `up`, no
+        # --profile local-db) — verified: plain `docker compose config`
+        # (no profile) fails with `service "api" depends on undefined
+        # service "db": invalid compose project` before anything starts.
+        # `required: false` makes the dependency optional: absent -> skipped,
+        # present (local-db profile active) -> still gates on service_healthy.
+        required: false
+
+  admin:
+    build:
+      context: ..
+      dockerfile: infra/Dockerfile.web
+      args:
+        APP: admin
+        # BUILD-time arg — Next.js inlines NEXT_PUBLIC_* into the JS bundle
+        # at `next build`. Changing this means a rebuild, not a restart.
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8000}
+    image: advisordesk-admin
+    ports:
+      - "127.0.0.1:3001:3000"
+
+  client:
+    build:
+      context: ..
+      dockerfile: infra/Dockerfile.web
+      args:
+        APP: client
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8000}
+    image: advisordesk-client
+    ports:
+      - "127.0.0.1:3000:3000"
+
+  # ---------- local-db profile: offline dev Postgres/pgvector (PRD §9) ----------
+  db:
+    profiles: [local-db]
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_PASSWORD: postgres # dev-only default password, local-db profile only — never used against Supabase/prod
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - advisordesk_local_db:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+volumes:
+  advisordesk_local_db:

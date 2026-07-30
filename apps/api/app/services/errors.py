@@ -41,6 +41,18 @@ class AuthRequiredError(AppError):
     code = "auth_required"
 
 
+class ForbiddenError(AppError):
+    """A valid identity is not authorized for the requested action — maps to 403.
+
+    PRD §5.1/§9: a Google login outside `ADMIN_EMAILS` is a real Google
+    identity (authentication succeeded) but is forbidden from AdvisorDesk
+    admin access — distinct from `AuthRequiredError`'s "no/invalid session"
+    (401).
+    """
+
+    code = "forbidden"
+
+
 class RateLimitedError(AppError):
     """A public-chat request exceeded a §9 rate limit — maps to 429."""
 

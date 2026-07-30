@@ -11,12 +11,13 @@ dependencies = [
     "fastapi",
     "uvicorn",
     "pydantic-settings",
+    "itsdangerous>=2.2.0",
+    "httpx>=0.28.1",
 ]
 
 [dependency-groups]
 dev = [
     "pytest",
-    "httpx",
     "ruff",
     "mypy",
     "import-linter",
@@ -84,6 +85,20 @@ forbidden_modules = [
 ]
 
 [[tool.importlinter.contracts]]
+name = "app.auth imports only app.services, app.models, and app.config"
+type = "forbidden"
+source_modules = ["app.auth"]
+forbidden_modules = [
+    "app.routes",
+    "app.mcp",
+    "app.rag",
+    "app.agent",
+    "app.main",
+    "app.db",
+    "app.factory",
+]
+
+[[tool.importlinter.contracts]]
 name = "app.routes and app.mcp are independent"
 type = "independence"
 modules = ["app.routes", "app.mcp"]
@@ -108,9 +123,10 @@ forbidden_modules = ["app.main", "app.factory"]
 testpaths = ["tests"]
 filterwarnings = [
     # starlette 1.x's TestClient nags to install `httpx2` in place of `httpx`
-    # on every use. `httpx` is the CONVENTIONS.md §9-mandated dev
-    # dependency; adopting httpx2 is a conventions-level change, deferred
-    # (tracked in SUGGESTIONS.md) — silence this one specific warning rather
-    # than leaving it as recurring test-output noise.
+    # on every use. `httpx` is now also a runtime dependency (phase-2
+    # task-01: `app.auth.oauth.HttpxGoogleOAuthClient`), not just
+    # `TestClient`'s driver; adopting httpx2 is a conventions-level change,
+    # deferred (tracked in SUGGESTIONS.md) — silence this one specific
+    # warning rather than leaving it as recurring test-output noise.
     'ignore:Using `httpx` with `starlette\.testclient` is deprecated:starlette.exceptions.StarletteDeprecationWarning',
 ]

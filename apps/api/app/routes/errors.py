@@ -17,17 +17,20 @@ from app.services.errors import (
     AuthRequiredError,
     ConflictError,
     EmbeddingFailedError,
+    ForbiddenError,
     NotFoundError,
     RateLimitedError,
 )
 
 # PRD §9 envelope status mapping, per task-03 brief: NotFoundError->404,
 # ConflictError->409, AuthRequiredError->401, RateLimitedError->429,
-# EmbeddingFailedError->502.
+# EmbeddingFailedError->502. ForbiddenError->403 added by phase-2 task-01
+# (Google OAuth callback rejecting a non-allowlisted email).
 _STATUS_BY_ERROR: dict[type[AppError], int] = {
     NotFoundError: 404,
     ConflictError: 409,
     AuthRequiredError: 401,
+    ForbiddenError: 403,
     RateLimitedError: 429,
     EmbeddingFailedError: 502,
 }

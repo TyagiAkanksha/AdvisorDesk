@@ -1,10 +1,211 @@
 {
+  "components": {
+    "schemas": {
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "title": "Detail",
+            "type": "array"
+          }
+        },
+        "title": "HTTPValidationError",
+        "type": "object"
+      },
+      "MeResponse": {
+        "description": "`GET /auth/me`'s success body (PRD \u00a75.1): the current admin's identity.",
+        "properties": {
+          "avatar_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Avatar Url"
+          },
+          "email": {
+            "title": "Email",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          }
+        },
+        "required": [
+          "id",
+          "email",
+          "name",
+          "avatar_url"
+        ],
+        "title": "MeResponse",
+        "type": "object"
+      },
+      "ValidationError": {
+        "properties": {
+          "ctx": {
+            "title": "Context",
+            "type": "object"
+          },
+          "input": {
+            "title": "Input"
+          },
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "title": "Location",
+            "type": "array"
+          },
+          "msg": {
+            "title": "Message",
+            "type": "string"
+          },
+          "type": {
+            "title": "Error Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError",
+        "type": "object"
+      }
+    }
+  },
   "info": {
     "title": "AdvisorDesk API",
     "version": "0.1.0"
   },
   "openapi": "3.1.0",
   "paths": {
+    "/api/v1/auth/callback": {
+      "get": {
+        "description": "PRD \u00a75.1: exchange `code`, reject non-allowlisted emails, upsert, set the session cookie.\n\n`state` is accepted (Google always sends back what `/auth/login`\ngenerated) but not cryptographically verified against a stored value \u2014\nPRD \u00a79 pins the allowlist/session-cookie/soft-delete behaviors, not a\nCSRF `state` round-trip, so this stays minimal.\n\nRaises:\n    ForbiddenError: `identity[\"email\"]` is not in `ADMIN_EMAILS` \u2014 the\n        check runs before any row write (PRD \u00a75.1/\u00a79).",
+        "operationId": "auth_callback",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "code",
+            "required": true,
+            "schema": {
+              "title": "Code",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "state",
+            "required": true,
+            "schema": {
+              "title": "State",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Auth Callback"
+      }
+    },
+    "/api/v1/auth/login": {
+      "get": {
+        "description": "PRD \u00a75.1: redirect (307) to Google's OAuth consent screen.",
+        "operationId": "auth_login",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Auth Login"
+      }
+    },
+    "/api/v1/auth/logout": {
+      "post": {
+        "description": "PRD \u00a75.1: clear the session cookie.",
+        "operationId": "auth_logout",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Auth Logout"
+      }
+    },
+    "/api/v1/auth/me": {
+      "get": {
+        "description": "PRD \u00a75.1: the current admin's identity (`require_admin` raises 401 otherwise).\n\nLooks up `avatar_url` via a fresh `active_select` read rather than\ncarrying it on `AdminPrincipal` \u2014 the task-01 brief pins\n`AdminPrincipal` to exactly `user_id, email, name` (later tasks match\nthat shape), so the one field `/auth/me` alone needs is fetched here.",
+        "operationId": "auth_me",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MeResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Auth Me"
+      }
+    },
     "/api/v1/healthz": {
       "get": {
         "description": "Liveness probe: `{\"status\": \"ok\"}`, always \u2014 no auth, no DB touch (PRD \u00a79).",

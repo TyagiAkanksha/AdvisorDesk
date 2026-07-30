@@ -13,6 +13,7 @@ from fastapi import FastAPI
 from sqlalchemy import Engine
 from sqlalchemy.orm import Session, sessionmaker
 
+from app.auth.oauth import GoogleOAuthClient, HttpxGoogleOAuthClient
 from app.config import Settings
 from app.db import make_engine, make_session_factory
 from app.factory import create_app
@@ -26,5 +27,8 @@ if not settings.database_url:
 
 engine: Engine = make_engine(settings.database_url)
 session_factory: sessionmaker[Session] = make_session_factory(engine)
+oauth_client: GoogleOAuthClient = HttpxGoogleOAuthClient.from_settings(settings)
 
-app: FastAPI = create_app(session_factory=session_factory, settings=settings)
+app: FastAPI = create_app(
+    session_factory=session_factory, settings=settings, oauth_client=oauth_client
+)

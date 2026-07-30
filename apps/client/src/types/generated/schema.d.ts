@@ -20,8 +20,20 @@ export interface paths {
          *     PRD §9 pins the allowlist/session-cookie/soft-delete behaviors, not a
          *     CSRF `state` round-trip, so this stays minimal.
          *
+         *     Email normalization (phase-2 task-01 review round 1, finding I3):
+         *     `identity["email"]` is normalized (`strip().lower()`) exactly once, here,
+         *     and the SAME normalized value is used both for the allowlist check and
+         *     for persistence — passing a raw, differently-cased email through to
+         *     `upsert_from_google` would let e.g. `'Admin@Example.com'` and
+         *     `'admin@example.com'` create two distinct `User` rows, splitting the
+         *     admin's identity and breaking the PRD §4.1 same-row reactivation
+         *     guarantee. `upsert_from_google` also normalizes defensively (belt and
+         *     suspenders for any future caller), but this route is the canonical place
+         *     the normalization is decided, since it is also what the allowlist check
+         *     must agree with. `name`/`avatar_url` are passed through unchanged.
+         *
          *     Raises:
-         *         ForbiddenError: `identity["email"]` is not in `ADMIN_EMAILS` — the
+         *         ForbiddenError: the normalized email is not in `ADMIN_EMAILS` — the
          *             check runs before any row write (PRD §5.1/§9).
          */
         get: operations["auth_callback"];
@@ -84,10 +96,26 @@ export interface paths {
          * Auth Me
          * @description PRD §5.1: the current admin's identity (`require_admin` raises 401 otherwise).
          *
-         *     Looks up `avatar_url` via a fresh `active_select` read rather than
-         *     carrying it on `AdminPrincipal` — the task-01 brief pins
-         *     `AdminPrincipal` to exactly `user_id, email, name` (later tasks match
-         *     that shape), so the one field `/auth/me` alone needs is fetched here.
+         *     Looks up `avatar_url` via a fresh `get_active_user` read (phase-2
+         *     task-01 review round 1, finding I4: routes never touch the ORM
+         *     directly) rather than carrying it on `AdminPrincipal` — the task-01
+         *     brief pins `AdminPrincipal` to exactly `user_id, email, name` (later
+         *     tasks match that shape), so the one field `/auth/me` alone needs is
+         *     fetched here.
+         *
+         *     This is a second point read of the same row `require_admin` just
+         *     validated moments ago, on a second, independent `Session`
+         *     (`require_admin` cannot share `app.routes.deps.get_session`'s per the
+         *     layering rule in its own module docstring). Avoiding it cheaply would
+         *     mean growing `AdminPrincipal`'s pinned shape or smuggling the row
+         *     through `Request.state` behind an undocumented, untyped side channel —
+         *     both worse than one extra indexed point lookup, so it is left as is.
+         *
+         *     Raises:
+         *         AuthRequiredError: the row `require_admin` just validated is gone
+         *             or was soft-deleted in the (vanishingly small) window between
+         *             that check and this one — treated identically to "no session"
+         *             rather than surfacing as an unhandled 500.
          */
         get: operations["auth_me"];
         put?: never;

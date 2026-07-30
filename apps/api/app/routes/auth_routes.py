@@ -18,12 +18,10 @@ from app.auth.deps import AdminPrincipal, require_admin
 from app.auth.oauth import GoogleOAuthClient
 from app.auth.sessions import clear_cookie, issue_cookie
 from app.config import Settings
-from app.models import User
-from app.models.schemas.auth import MeResponse
+from app.models.schemas.auth import GoogleIdentity, MeResponse
 from app.routes.deps import get_oauth_client, get_session, get_settings
-from app.services.errors import ForbiddenError
-from app.services.queries import active_select
-from app.services.users import upsert_from_google
+from app.services.errors import AuthRequiredError, ForbiddenError
+from app.services.users import get_active_user, upsert_from_google
 
 router = APIRouter()
 
@@ -52,15 +50,33 @@ def auth_callback(
     PRD §9 pins the allowlist/session-cookie/soft-delete behaviors, not a
     CSRF `state` round-trip, so this stays minimal.
 
+    Email normalization (phase-2 task-01 review round 1, finding I3):
+    `identity["email"]` is normalized (`strip().lower()`) exactly once, here,
+    and the SAME normalized value is used both for the allowlist check and
+    for persistence — passing a raw, differently-cased email through to
+    `upsert_from_google` would let e.g. `'Admin@Example.com'` and
+    `'admin@example.com'` create two distinct `User` rows, splitting the
+    admin's identity and breaking the PRD §4.1 same-row reactivation
+    guarantee. `upsert_from_google` also normalizes defensively (belt and
+    suspenders for any future caller), but this route is the canonical place
+    the normalization is decided, since it is also what the allowlist check
+    must agree with. `name`/`avatar_url` are passed through unchanged.
+
     Raises:
-        ForbiddenError: `identity["email"]` is not in `ADMIN_EMAILS` — the
+        ForbiddenError: the normalized email is not in `ADMIN_EMAILS` — the
             check runs before any row write (PRD §5.1/§9).
     """
     identity = oauth_client.exchange_code(code)
-    if identity["email"].strip().lower() not in settings.admin_email_set:
+    normalized_email = identity["email"].strip().lower()
+    if normalized_email not in settings.admin_email_set:
         raise ForbiddenError(f"{identity['email']} is not an allowlisted admin.")
 
-    user = upsert_from_google(session, identity)
+    normalized_identity: GoogleIdentity = {
+        "email": normalized_email,
+        "name": identity["name"],
+        "avatar_url": identity["avatar_url"],
+    }
+    user = upsert_from_google(session, normalized_identity)
 
     response = Response(status_code=200)
     issue_cookie(response, user.id, settings)
@@ -82,10 +98,28 @@ def auth_me(
 ) -> MeResponse:
     """PRD §5.1: the current admin's identity (`require_admin` raises 401 otherwise).
 
-    Looks up `avatar_url` via a fresh `active_select` read rather than
-    carrying it on `AdminPrincipal` — the task-01 brief pins
-    `AdminPrincipal` to exactly `user_id, email, name` (later tasks match
-    that shape), so the one field `/auth/me` alone needs is fetched here.
+    Looks up `avatar_url` via a fresh `get_active_user` read (phase-2
+    task-01 review round 1, finding I4: routes never touch the ORM
+    directly) rather than carrying it on `AdminPrincipal` — the task-01
+    brief pins `AdminPrincipal` to exactly `user_id, email, name` (later
+    tasks match that shape), so the one field `/auth/me` alone needs is
+    fetched here.
+
+    This is a second point read of the same row `require_admin` just
+    validated moments ago, on a second, independent `Session`
+    (`require_admin` cannot share `app.routes.deps.get_session`'s per the
+    layering rule in its own module docstring). Avoiding it cheaply would
+    mean growing `AdminPrincipal`'s pinned shape or smuggling the row
+    through `Request.state` behind an undocumented, untyped side channel —
+    both worse than one extra indexed point lookup, so it is left as is.
+
+    Raises:
+        AuthRequiredError: the row `require_admin` just validated is gone
+            or was soft-deleted in the (vanishingly small) window between
+            that check and this one — treated identically to "no session"
+            rather than surfacing as an unhandled 500.
     """
-    user = session.execute(active_select(User).where(User.id == principal.user_id)).scalar_one()
+    user = get_active_user(session, principal.user_id)
+    if user is None:
+        raise AuthRequiredError("Sign in required.")
     return MeResponse(id=user.id, email=user.email, name=user.name, avatar_url=user.avatar_url)

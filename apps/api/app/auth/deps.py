@@ -20,9 +20,8 @@ from fastapi import Request
 
 from app.auth.sessions import read_user_id
 from app.config import Settings
-from app.models import User
 from app.services.errors import AuthRequiredError
-from app.services.queries import active_select
+from app.services.users import get_active_user
 
 
 @dataclass(frozen=True)
@@ -43,8 +42,9 @@ def require_admin(request: Request) -> AdminPrincipal:
 
     PRD §9: 401s when there is no/invalid/expired session cookie, or when
     the session's `User` row is soft-deleted — re-checked on **every**
-    request via `active_select` (never a row cached from login time), so a
-    mid-session deactivation takes effect on the very next request.
+    request via `app.services.users.get_active_user` (never a row cached
+    from login time), so a mid-session deactivation takes effect on the
+    very next request.
 
     Args:
         request: the incoming request; reads `app.state.settings` and
@@ -72,7 +72,7 @@ def require_admin(request: Request) -> AdminPrincipal:
 
     session = session_factory()
     try:
-        user = session.execute(active_select(User).where(User.id == user_id)).scalar_one_or_none()
+        user = get_active_user(session, user_id)
     finally:
         session.close()
 

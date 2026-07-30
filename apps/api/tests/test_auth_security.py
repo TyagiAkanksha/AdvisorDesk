@@ -163,7 +163,11 @@ def test_me_returns_401_when_signed_cookie_is_tampered(tmp_engine: Engine) -> No
 
     valid_token = client.cookies.get(COOKIE_NAME)
     assert valid_token
-    tampered_token = valid_token[:-1] + ("a" if valid_token[-1] != "a" else "b")
+    # Tamper the FIRST character of the payload segment, not the signature's
+    # last character: the base64url signature's final char carries 2 unused
+    # bits, so 4 of 64 alphabet chars decode to identical signature bytes and
+    # a last-char flip leaves the cookie valid ~4.7% of runs (flake).
+    tampered_token = ("a" if valid_token[0] != "a" else "b") + valid_token[1:]
     client.cookies.set(COOKIE_NAME, tampered_token)
 
     response = client.get(_ME_PATH)

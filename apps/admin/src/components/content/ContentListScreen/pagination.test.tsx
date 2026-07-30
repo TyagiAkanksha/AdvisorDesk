@@ -210,7 +210,7 @@ describe('ContentListScreen pagination', () => {
     });
   });
 
-  it('deleting the sole row on page 2 refetches page 2 and renders EmptyState rather than stranding the UI', async () => {
+  it('deleting the sole row on page 2 leaves the pager mounted through the stranding refetch, with a working way back to page 1', async () => {
     let deleteCount = 0;
     const fetchMock = vi.fn<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>(
       async (input, init) => {
@@ -260,5 +260,22 @@ describe('ContentListScreen pagination', () => {
       expect(calls.length).toBeGreaterThanOrEqual(2);
     });
     expect(await screen.findByRole('status')).toHaveTextContent(/no content found/i);
+
+    // fix round 2, C2/I3: this is what "doesn't strand the UI" actually requires — the pager
+    // (not just the EmptyState text) must still be mounted, offering a real way back. Before
+    // the round-2 fix, ContentListScreen only rendered `<Pagination/>` inside the
+    // `items.length>0` branch, so it unmounted along with the table here and this button did
+    // not exist.
+    const previousPageButton = screen.getByRole('button', { name: 'Go to previous page' });
+    fetchMock.mockClear();
+    await user.click(previousPageButton);
+
+    await waitFor(() => {
+      const call = lastListCall(fetchMock);
+      expect(call).toBeDefined();
+      const url = new URL(requestUrl(call![0]));
+      expect(url.searchParams.get('page')).toBe('1');
+    });
+    await screen.findByRole('row', { name: new RegExp(itemA.title) });
   });
 });

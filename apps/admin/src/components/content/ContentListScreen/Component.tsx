@@ -97,10 +97,14 @@ export default function Component() {
         <EmptyState message="No content found." />
       ) : null}
       {!isLoading && !isError && items.length > 0 ? (
-        <>
-          <ContentTable items={items} onDeleteClick={handleDeleteClick} />
-          <Pagination page={page} pageSize={pageSize} total={total} onPageChange={setPage} />
-        </>
+        <ContentTable items={items} onDeleteClick={handleDeleteClick} />
+      ) : null}
+      {/* fix round 2, C2: hoisted out of the items.length>0 branch — a stranded empty page
+          (e.g. deleting the sole row on page 2, whose refetch then answers zero items) must
+          not unmount the pager along with the table, or there is no way back to an earlier
+          page except side effects. EmptyState still replaces only the table above. */}
+      {!isLoading && !isError ? (
+        <Pagination page={page} pageSize={pageSize} total={total} onPageChange={setPage} />
       ) : null}
 
       <ConfirmDialog

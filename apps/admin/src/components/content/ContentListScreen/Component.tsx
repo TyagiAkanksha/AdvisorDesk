@@ -4,6 +4,7 @@ import { useState } from 'react';
 
 import {
   Box,
+  Button,
   ConfirmDialog,
   EmptyState,
   ErrorState,
@@ -80,6 +81,13 @@ export default function Component() {
 
   return (
     <Box>
+      {/* fix round 1, F1: the editor's create flow (/content/new) had no entry point anywhere
+          in the admin UI — this header is that entry point. */}
+      <Box sx={{ display: 'flex', justifyContent: 'flex-end', mb: 2 }}>
+        <Button href="/content/new" variant="contained">
+          New content
+        </Button>
+      </Box>
       <Box sx={{ display: 'flex', gap: 2, mb: 3, flexWrap: 'wrap' }}>
         <Select
           label="Status"

@@ -1,5 +1,6 @@
 import MuiAlert from '@mui/material/Alert';
 import MuiSnackbar from '@mui/material/Snackbar';
+import type { SyntheticEvent } from 'react';
 
 import type { AppSnackbarProps } from './interface';
 
@@ -23,10 +24,23 @@ export default function Component({
   // 'success'/'info' -> polite (matches common/EmptyState's role="status").
   const role = severity === 'error' || severity === 'warning' ? 'alert' : 'status';
 
+  // fix round 1, M2 (folded, controller-approved — this contract freezes for phase-5):
+  // MuiSnackbar forwards a click ANYWHERE outside the snackbar to `onClose` as
+  // `reason: 'clickaway'` — dismissing a save-failure alert just because the admin clicked
+  // back into the form to fix it. Swallow only that reason; the public `{onClose: () => void}`
+  // contract (frozen by the pinned Component.test.tsx) is unchanged — an explicit close (the
+  // Alert's own close button) or the auto-hide timeout still calls it.
+  const handleSnackbarClose = (_event: SyntheticEvent | Event, reason: string) => {
+    if (reason === 'clickaway') {
+      return;
+    }
+    onClose();
+  };
+
   return (
     <MuiSnackbar
       open
-      onClose={onClose}
+      onClose={handleSnackbarClose}
       autoHideDuration={AUTO_HIDE_DURATION_MS}
       anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
     >

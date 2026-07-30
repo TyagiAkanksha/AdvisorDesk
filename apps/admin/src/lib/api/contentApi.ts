@@ -39,7 +39,11 @@ export const contentApi = baseApi.injectEndpoints({
       query: (id) => ({ url: `/api/v1/content/${id}`, method: 'DELETE' }),
       // PRD §2.2/§12: deletion is permanent — invalidating Stats + Tags too keeps the
       // dashboard counts and tag-usage counts correct without a manual reload.
-      invalidatesTags: ['Content', 'Stats', 'Tags'],
+      // fix round 1, M1: aligned to the same error-guard function form as the five mutations
+      // below (see the "`invalidatesTags` is the function form" comment further down — a bare
+      // array invalidates on both success AND failure, and a failed DELETE changed nothing
+      // server-side).
+      invalidatesTags: (_result, error) => (error ? [] : ['Content', 'Stats', 'Tags']),
     }),
     // task-06 / PRD §5.2, §4: the editor's read/write endpoints. `getContent` shares the
     // plain `'Content'` tag with `listContent` (no id-scoped tags anywhere in this slice

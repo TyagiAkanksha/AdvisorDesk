@@ -25,7 +25,11 @@ export default function Component({ contentId }: ContentEditorScreenProps) {
   if (editor.mode === 'edit' && editor.isLoading) {
     return <LoadingIndicator />;
   }
-  if (editor.mode === 'edit' && editor.isError) {
+  // fix round 1, F3: only replace the form with ErrorState when there is genuinely nothing to
+  // show (no cached content at all). A background refetch failure while content IS cached
+  // (e.g. after another mutation's tag invalidation) must not unmount the form and discard
+  // in-progress typing — `useContentEditor` surfaces that case through the snackbar instead.
+  if (editor.mode === 'edit' && editor.isError && !editor.hasContent) {
     return <ErrorState message="Couldn't load this item." />;
   }
 

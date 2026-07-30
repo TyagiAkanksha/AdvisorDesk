@@ -2,7 +2,7 @@
   "components": {
     "schemas": {
       "ContentCreate": {
-        "description": "`POST /content`'s request body: a new draft (PRD \u00a75.2, \u00a74 slug rules).\n\n`title` is `min_length=1` (review round 1, finding F4): an empty title\nnow 422s instead of creating a degenerate row. Plain length check only \u2014\na whitespace-only title (`\"   \"`) still passes; strip-then-check is\nledgered separately alongside task-02's slug fallback, not this round.",
+        "description": "`POST /content`'s request body: a new draft (PRD \u00a75.2, \u00a74 slug rules).\n\n`title` is `min_length=1` (review round 1, finding F4): an empty title\nnow 422s instead of creating a degenerate row. Final review, finding F6\n(t03 whitespace titles): `min_length=1` alone still passed a\nwhitespace-only title (`\"   \"`) \u2014 `_title_not_whitespace_only` closes\nthat gap by rejecting a title that is empty *after* `.strip()`, so a\nhuman-blank title 422s the same way a byte-empty one already did.",
         "properties": {
           "body_md": {
             "default": "",
@@ -160,7 +160,7 @@
         "type": "object"
       },
       "ContentUpdate": {
-        "description": "`PATCH /content/{id}`'s request body: partial update, slug never included (PRD \u00a74.1).\n\nEvery field is optional so a caller can send only what changed; `None`\nmeans \"leave untouched\" for `title`/`body_md`, and for `tags` means\n\"leave the existing tag associations untouched\" (mirrors\n`app.services.content.update_content`'s own `None`-means-unchanged\ncontract for `tags`).\n\n`title`, if given, is `min_length=1` (review round 1, finding F4, same\nscope note as `ContentCreate.title`) \u2014 `None` (omitted) still means\n\"leave untouched\" and is unaffected by the constraint.",
+        "description": "`PATCH /content/{id}`'s request body: partial update, slug never included (PRD \u00a74.1).\n\nEvery field is optional so a caller can send only what changed; `None`\nmeans \"leave untouched\" for `title`/`body_md`, and for `tags` means\n\"leave the existing tag associations untouched\" (mirrors\n`app.services.content.update_content`'s own `None`-means-unchanged\ncontract for `tags`).\n\n`title`, if given, is `min_length=1` (review round 1, finding F4, same\nscope note as `ContentCreate.title`) plus the same whitespace-only\nrejection as `ContentCreate.title` (final review, finding F6) \u2014 `None`\n(omitted) still means \"leave untouched\" and is unaffected by either\ncheck.",
         "properties": {
           "body_md": {
             "anyOf": [
@@ -339,7 +339,7 @@
   "paths": {
     "/api/v1/auth/callback": {
       "get": {
-        "description": "PRD \u00a75.1: exchange `code`, reject non-allowlisted emails, upsert, set the session cookie.\n\n`state` is accepted (Google always sends back what `/auth/login`\ngenerated) but not cryptographically verified against a stored value \u2014\nPRD \u00a79 pins the allowlist/session-cookie/soft-delete behaviors, not a\nCSRF `state` round-trip, so this stays minimal.\n\nEmail normalization (phase-2 task-01 review round 1, finding I3):\n`identity[\"email\"]` is normalized (`strip().lower()`) exactly once, here,\nand the SAME normalized value is used both for the allowlist check and\nfor persistence \u2014 passing a raw, differently-cased email through to\n`upsert_from_google` would let e.g. `'Admin@Example.com'` and\n`'admin@example.com'` create two distinct `User` rows, splitting the\nadmin's identity and breaking the PRD \u00a74.1 same-row reactivation\nguarantee. `upsert_from_google` also normalizes defensively (belt and\nsuspenders for any future caller), but this route is the canonical place\nthe normalization is decided, since it is also what the allowlist check\nmust agree with. `name`/`avatar_url` are passed through unchanged.\n\nReview round 1, finding F2: `responses=` declares the 403 `ForbiddenError`\nraises below plus the 422 a missing/malformed `code`/`state` query param\nproduces (both rendered as `ErrorEnvelope` by `register_error_handlers`,\nnever FastAPI's own default validation-error schema) \u2014 this route has\nno `require_admin` dependency, so, unlike the admin routes in\n`app.routes.content_routes`, no 401 applies here.\n\nCallback landing (task-01 review M8 resolution, amended before task-04):\nsuccess now 303-redirects to `settings.admin_app_url` with the session\ncookie set on that SAME `RedirectResponse` \u2014 a bodyless 200 dead-ended\nthe browser on the API's own origin after Google sign-in, since nothing\nin the admin SPA runs there to pick the flow back up.\n`status_code=303`/`response_class=RedirectResponse` on the decorator\n(rather than leaving FastAPI's implicit 200 default) makes the OpenAPI\nbaseline's success entry both the true status code and correctly\nbody-less (`RedirectResponse.media_type` is `None`, unlike the default\n`JSONResponse`) \u2014 `responses=`'s `403`/`422` arms are untouched by this\nand still render as `ErrorEnvelope`. Error paths never construct a\nresponse at all (they raise), so they are unaffected by this route\nalways building a `RedirectResponse` on the success path.\n\nRaises:\n    ForbiddenError: the normalized email is not in `ADMIN_EMAILS` \u2014 the\n        check runs before any row write (PRD \u00a75.1/\u00a79).",
+        "description": "PRD \u00a75.1: exchange `code`, reject non-allowlisted emails, upsert, set the session cookie.\n\n`state` is accepted (Google always sends back what `/auth/login`\ngenerated) but not cryptographically verified against a stored value \u2014\nPRD \u00a79 pins the allowlist/session-cookie/soft-delete behaviors, not a\nCSRF `state` round-trip, so this stays minimal.\n\nEmail normalization (phase-2 task-01 review round 1, finding I3):\n`identity[\"email\"]` is normalized (`strip().lower()`) exactly once, here,\nand the SAME normalized value is used both for the allowlist check and\nfor persistence \u2014 passing a raw, differently-cased email through to\n`upsert_from_google` would let e.g. `'Admin@Example.com'` and\n`'admin@example.com'` create two distinct `User` rows, splitting the\nadmin's identity and breaking the PRD \u00a74.1 same-row reactivation\nguarantee. `upsert_from_google` also normalizes defensively (belt and\nsuspenders for any future caller), but this route is the canonical place\nthe normalization is decided, since it is also what the allowlist check\nmust agree with. `name`/`avatar_url` are passed through unchanged.\n\nReview round 1, finding F2: `responses=` declares the 403 `ForbiddenError`\nraises below plus the 422 a missing/malformed `code`/`state` query param\nproduces (both rendered as `ErrorEnvelope` by `register_error_handlers`,\nnever FastAPI's own default validation-error schema) \u2014 this route has\nno `require_admin` dependency, so, unlike the admin routes in\n`app.routes.content_routes`, no 401 applies here. Final review, finding\nC-3 / t01 M14: 502 added for `oauth_client.exchange_code`'s\n`OAuthExchangeError` (a reused/expired `code`, or a Google-side\nfailure) \u2014 previously an unhandled 500 with a plain-text body.\n\nCallback landing (task-01 review M8 resolution, amended before task-04):\nsuccess now 303-redirects to `settings.admin_app_url` with the session\ncookie set on that SAME `RedirectResponse` \u2014 a bodyless 200 dead-ended\nthe browser on the API's own origin after Google sign-in, since nothing\nin the admin SPA runs there to pick the flow back up.\n`status_code=303`/`response_class=RedirectResponse` on the decorator\n(rather than leaving FastAPI's implicit 200 default) makes the OpenAPI\nbaseline's success entry both the true status code and correctly\nbody-less (`RedirectResponse.media_type` is `None`, unlike the default\n`JSONResponse`) \u2014 `responses=`'s `403`/`422` arms are untouched by this\nand still render as `ErrorEnvelope`. Error paths never construct a\nresponse at all (they raise), so they are unaffected by this route\nalways building a `RedirectResponse` on the success path.\n\nRaises:\n    ForbiddenError: the normalized email is not in `ADMIN_EMAILS` \u2014 the\n        check runs before any row write (PRD \u00a75.1/\u00a79).",
         "operationId": "auth_callback",
         "parameters": [
           {
@@ -384,6 +384,16 @@
               }
             },
             "description": "Unprocessable Entity"
+          },
+          "502": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Bad Gateway"
           }
         },
         "summary": "Auth Callback"

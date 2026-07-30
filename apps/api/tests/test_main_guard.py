@@ -30,6 +30,7 @@ module finishes importing" cases without a real database.
 from __future__ import annotations
 
 import importlib
+import logging
 import sys
 from types import ModuleType
 
@@ -41,6 +42,10 @@ _VALID_ENV = {
     "GOOGLE_CLIENT_ID": "test-google-client-id",
     "GOOGLE_CLIENT_SECRET": "test-google-client-secret",
     "GOOGLE_REDIRECT_URI": "https://example.com/api/v1/auth/callback",
+    # Final review, finding C-6: ADMIN_EMAILS joined the not-is_dev required
+    # list below, same dev-exempt/production-required shape as the three
+    # GOOGLE_* vars above.
+    "ADMIN_EMAILS": "admin@example.com",
 }
 
 
@@ -158,3 +163,75 @@ def test_main_imports_cleanly_in_dev_with_only_database_url_and_session_secret_s
     )
 
     assert main_module.app.title == "AdvisorDesk API"
+
+
+# ---------------------------------------------------------------------------
+# Final review, finding C-6: ADMIN_EMAILS joins the not-is_dev required list
+# ---------------------------------------------------------------------------
+
+
+def test_admin_emails_guard_raises_in_production_when_blank(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`ADMIN_EMAILS`, blanked alone, fails `app.main` import under production.
+
+    An empty `ADMIN_EMAILS` in production boots cleanly but locks EVERY
+    Google identity out of `/auth/callback` (`ForbiddenError` on every
+    login attempt, PRD §5.1) — no admin could ever sign in, silently.
+    """
+    with pytest.raises(RuntimeError) as exc_info:
+        _reload_main(monkeypatch, {"ADMIN_EMAILS": "", "ENVIRONMENT": "production"})
+
+    message = str(exc_info.value)
+    assert "ADMIN_EMAILS" in message
+    assert "admin_emails" in message
+
+
+def test_admin_emails_guard_does_not_raise_in_development_when_blank(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`ADMIN_EMAILS`, blanked alone, is exempt under dev — same shape as the `GOOGLE_*` guards.
+
+    The offline dev path never has real admin emails configured either;
+    admin login just won't work until `ADMIN_EMAILS` is set, but the app
+    must still boot.
+    """
+    main_module = _reload_main(monkeypatch, {"ADMIN_EMAILS": "", "ENVIRONMENT": "development"})
+
+    assert main_module.app.title == "AdvisorDesk API"
+
+
+# ---------------------------------------------------------------------------
+# Final review, finding C-1/F1: CORS_ORIGINS empty -> boot-time WARNING, not a crash
+# ---------------------------------------------------------------------------
+
+
+def test_empty_cors_origins_logs_a_warning_but_still_boots(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """`CORS_ORIGINS` unset (empty) logs a WARNING naming it, but `app.main` still imports.
+
+    A same-origin deployment (or a reverse proxy that makes the API and its
+    frontend(s) look same-origin to the browser) legitimately needs no CORS
+    allowlist — so this must never be a boot-time failure, unlike
+    `DATABASE_URL`/`SESSION_SECRET` above. It must still be loud, since a
+    forgotten `CORS_ORIGINS` silently breaks every cross-origin admin/client
+    request with no server-side signal otherwise (this exact gap shipped to
+    the phase-2 final review as finding C-1).
+    """
+    with caplog.at_level(logging.WARNING, logger="app.main"):
+        main_module = _reload_main(monkeypatch, {"CORS_ORIGINS": ""})
+
+    assert main_module.app.title == "AdvisorDesk API"
+    warnings = [record.message for record in caplog.records if record.levelno == logging.WARNING]
+    assert any("CORS_ORIGINS" in message for message in warnings)
+
+
+def test_nonempty_cors_origins_logs_no_warning(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A non-empty `CORS_ORIGINS` produces no boot-time warning — the happy path is quiet."""
+    with caplog.at_level(logging.WARNING, logger="app.main"):
+        _reload_main(monkeypatch, {"CORS_ORIGINS": "http://localhost:3001"})
+
+    assert caplog.records == []

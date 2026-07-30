@@ -24,16 +24,19 @@ class Settings(BaseSettings):
     the only place that enforces it is non-empty before wiring a real
     engine.
 
-    `openai_api_key`/`google_client_secret`/`session_secret` are `SecretStr`
-    (phase-2 task-01 Settings hardening) so a naive `repr(Settings(...))` —
-    e.g. via structured logging — never leaks a secret value; call sites
-    read the plaintext via `.get_secret_value()`. Empty-string defaults
-    become `SecretStr("")`, preserving the zero-env-vars constructibility
-    guarantee above.
+    `openai_api_key`/`google_client_secret`/`session_secret`/`database_url`
+    are `SecretStr` (phase-2 task-01 Settings hardening; `database_url`
+    added in the phase-2 final review, finding C-5 — a Postgres DSN embeds
+    the connection password, e.g. `postgresql://user:pw@host/db`, so a naive
+    `repr(Settings(...))`/structured-log line leaked it exactly like the
+    other three) so a naive `repr(Settings(...))` — e.g. via structured
+    logging — never leaks a secret value; call sites read the plaintext via
+    `.get_secret_value()`. Empty-string defaults become `SecretStr("")`,
+    preserving the zero-env-vars constructibility guarantee above.
     """
 
     openai_api_key: SecretStr = SecretStr("")
-    database_url: str = ""
+    database_url: SecretStr = SecretStr("")
     google_client_id: str = ""
     google_client_secret: SecretStr = SecretStr("")
     session_secret: SecretStr = SecretStr("")

@@ -17,6 +17,7 @@ import httpx
 
 from app.config import Settings
 from app.models.schemas.auth import GoogleIdentity
+from app.services.errors import OAuthExchangeError
 
 __all__ = ["GoogleIdentity", "GoogleOAuthClient", "HttpxGoogleOAuthClient"]
 
@@ -84,7 +85,24 @@ class HttpxGoogleOAuthClient:
         return f"{_AUTHORIZATION_ENDPOINT}?{urlencode(params)}"
 
     def exchange_code(self, code: str) -> GoogleIdentity:
-        """Exchange `code` for an access token, then fetch and shape the caller's identity."""
+        """Exchange `code` for an access token, then fetch and shape the caller's identity.
+
+        Final review, finding C-3 / t01 M14: a Google-side failure here used
+        to escape as an unhandled 500 with a plain-text/traceback body — a
+        non-2xx response from either Google endpoint (`raise_for_status()`,
+        e.g. an expired/reused authorization `code`, or a transient
+        Google-side outage) or a userinfo payload missing `"email"`
+        (`payload["email"]`, a bare `KeyError`). Both now raise the typed
+        `OAuthExchangeError` instead, so `/auth/callback` answers the PRD §9
+        envelope (502) like every other typed failure in this app
+        (CONVENTIONS.md §4: routes never build error responses themselves —
+        this collaborator, not a route, is where the raw httpx/dict failure
+        modes actually occur, so this is where they're translated).
+
+        Raises:
+            OAuthExchangeError: either httpx request came back non-2xx, or
+                the userinfo payload has no (non-empty) `"email"`.
+        """
         with httpx.Client(timeout=_REQUEST_TIMEOUT_SECONDS) as client:
             token_response = client.post(
                 _TOKEN_ENDPOINT,
@@ -96,18 +114,28 @@ class HttpxGoogleOAuthClient:
                     "grant_type": "authorization_code",
                 },
             )
-            token_response.raise_for_status()
+            try:
+                token_response.raise_for_status()
+            except httpx.HTTPStatusError as exc:
+                raise OAuthExchangeError("Google's OAuth token exchange failed.") from exc
             access_token = token_response.json()["access_token"]
 
             userinfo_response = client.get(
                 _USERINFO_ENDPOINT,
                 headers={"Authorization": f"Bearer {access_token}"},
             )
-            userinfo_response.raise_for_status()
+            try:
+                userinfo_response.raise_for_status()
+            except httpx.HTTPStatusError as exc:
+                raise OAuthExchangeError("Google's OAuth userinfo request failed.") from exc
             payload = userinfo_response.json()
 
+        email = payload.get("email")
+        if not email:
+            raise OAuthExchangeError("Google's OAuth userinfo response is missing an email.")
+
         return GoogleIdentity(
-            email=payload["email"],
+            email=email,
             name=payload.get("name"),
             avatar_url=payload.get("picture"),
         )

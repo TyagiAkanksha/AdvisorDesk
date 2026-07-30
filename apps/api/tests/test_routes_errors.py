@@ -38,12 +38,14 @@ from __future__ import annotations
 from typing import Any
 
 from auth_helpers import FakeGoogleOAuthClient, login_as
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from sqlalchemy import Engine
 
 from app.config import Settings
 from app.db import make_session_factory
 from app.factory import create_app
+from app.routes.errors import register_error_handlers
 
 
 def _build_settings() -> Settings:
@@ -212,3 +214,46 @@ def test_create_content_empty_title_returns_validation_error_envelope(
     assert set(body.keys()) == {"error"}
     assert body["error"]["code"] == "validation_error"
     assert isinstance(body["error"]["message"], str) and body["error"]["message"]
+
+
+# ---------------------------------------------------------------------------
+# Final review, finding F3 (t03 carried minor): an unhandled exception still
+# answers the §9 envelope, not Starlette's plain-text ServerErrorMiddleware default
+# ---------------------------------------------------------------------------
+
+
+def test_unhandled_exception_returns_internal_error_envelope_not_plain_text() -> None:
+    """A route that raises a plain (untyped) exception 500s with the §9 envelope.
+
+    Builds a bare `FastAPI()` app (not `create_app()` — no route in the
+    real app deliberately raises an untyped exception, by design) with only
+    `register_error_handlers` applied, plus one throwaway route whose sole
+    job is to raise — the minimal repro this finding needs, isolated from
+    every other route/DB concern in this suite. DB-less.
+
+    `raise_server_exceptions=False` is required here (per Starlette's
+    `TestClient` docs): the default `True` re-raises the exception into the
+    TEST process instead of letting `ServerErrorMiddleware` (and this
+    registered handler) build the actual HTTP response a real client over
+    the network would receive — asserting on that real response, not a
+    re-raised Python exception, is the whole point of this test (module
+    docstring: verifying the handler intercepts `ServerErrorMiddleware`
+    empirically).
+    """
+    app = FastAPI()
+    register_error_handlers(app)
+
+    @app.get("/boom")
+    def boom() -> None:
+        raise RuntimeError("some internal detail that must never reach the client")
+
+    client = TestClient(app, raise_server_exceptions=False)
+
+    response = client.get("/boom")
+
+    assert response.status_code == 500
+    body = response.json()
+    assert body == {"error": {"code": "internal_error", "message": "Internal server error."}}
+    assert "some internal detail" not in response.text
+    assert "Traceback" not in response.text
+    assert "RuntimeError" not in response.text

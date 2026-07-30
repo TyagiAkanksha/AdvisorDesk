@@ -37,7 +37,10 @@ export interface paths {
          *     produces (both rendered as `ErrorEnvelope` by `register_error_handlers`,
          *     never FastAPI's own default validation-error schema) — this route has
          *     no `require_admin` dependency, so, unlike the admin routes in
-         *     `app.routes.content_routes`, no 401 applies here.
+         *     `app.routes.content_routes`, no 401 applies here. Final review, finding
+         *     C-3 / t01 M14: 502 added for `oauth_client.exchange_code`'s
+         *     `OAuthExchangeError` (a reused/expired `code`, or a Google-side
+         *     failure) — previously an unhandled 500 with a plain-text body.
          *
          *     Callback landing (task-01 review M8 resolution, amended before task-04):
          *     success now 303-redirects to `settings.admin_app_url` with the session
@@ -316,9 +319,11 @@ export interface components {
          * @description `POST /content`'s request body: a new draft (PRD §5.2, §4 slug rules).
          *
          *     `title` is `min_length=1` (review round 1, finding F4): an empty title
-         *     now 422s instead of creating a degenerate row. Plain length check only —
-         *     a whitespace-only title (`"   "`) still passes; strip-then-check is
-         *     ledgered separately alongside task-02's slug fallback, not this round.
+         *     now 422s instead of creating a degenerate row. Final review, finding F6
+         *     (t03 whitespace titles): `min_length=1` alone still passed a
+         *     whitespace-only title (`"   "`) — `_title_not_whitespace_only` closes
+         *     that gap by rejecting a title that is empty *after* `.strip()`, so a
+         *     human-blank title 422s the same way a byte-empty one already did.
          */
         ContentCreate: {
             /**
@@ -400,8 +405,10 @@ export interface components {
          *     contract for `tags`).
          *
          *     `title`, if given, is `min_length=1` (review round 1, finding F4, same
-         *     scope note as `ContentCreate.title`) — `None` (omitted) still means
-         *     "leave untouched" and is unaffected by the constraint.
+         *     scope note as `ContentCreate.title`) plus the same whitespace-only
+         *     rejection as `ContentCreate.title` (final review, finding F6) — `None`
+         *     (omitted) still means "leave untouched" and is unaffected by either
+         *     check.
          */
         ContentUpdate: {
             /** Body Md */
@@ -527,6 +534,15 @@ export interface operations {
             };
             /** @description Unprocessable Entity */
             422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Bad Gateway */
+            502: {
                 headers: {
                     [name: string]: unknown;
                 };

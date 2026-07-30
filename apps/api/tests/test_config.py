@@ -41,9 +41,10 @@ def test_defaults_match_prd_with_empty_env(clean_env: None) -> None:
     """PRD §9: `Settings()` must succeed with zero env vars and match the documented defaults."""
     settings = Settings()
 
-    assert settings.database_url == ""
-    # SecretStr fields (phase-2 task-01 Settings hardening): compare the
+    # SecretStr fields (phase-2 task-01 Settings hardening; `database_url`
+    # added by the phase-2 final review, finding C-5): compare the
     # unwrapped plaintext, never the SecretStr instance itself.
+    assert settings.database_url.get_secret_value() == ""
     assert settings.openai_api_key.get_secret_value() == ""
     assert settings.google_client_id == ""
     assert settings.google_client_secret.get_secret_value() == ""
@@ -102,3 +103,22 @@ def test_is_dev_false_only_when_environment_is_production(clean_env: None) -> No
     assert Settings(environment="Production").is_dev is False
     assert Settings(environment="staging").is_dev is True
     assert Settings().is_dev is True
+
+
+def test_settings_repr_hides_database_url(clean_env: None) -> None:
+    """Final review, finding C-5: `database_url` is `SecretStr` — a Postgres DSN embeds the
+    connection password (e.g. `postgresql://user:pw@host/db`), so a naive `repr(Settings(...))`
+    (e.g. via structured logging) must never leak it, same as the other secret fields
+    (`tests/test_auth_endpoints.py::test_settings_repr_hides_secret_values`, pinned, covers
+    those; this extends the same pin to `database_url` specifically).
+    """
+    settings = Settings(
+        database_url="postgresql://admin:s3cr3t-password@db.example.com/advisordesk"
+    )
+
+    rendered = repr(settings)
+
+    assert "s3cr3t-password" not in rendered
+    assert settings.database_url.get_secret_value() == (
+        "postgresql://admin:s3cr3t-password@db.example.com/advisordesk"
+    )

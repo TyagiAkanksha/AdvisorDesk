@@ -42,16 +42,26 @@ def get_or_create_tags(session: Session, names: Sequence[str]) -> list[Tag]:
     reactivated, or reused) has a real `id` a caller can use immediately
     (e.g. to insert `ContentTag` rows) — never commits (CONVENTIONS.md §3).
 
+    Final review, finding F6 (t02 #5): a symbols-only/whitespace-only raw
+    name (e.g. `"!!!"`) normalizes to `""` — silently creating/reusing a
+    `""`-named `Tag` would violate PRD §4.1's "lowercase, hyphenated" shape
+    with no admin-facing tag editor to ever clean it up. Such names are
+    skipped entirely rather than producing a blank tag.
+
     Args:
         session: the caller's `Session`.
         names: raw tag names, in the caller's original casing/spacing.
 
     Returns:
-        One `Tag` per entry in `names`, in the same order, normalized.
+        One `Tag` per entry in `names` that normalizes to a non-empty
+        string, in that same relative order — an entry that normalizes to
+        `""` contributes nothing to the result.
     """
     tags: list[Tag] = []
     for raw_name in names:
         normalized = _normalize_tag_name(raw_name)
+        if not normalized:
+            continue
         tag = session.execute(select(Tag).where(Tag.name == normalized)).scalar_one_or_none()
         if tag is None:
             tag = Tag(name=normalized)

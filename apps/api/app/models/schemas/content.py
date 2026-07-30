@@ -6,7 +6,7 @@ import uuid
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from app.models.schemas.common import PaginatedResponse
 
@@ -27,14 +27,24 @@ class ContentCreate(BaseModel):
     """`POST /content`'s request body: a new draft (PRD §5.2, §4 slug rules).
 
     `title` is `min_length=1` (review round 1, finding F4): an empty title
-    now 422s instead of creating a degenerate row. Plain length check only —
-    a whitespace-only title (`"   "`) still passes; strip-then-check is
-    ledgered separately alongside task-02's slug fallback, not this round.
+    now 422s instead of creating a degenerate row. Final review, finding F6
+    (t03 whitespace titles): `min_length=1` alone still passed a
+    whitespace-only title (`"   "`) — `_title_not_whitespace_only` closes
+    that gap by rejecting a title that is empty *after* `.strip()`, so a
+    human-blank title 422s the same way a byte-empty one already did.
     """
 
     title: str = Field(min_length=1)
     body_md: str = ""
     tags: list[str] = Field(default_factory=list)
+
+    @field_validator("title")
+    @classmethod
+    def _title_not_whitespace_only(cls, value: str) -> str:
+        """Reject a title that is empty once leading/trailing whitespace is stripped."""
+        if not value.strip():
+            raise ValueError("title must not be empty or whitespace-only")
+        return value
 
 
 class ContentUpdate(BaseModel):
@@ -47,13 +57,23 @@ class ContentUpdate(BaseModel):
     contract for `tags`).
 
     `title`, if given, is `min_length=1` (review round 1, finding F4, same
-    scope note as `ContentCreate.title`) — `None` (omitted) still means
-    "leave untouched" and is unaffected by the constraint.
+    scope note as `ContentCreate.title`) plus the same whitespace-only
+    rejection as `ContentCreate.title` (final review, finding F6) — `None`
+    (omitted) still means "leave untouched" and is unaffected by either
+    check.
     """
 
     title: str | None = Field(default=None, min_length=1)
     body_md: str | None = None
     tags: list[str] | None = None
+
+    @field_validator("title")
+    @classmethod
+    def _title_not_whitespace_only(cls, value: str | None) -> str | None:
+        """Reject a given (non-`None`) title that is empty once stripped of whitespace."""
+        if value is not None and not value.strip():
+            raise ValueError("title must not be empty or whitespace-only")
+        return value
 
 
 class ContentResponse(BaseModel):

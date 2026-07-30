@@ -57,6 +57,13 @@ def generate_slug(session: Session, title: str) -> str:
     `app.services.tags.get_or_create_tags`'s documented exception to the
     same active-read convention.
 
+    Final review, finding F6 (t02 #5): `_slugify` strips every character
+    outside `[a-z0-9]`, so a symbols-only, whitespace-only, or unicode-only
+    title (e.g. `"!!!"`, `"   "`, `"日本語"`) slugifies to `""` — a public
+    slug of `""` would break PRD §5.3's by-slug lookup. Falls back to the
+    literal base `"untitled"` in that case, still subject to the same `-2`,
+    `-3`, ... collision suffixing as any other slug.
+
     Args:
         session: the caller's `Session`.
         title: the content title to slugify.
@@ -64,7 +71,7 @@ def generate_slug(session: Session, title: str) -> str:
     Returns:
         A slug not already used by any `Content` row, active or deleted.
     """
-    base = _slugify(title)
+    base = _slugify(title) or "untitled"
     existing = set(
         session.execute(
             select(Content.slug).where(or_(Content.slug == base, Content.slug.like(f"{base}-%")))

@@ -49,6 +49,7 @@ def auth_login(
         },
         403: {"model": ErrorEnvelope},
         422: {"model": ErrorEnvelope},
+        502: {"model": ErrorEnvelope},
     },
 )
 def auth_callback(
@@ -82,7 +83,10 @@ def auth_callback(
     produces (both rendered as `ErrorEnvelope` by `register_error_handlers`,
     never FastAPI's own default validation-error schema) — this route has
     no `require_admin` dependency, so, unlike the admin routes in
-    `app.routes.content_routes`, no 401 applies here.
+    `app.routes.content_routes`, no 401 applies here. Final review, finding
+    C-3 / t01 M14: 502 added for `oauth_client.exchange_code`'s
+    `OAuthExchangeError` (a reused/expired `code`, or a Google-side
+    failure) — previously an unhandled 500 with a plain-text body.
 
     Callback landing (task-01 review M8 resolution, amended before task-04):
     success now 303-redirects to `settings.admin_app_url` with the session

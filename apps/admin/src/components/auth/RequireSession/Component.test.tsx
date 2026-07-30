@@ -31,6 +31,15 @@ function jsonResponse(body: unknown, status = 200): Response {
   });
 }
 
+// Request-aware: `fetchBaseQuery` may hand the mocked `fetch` either a plain
+// `(url, init)` pair or a single pre-built `Request` — and a `Request`
+// stringifies to `"[object Request]"`, not its URL, so `String(input)`
+// matching breaks for that calling convention. Resolve the real URL either
+// way so mock matching is stable regardless of which shape is used.
+function requestUrl(input: RequestInfo | URL): string {
+  return input instanceof Request ? input.url : String(input);
+}
+
 function renderGuard() {
   return render(
     <Providers>
@@ -91,9 +100,12 @@ describe('RequireSession', () => {
     expect(replaceMock).not.toHaveBeenCalled();
 
     // baseApi must send the HttpOnly session cookie (PRD §9 / task-04 Interfaces):
-    // pin `credentials: 'include'` on the /auth/me request.
-    const meCall = fetchMock.mock.calls.find(([input]) => String(input).includes('/auth/me'));
+    // pin `credentials: 'include'` on the /auth/me request — read from the
+    // `Request` itself when that's the calling convention, else from `init`.
+    const meCall = fetchMock.mock.calls.find(([input]) => requestUrl(input).includes('/auth/me'));
     expect(meCall).toBeDefined();
-    expect(meCall?.[1]).toMatchObject({ credentials: 'include' });
+    const [meInput, meInit] = meCall!;
+    const meCredentials = meInput instanceof Request ? meInput.credentials : meInit?.credentials;
+    expect(meCredentials).toBe('include');
   });
 });

@@ -35,14 +35,25 @@ function jsonResponse(body: unknown, status = 200): Response {
   });
 }
 
-function mockFetch(): ReturnType<typeof vi.fn> {
-  const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
-    const url = String(input);
-    if (url.includes('/auth/me')) return jsonResponse(meFixture, 200);
-    if (url.includes('/auth/logout')) return jsonResponse({}, 200);
-    return jsonResponse({}, 404);
-  });
-  global.fetch = fetchMock as unknown as typeof fetch;
+// Request-aware: `fetchBaseQuery` may hand the mocked `fetch` either a plain
+// `(url, init)` pair or a single pre-built `Request` — and a `Request`
+// stringifies to `"[object Request]"`, not its URL, so `String(input)`
+// matching breaks for that calling convention. Resolve the real URL either
+// way so mock matching is stable regardless of which shape is used.
+function requestUrl(input: RequestInfo | URL): string {
+  return input instanceof Request ? input.url : String(input);
+}
+
+function mockFetch() {
+  const fetchMock = vi.fn<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>(
+    async (input) => {
+      const url = requestUrl(input);
+      if (url.includes('/auth/me')) return jsonResponse(meFixture, 200);
+      if (url.includes('/auth/logout')) return jsonResponse({}, 200);
+      return jsonResponse({}, 404);
+    },
+  );
+  global.fetch = fetchMock;
   return fetchMock;
 }
 
@@ -106,10 +117,18 @@ describe('AppShell', () => {
 
     await waitFor(() => {
       const logoutCall = fetchMock.mock.calls.find(([input]) =>
-        String(input).includes('/auth/logout'),
+        requestUrl(input).includes('/auth/logout'),
       );
       expect(logoutCall).toBeDefined();
-      expect(logoutCall?.[1]).toMatchObject({ method: 'POST', credentials: 'include' });
+      // Read method/credentials from the `Request` itself when that's the
+      // calling convention, else from `init` — same pin (POST, credentials
+      // include) either way.
+      const [logoutInput, logoutInit] = logoutCall!;
+      const method = logoutInput instanceof Request ? logoutInput.method : logoutInit?.method;
+      const credentials =
+        logoutInput instanceof Request ? logoutInput.credentials : logoutInit?.credentials;
+      expect(method).toBe('POST');
+      expect(credentials).toBe('include');
     });
 
     await waitFor(() => {

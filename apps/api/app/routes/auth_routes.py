@@ -126,11 +126,10 @@ def auth_callback(
 def auth_logout() -> Response:
     """PRD §5.1: clear the session cookie.
 
-    Review round 1, finding F2: 401 is declared on the OpenAPI baseline for
-    symmetry with `/auth/me` (both are "current session" endpoints) even
-    though this route has no `require_admin` dependency and never actually
-    emits one today — logout intentionally clears the cookie regardless of
-    whether the caller has a valid session.
+    No error responses are declared: this route has no `require_admin`
+    dependency and no request fields — logout intentionally clears the
+    cookie regardless of whether the caller has a valid session, returning
+    200 idempotently (re-review ruling on the task-03 round-1 baseline).
     """
     response = Response(status_code=200)
     clear_cookie(response)

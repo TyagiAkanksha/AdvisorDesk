@@ -1,9 +1,11 @@
 import { PageContainer } from '@/components/common';
+import { DashboardScreen } from '@/components/dashboard/DashboardScreen';
 
+// task-05: the phase-1 placeholder becomes the real dashboard page.
 export default function Page() {
   return (
     <PageContainer>
-      <h1>AdvisorDesk Admin</h1>
+      <DashboardScreen />
     </PageContainer>
   );
 }

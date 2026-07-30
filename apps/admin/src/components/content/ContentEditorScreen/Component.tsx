@@ -1,0 +1,116 @@
+'use client';
+
+import {
+  AppSnackbar,
+  Autocomplete,
+  Box,
+  Button,
+  ConfirmDialog,
+  ErrorState,
+  LoadingIndicator,
+  StatusChip,
+  TextField,
+} from '@/components/common';
+
+import { MarkdownPreview } from '../MarkdownPreview';
+import type { ContentEditorScreenProps } from './interface';
+import { useContentEditor } from './useContentEditor';
+
+// task-06 / PRD §2.2, §4, §5.2: create/edit a content item and drive its draft -> published ->
+// archived transitions. All state and business logic lives in `useContentEditor`
+// (docs/FRONTEND-CONVENTIONS.md §3) — this component only renders props and raises events.
+export default function Component({ contentId }: ContentEditorScreenProps) {
+  const editor = useContentEditor({ contentId });
+
+  if (editor.mode === 'edit' && editor.isLoading) {
+    return <LoadingIndicator />;
+  }
+  if (editor.mode === 'edit' && editor.isError) {
+    return <ErrorState message="Couldn't load this item." />;
+  }
+
+  return (
+    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2, maxWidth: 720 }}>
+      {editor.mode === 'edit' ? (
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, color: 'text.secondary' }}>
+          <Box component="span">Slug:</Box>
+          <Box component="span">{editor.slug}</Box>
+          {editor.status ? <StatusChip status={editor.status} /> : null}
+        </Box>
+      ) : null}
+
+      <TextField label="Title" value={editor.title} onChange={editor.setTitle} fullWidth />
+      <TextField
+        label="Body (Markdown)"
+        value={editor.body}
+        onChange={editor.setBody}
+        multiline
+        minRows={10}
+        fullWidth
+      />
+      <Autocomplete label="Tags" value={editor.tags} onChange={editor.setTags} />
+
+      <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
+        <Button
+          onClick={editor.onSubmit}
+          disabled={!editor.canSubmit || editor.isSaving}
+          variant="contained"
+        >
+          {editor.submitLabel}
+        </Button>
+        <Button onClick={editor.togglePreview} variant="outlined">
+          Preview
+        </Button>
+        {editor.mode === 'edit' ? (
+          <>
+            <Button
+              onClick={editor.onPublish}
+              disabled={!editor.canPublish || editor.isTransitioning}
+              variant="outlined"
+            >
+              Publish
+            </Button>
+            <Button
+              onClick={editor.onArchive}
+              disabled={!editor.canArchive || editor.isTransitioning}
+              variant="outlined"
+            >
+              Archive
+            </Button>
+            <Button onClick={editor.openDeleteDialog} color="secondary" variant="outlined">
+              Delete
+            </Button>
+          </>
+        ) : null}
+      </Box>
+
+      {editor.previewOpen ? (
+        <Box
+          component="section"
+          aria-label="Markdown preview"
+          sx={{ border: '1px solid', borderColor: 'divider', p: 2 }}
+        >
+          <MarkdownPreview markdown={editor.body} />
+        </Box>
+      ) : null}
+
+      <ConfirmDialog
+        open={editor.deleteDialogOpen}
+        title="Delete content"
+        body={`“${editor.title}” will be permanently deleted — there is no restore.`}
+        confirmLabel="Delete"
+        onConfirm={editor.confirmDelete}
+        onClose={editor.closeDeleteDialog}
+        isPending={editor.isDeleting}
+        errorMessage={editor.deleteError ?? undefined}
+      />
+
+      <AppSnackbar
+        open={editor.snackbarMessage !== null}
+        message={editor.snackbarMessage}
+        severity="error"
+        onClose={editor.closeSnackbar}
+      />
+    </Box>
+  );
+}

@@ -4,6 +4,9 @@ import type { components } from '../generated/schema';
 // (docs/FRONTEND-CONVENTIONS.md §5) — everything else imports these named types.
 export type ContentDto = components['schemas']['ContentResponse'];
 export type ContentListDto = components['schemas']['ContentListResponse'];
+// task-06 / PRD §5.2: request bodies for `POST /content` and `PATCH /content/{id}`.
+export type ContentCreateDto = components['schemas']['ContentCreate'];
+export type ContentUpdateDto = components['schemas']['ContentUpdate'];
 
 // `as const` object + `keyof typeof` value-union (docs/FRONTEND-CONVENTIONS.md §5) — never a
 // TS `enum`, never a bare `string`. Values mirror `ContentResponse.status`'s wire values

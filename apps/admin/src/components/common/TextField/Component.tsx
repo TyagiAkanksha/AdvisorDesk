@@ -11,8 +11,10 @@ export default function Component({
   size = 'small',
   fullWidth,
   type = 'text',
+  multiline,
+  minRows,
 }: TextFieldProps) {
-  const handleChange = (event: ChangeEvent<HTMLInputElement>) => {
+  const handleChange = (event: ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
     onChange(event.target.value);
   };
 
@@ -25,6 +27,8 @@ export default function Component({
       size={size}
       fullWidth={fullWidth}
       type={type}
+      multiline={multiline}
+      minRows={minRows}
     />
   );
 }

@@ -1,3 +1,5 @@
+import Link from 'next/link';
+
 import { Box, IconButton, StatusChip } from '@/components/common';
 
 import type { ContentTableProps } from './interface';
@@ -34,7 +36,7 @@ export default function Component({ items, onDeleteClick }: ContentTableProps) {
         {items.map((item) => (
           <Box component="tr" key={item.id} sx={{ borderTop: '1px solid', borderColor: 'divider' }}>
             <Box component="td" sx={{ p: 1 }}>
-              {item.title}
+              <Link href={`/content/${item.id}`}>{item.title}</Link>
             </Box>
             <Box component="td" sx={{ p: 1 }}>
               <StatusChip status={item.status} />

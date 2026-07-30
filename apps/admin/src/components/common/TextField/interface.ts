@@ -7,4 +7,7 @@ export interface TextFieldProps {
   size?: 'small' | 'medium';
   fullWidth?: boolean;
   type?: 'text' | 'search';
+  /** task-06: multi-line growth for longer inputs (e.g. the editor's markdown body). */
+  multiline?: boolean;
+  minRows?: number;
 }

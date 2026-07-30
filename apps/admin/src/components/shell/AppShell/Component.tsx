@@ -3,7 +3,16 @@
 import { useRouter } from 'next/navigation';
 import { useState } from 'react';
 
-import { AppBar, Avatar, Box, Button, Drawer, Menu, NavList } from '@/components/common';
+import {
+  AppBar,
+  Avatar,
+  Box,
+  Button,
+  Drawer,
+  Menu,
+  NavList,
+  ToolbarSpacer,
+} from '@/components/common';
 import { useGetMeQuery, useLogoutMutation } from '@/lib/api/authApi';
 
 import type { AppShellProps } from './interface';
@@ -52,6 +61,7 @@ export default function Component({ children }: AppShellProps) {
         <NavList items={NAV_ITEMS} />
       </Drawer>
       <Box component="main" sx={{ flexGrow: 1, p: 3 }}>
+        <ToolbarSpacer />
         {children}
       </Box>
     </Box>

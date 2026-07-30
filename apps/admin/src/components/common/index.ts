@@ -13,3 +13,4 @@ export type { MenuOption, MenuProps } from './Menu';
 export { NavList } from './NavList';
 export type { NavListItem, NavListProps } from './NavList';
 export { PageContainer } from './PageContainer';
+export { ToolbarSpacer } from './ToolbarSpacer';

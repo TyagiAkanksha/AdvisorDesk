@@ -7,16 +7,16 @@ import {
   ConfirmDialog,
   EmptyState,
   ErrorState,
-  IconButton,
   LoadingIndicator,
+  Pagination,
   Select,
-  StatusChip,
   TextField,
 } from '@/components/common';
 import { useListTagsQuery } from '@/lib/api/tagsApi';
 import { CONTENT_STATUS_LABELS, ContentStatus } from '@/types/api/content';
 import type { ContentDto } from '@/types/api/content';
 
+import { ContentTable } from './components/ContentTable';
 import { useContentList } from './useContentList';
 
 const STATUS_OPTIONS = [
@@ -27,17 +27,12 @@ const STATUS_OPTIONS = [
   })),
 ];
 
-function formatUpdatedAt(value: string): string {
-  return new Date(value).toLocaleDateString('en-US', {
-    year: 'numeric',
-    month: 'short',
-    day: 'numeric',
-  });
-}
-
 export default function Component() {
   const {
     items,
+    total,
+    page,
+    pageSize,
     isLoading,
     isError,
     status,
@@ -46,8 +41,11 @@ export default function Component() {
     setTag,
     q,
     setQ,
+    setPage,
     deleteContent,
     isDeleting,
+    deleteError,
+    clearDeleteError,
   } = useContentList();
   const { data: tags } = useListTagsQuery();
   const [deleteTarget, setDeleteTarget] = useState<ContentDto | null>(null);
@@ -57,6 +55,11 @@ export default function Component() {
     ...(tags ?? []).map((item) => ({ value: item.name, label: item.name })),
   ];
 
+  const handleDeleteClick = (item: ContentDto) => {
+    clearDeleteError();
+    setDeleteTarget(item);
+  };
+
   const handleConfirmDelete = async () => {
     if (!deleteTarget) {
       return;
@@ -65,9 +68,14 @@ export default function Component() {
       await deleteContent(deleteTarget.id);
       setDeleteTarget(null);
     } catch {
-      // Deletion failed — leave the dialog open so the admin can retry or cancel. A
-      // friendly-error surface (snackbar, per §9) is out of scope for this task.
+      // fix round 1, F2: `deleteError` (from useContentList) now surfaces the failure inside
+      // the still-open ConfirmDialog — the admin can retry immediately or cancel.
     }
+  };
+
+  const handleCloseDialog = () => {
+    setDeleteTarget(null);
+    clearDeleteError();
   };
 
   return (
@@ -89,58 +97,10 @@ export default function Component() {
         <EmptyState message="No content found." />
       ) : null}
       {!isLoading && !isError && items.length > 0 ? (
-        <Box component="table" sx={{ width: '100%', borderCollapse: 'collapse' }}>
-          <Box component="thead">
-            <Box component="tr">
-              <Box component="th" sx={{ textAlign: 'left', p: 1 }}>
-                Title
-              </Box>
-              <Box component="th" sx={{ textAlign: 'left', p: 1 }}>
-                Status
-              </Box>
-              <Box component="th" sx={{ textAlign: 'left', p: 1 }}>
-                Tags
-              </Box>
-              <Box component="th" sx={{ textAlign: 'left', p: 1 }}>
-                Updated
-              </Box>
-              <Box component="th" sx={{ p: 1 }} />
-            </Box>
-          </Box>
-          <Box component="tbody">
-            {items.map((item) => (
-              <Box
-                component="tr"
-                key={item.id}
-                sx={{ borderTop: '1px solid', borderColor: 'divider' }}
-              >
-                <Box component="td" sx={{ p: 1 }}>
-                  {item.title}
-                </Box>
-                <Box component="td" sx={{ p: 1 }}>
-                  <StatusChip status={item.status} />
-                </Box>
-                <Box component="td" sx={{ p: 1 }}>
-                  {item.tags.map((itemTag) => (
-                    <Box component="span" key={itemTag} sx={{ mr: 0.5 }}>
-                      {itemTag}
-                    </Box>
-                  ))}
-                </Box>
-                <Box component="td" sx={{ p: 1 }}>
-                  {formatUpdatedAt(item.updated_at)}
-                </Box>
-                <Box component="td" sx={{ p: 1 }}>
-                  <IconButton
-                    name="Delete"
-                    label={`Delete ${item.title}`}
-                    onClick={() => setDeleteTarget(item)}
-                  />
-                </Box>
-              </Box>
-            ))}
-          </Box>
-        </Box>
+        <>
+          <ContentTable items={items} onDeleteClick={handleDeleteClick} />
+          <Pagination page={page} pageSize={pageSize} total={total} onPageChange={setPage} />
+        </>
       ) : null}
 
       <ConfirmDialog
@@ -149,8 +109,9 @@ export default function Component() {
         body={`“${deleteTarget?.title ?? ''}” will be permanently deleted — there is no restore.`}
         confirmLabel="Delete"
         onConfirm={handleConfirmDelete}
-        onClose={() => setDeleteTarget(null)}
+        onClose={handleCloseDialog}
         isPending={isDeleting}
+        errorMessage={deleteError ?? undefined}
       />
     </Box>
   );

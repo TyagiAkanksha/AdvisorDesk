@@ -22,6 +22,8 @@ export type { MenuOption, MenuProps } from './Menu';
 export { NavList } from './NavList';
 export type { NavListItem, NavListProps } from './NavList';
 export { PageContainer } from './PageContainer';
+export { Pagination } from './Pagination';
+export type { PaginationProps } from './Pagination';
 export { Select } from './Select';
 export type { SelectOption, SelectProps } from './Select';
 export { StatusChip } from './StatusChip';

@@ -408,7 +408,7 @@
     },
     "/api/v1/auth/logout": {
       "post": {
-        "description": "PRD \u00a75.1: clear the session cookie.\n\nReview round 1, finding F2: 401 is declared on the OpenAPI baseline for\nsymmetry with `/auth/me` (both are \"current session\" endpoints) even\nthough this route has no `require_admin` dependency and never actually\nemits one today \u2014 logout intentionally clears the cookie regardless of\nwhether the caller has a valid session.",
+        "description": "PRD \u00a75.1: clear the session cookie.\n\nNo error responses are declared: this route has no `require_admin`\ndependency and no request fields \u2014 logout intentionally clears the\ncookie regardless of whether the caller has a valid session, returning\n200 idempotently (re-review ruling on the task-03 round-1 baseline).",
         "operationId": "auth_logout",
         "responses": {
           "200": {

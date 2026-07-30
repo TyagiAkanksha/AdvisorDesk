@@ -75,7 +75,14 @@ describe('RequireSession', () => {
   });
 
   it('renders children once /auth/me succeeds with a MeResponse, without redirecting', async () => {
-    const fetchMock = vi.fn(async () => jsonResponse(meFixture, 200));
+    // Explicit call-signature generic (matching `fetch`'s own signature) so
+    // `fetchMock.mock.calls` infers a 2-element tuple below — an untyped
+    // `vi.fn(async () => ...)` would infer `[]`, and `meCall?.[1]` would fail
+    // to type-check. The implementation itself still ignores its args (it
+    // doesn't need them), so no unused-parameter names are introduced.
+    const fetchMock = vi.fn<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>(
+      async () => jsonResponse(meFixture, 200),
+    );
     global.fetch = fetchMock;
 
     renderGuard();

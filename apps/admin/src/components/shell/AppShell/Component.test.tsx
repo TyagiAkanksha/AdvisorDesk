@@ -105,7 +105,9 @@ describe('AppShell', () => {
     await user.click(signOutItem);
 
     await waitFor(() => {
-      const logoutCall = fetchMock.mock.calls.find(([input]) => String(input).includes('/auth/logout'));
+      const logoutCall = fetchMock.mock.calls.find(([input]) =>
+        String(input).includes('/auth/logout'),
+      );
       expect(logoutCall).toBeDefined();
       expect(logoutCall?.[1]).toMatchObject({ method: 'POST', credentials: 'include' });
     });

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+import uuid
 from collections.abc import Sequence
 
 from sqlalchemy import func, select
@@ -60,6 +61,50 @@ def get_or_create_tags(session: Session, names: Sequence[str]) -> list[Tag]:
         tags.append(tag)
     session.flush()
     return tags
+
+
+def tags_for_contents(
+    session: Session, content_ids: Sequence[uuid.UUID]
+) -> dict[uuid.UUID, list[str]]:
+    """Batch-load each content id's active tag names in one query (no N+1).
+
+    Plan amendment (phase-2 task-02 review round 1, F4): task-03's
+    `ContentResponse`/list responses need each item's tags, and `services/`
+    is the only layer that touches the ORM (CONVENTIONS.md §2) — so this
+    lookup lives here rather than the routes layer looping a per-row query.
+
+    Built on `active_select(Tag)` (joined in as a subquery) rather than an
+    ad-hoc `Tag.is_deleted` filter, so a soft-deleted tag's name is excluded
+    the same way every other read of `Tag` in this module is (CONVENTIONS.md
+    §3).
+
+    Args:
+        session: the caller's `Session`.
+        content_ids: the `Content.id`s to look up — typically one page of
+            `app.services.content.list_content`'s results.
+
+    Returns:
+        One entry per id in `content_ids`, even ids with no (non-deleted)
+        tags — those map to `[]` rather than being omitted. Each list is
+        sorted alphabetically for determinism.
+    """
+    result: dict[uuid.UUID, list[str]] = {content_id: [] for content_id in content_ids}
+    if not content_ids:
+        return result
+
+    active_tag = active_select(Tag).subquery()
+    stmt = (
+        select(ContentTag.content_id, active_tag.c.name)
+        .join(active_tag, active_tag.c.id == ContentTag.tag_id)
+        .where(ContentTag.content_id.in_(content_ids))
+    )
+    for content_id, name in session.execute(stmt).tuples().all():
+        result[content_id].append(name)
+
+    for names in result.values():
+        names.sort()
+
+    return result
 
 
 def list_tags_with_counts(session: Session) -> list[tuple[Tag, int]]:

@@ -24,11 +24,25 @@ from app.services.queries import active_select
 from app.services.tags import get_or_create_tags
 
 _SLUG_INVALID_RE = re.compile(r"[^a-z0-9]+")
+_LIKE_SPECIAL_RE = re.compile(r"[\\%_]")
 
 
 def _slugify(title: str) -> str:
     """Lowercase-hyphenate `title` into a bare slug candidate (no collision suffix)."""
     return _SLUG_INVALID_RE.sub("-", title.strip().lower()).strip("-")
+
+
+def _escape_like(value: str) -> str:
+    """Backslash-escape LIKE/ILIKE metacharacters (`\\`, `%`, `_`) in `value`.
+
+    Without this, a `q` containing `%` or `_` is silently reinterpreted as a
+    wildcard rather than searched for literally (review finding F5) — e.g.
+    `q="50%"` would match any title containing "50" followed by anything,
+    not just a literal "50%". Callers must pair this with `escape="\\"` on
+    the `ilike()` call so the doubled backslash this emits is honored as the
+    escape character rather than matched literally.
+    """
+    return _LIKE_SPECIAL_RE.sub(lambda m: "\\" + m.group(0), value)
 
 
 def generate_slug(session: Session, title: str) -> str:
@@ -194,12 +208,20 @@ def list_content(
             active_tag, active_tag.c.id == ContentTag.tag_id
         )
     if q is not None:
-        stmt = stmt.where(Content.title.ilike(f"%{q}%"))
+        stmt = stmt.where(Content.title.ilike(f"%{_escape_like(q)}%", escape="\\"))
 
     total = int(session.execute(select(func.count()).select_from(stmt.subquery())).scalar_one())
 
+    # `created_at` ties are routine, not exotic: rows created in one transaction
+    # share the exact same value (Postgres `now()` == `transaction_timestamp()`,
+    # constant for the whole transaction), so `ORDER BY created_at DESC` alone
+    # leaves the relative order of tied rows undefined across separate
+    # OFFSET/LIMIT queries — paging can silently drop or duplicate rows.
+    # `Content.id.desc()` is a stable, unique tiebreaker (review finding F1).
     paged_stmt = (
-        stmt.order_by(Content.created_at.desc()).offset((page - 1) * page_size).limit(page_size)
+        stmt.order_by(Content.created_at.desc(), Content.id.desc())
+        .offset((page - 1) * page_size)
+        .limit(page_size)
     )
     items = list(session.execute(paged_stmt).scalars().all())
 

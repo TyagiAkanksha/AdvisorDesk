@@ -66,7 +66,15 @@ def create_app(
     app.state.settings = resolved_settings
     app.state.session_factory = session_factory
     app.state.oauth_client = oauth_client
-    app.state.chunk_pipeline = chunk_pipeline if chunk_pipeline is not None else NoopChunkPipeline()
+    # Annotated so mypy checks `NoopChunkPipeline` (and any caller-supplied
+    # `chunk_pipeline`) against the `ChunkPipeline` Protocol here, statically —
+    # `app.state` is untyped, so without this the assignment below is the only
+    # place Protocol drift could be caught, and mypy skips it silently
+    # (review finding F6).
+    resolved_pipeline: ChunkPipeline = (
+        chunk_pipeline if chunk_pipeline is not None else NoopChunkPipeline()
+    )
+    app.state.chunk_pipeline = resolved_pipeline
 
     app.add_middleware(
         CORSMiddleware,

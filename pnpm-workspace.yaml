@@ -1,0 +1,11 @@
+packages:
+  - "apps/*"
+
+# next.js template deps ship postinstall scripts; pnpm 10+ blocks build scripts by
+# default for supply-chain safety. We explicitly decline to run them rather than
+# silently allow-listing: sharp = optional next/image codec, only used in
+# production image optimization we don't rely on yet; unrs-resolver = eslint import
+# resolver native binding, has a pure-JS fallback. `false` = never build.
+allowBuilds:
+  sharp: false
+  unrs-resolver: false

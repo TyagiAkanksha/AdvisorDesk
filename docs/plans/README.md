@@ -30,6 +30,26 @@ they pin exact paths, signatures, DTO fields, `operation_id`s, named test behavi
 not full literal implementations of future code. The PRD plus each task's Interfaces block carry
 the authority; on any conflict the PRD wins.
 
+## Execution model (per task, from phase 2 on)
+
+Three separate agents per task — one responsibility each (`CLAUDE.md` working rules):
+
+1. **Test-author agent** — executes the task's RED steps: writes the failing tests named in the
+   brief, runs them, records the failure evidence.
+2. **Implementer agent** — executes the GREEN steps: makes the authored tests pass. May add
+   tests; may NOT weaken, modify, or delete the authored tests without controller approval.
+   Runs the type-checker after every significant change.
+3. **Reviewer agent** — never the implementer; verifies spec compliance and quality (functionality,
+   tests, maintainability, coupling, design) against the brief with file:line evidence. **A review
+   is never a rubber stamp**: Critical/Important findings get a fix round and a re-review; Minors
+   are ledgered for the whole-branch final review.
+
+Model policy: Sonnet for initial iterations; escalate only when a task demonstrably needs it
+(final whole-branch reviews run on the most capable model). Fresh agent per task; artifacts move
+as files (brief → report → review package), not chat context. (Phase-1 task files predate the
+test-author/implementer split; their RED/GREEN steps were executed by a single implementer with a
+separate reviewer.)
+
 ## Phases
 
 | Phase | Folder | Scope | Depends on | Status |

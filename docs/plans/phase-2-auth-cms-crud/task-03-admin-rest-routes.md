@@ -46,6 +46,14 @@ the build. Includes the §9 smoke test (`boot the API and hit /api/v1/stats`).
     `StatsResponse{by_status, by_tag}`. Admin UI (tasks 05–06) consumes these via codegen.
 - **Implementation note:** pagination envelope field names chosen here; record in README.
 
+- **Envelope completion (phase-1 final-review decision — plan gap closed here):** register
+  handlers for `RequestValidationError` and Starlette's `HTTPException` so framework-native 404
+  (unknown route/id) and 422 (validation) responses ALSO emit the §9 envelope
+  `{"error":{"code","message"}}` (codes `validation_error` / `http_<status>`), not FastAPI's
+  native `{"detail": ...}` shape. Tests pin both: a bad-body 422 and an unknown-path 404 return
+  the envelope. This task has the first parameterized/validated routes, so the gap becomes real
+  here.
+
 ## Steps (TDD)
 
 - [ ] **Step 1: Failing route tests** (`test_routes_content.py`, `login_as` helper): 401 matrix —

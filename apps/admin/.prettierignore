@@ -1,0 +1,4 @@
+.next/
+coverage/
+src/types/generated/
+pnpm-lock.yaml

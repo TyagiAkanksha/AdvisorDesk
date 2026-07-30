@@ -51,6 +51,10 @@ rejection and §4.1 reactivating upsert, signed HttpOnly session cookie, logout,
     (`MeResponse{id,email,name,avatar_url}`).
   - Test helper `auth_helpers.py`: `login_as(client, email)` — drives the fake OAuth flow; used
     by every later admin-route test.
+  - **Settings hardening (phase-1 final-review decision):** convert the secret-bearing `Settings`
+    fields (`session_secret`, `google_client_secret`, `openai_api_key`) to pydantic `SecretStr`
+    in this task — it is their first consumer. Call sites use `.get_secret_value()`; a test pins
+    that `repr(Settings(...))` does not contain a secret value.
 
 ## Steps (TDD)
 

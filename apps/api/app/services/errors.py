@@ -1,0 +1,53 @@
+"""Typed error family — services raise these; they never build HTTP responses.
+
+CONVENTIONS.md §4: routes contain no `try/except`. Each exception carries a
+stable `code` string; `app.routes.errors::register_error_handlers` maps
+every subtype to an HTTP status and builds the PRD §9 envelope
+`{"error": {"code", "message"}}` generically, from one registration loop.
+"""
+
+from __future__ import annotations
+
+
+class AppError(Exception):
+    """Base of AdvisorDesk's typed error family (CONVENTIONS.md §4).
+
+    Args:
+        message: human-readable text returned verbatim as the §9 envelope's
+            `message` field.
+    """
+
+    code: str = "error"
+
+    def __init__(self, message: str) -> None:
+        super().__init__(message)
+
+
+class NotFoundError(AppError):
+    """A requested resource does not exist, or is soft-deleted (PRD §4.1) — maps to 404."""
+
+    code = "not_found"
+
+
+class ConflictError(AppError):
+    """A uniqueness or state-transition conflict (e.g. duplicate slug) — maps to 409."""
+
+    code = "conflict"
+
+
+class AuthRequiredError(AppError):
+    """An admin route was hit without a valid session (PRD §9 auth security) — maps to 401."""
+
+    code = "auth_required"
+
+
+class RateLimitedError(AppError):
+    """A public-chat request exceeded a §9 rate limit — maps to 429."""
+
+    code = "rate_limited"
+
+
+class EmbeddingFailedError(AppError):
+    """The embedding provider call failed during publish/re-embed (PRD §4) — maps to 502."""
+
+    code = "embedding_failed"

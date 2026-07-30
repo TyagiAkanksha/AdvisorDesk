@@ -1,0 +1,62 @@
+# Docker build-context exclusions (phase-1 task-05).
+#
+# Both infra/Dockerfile.api and infra/Dockerfile.web build with the REPO
+# ROOT as context (`build: {context: .., dockerfile: infra/Dockerfile.*}`
+# in infra/docker-compose.yml) — without this file, every `docker build`
+# would tar up the multi-gigabyte reference_project/ vendor tree, every
+# node_modules/.venv, and language caches before the daemon even starts
+# resolving layers. None of these are COPYed by either Dockerfile, so
+# excluding them changes build context size only, not image contents.
+
+# vendored reference project — never part of any image
+reference_project/
+
+# VCS / editor / local tool state
+.git/
+.claude/
+.superpowers/
+
+# node / pnpm
+node_modules/
+**/node_modules/
+.next/
+**/.next/
+
+# python
+.venv/
+**/.venv/
+__pycache__/
+**/__pycache__/
+*.pyc
+.pytest_cache/
+**/.pytest_cache/
+.mypy_cache/
+**/.mypy_cache/
+.ruff_cache/
+**/.ruff_cache/
+.import_linter_cache/
+**/.import_linter_cache/
+
+# coverage / build artifacts
+coverage/
+**/coverage/
+*.tsbuildinfo
+
+# secrets — **/-anchored (verified live) so nested app envs (apps/admin/.env,
+# apps/admin/.env.local, etc.) are excluded too, not just the build-context
+# root: the previous un-anchored `.env` / `*.env` pair only matched at the
+# context root, so a `docker build` from repo root would COPY nested env
+# files straight into web images. .dockerignore patterns are evaluated
+# client-side before the context tar is sent to the daemon, so a correctly
+# anchored pattern really does keep matches off the wire. The negation below
+# is deliberately root-anchored (no `**/` prefix) — verified live that Docker
+# honors that as "only the context-root .env.example", which is exactly the
+# one tracked file this needs to re-allow; a `!**/.env.example` form was also
+# tried and rejected because it reaches inside otherwise-excluded directories
+# (e.g. it resurrected reference_project/**/.env.example files).
+**/.env*
+!.env.example
+
+# docs — not needed inside any image
+docs/
+*.md

@@ -1,0 +1,32 @@
+{
+  "info": {
+    "title": "AdvisorDesk API",
+    "version": "0.1.0"
+  },
+  "openapi": "3.1.0",
+  "paths": {
+    "/api/v1/healthz": {
+      "get": {
+        "description": "Liveness probe: `{\"status\": \"ok\"}`, always \u2014 no auth, no DB touch (PRD \u00a79).",
+        "operationId": "healthz",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": {
+                    "type": "string"
+                  },
+                  "title": "Response Healthz",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Healthz"
+      }
+    }
+  }
+}

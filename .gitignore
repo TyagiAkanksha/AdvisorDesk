@@ -8,3 +8,15 @@ reference_project/
 
 # local tool state
 .claude/settings.local.json
+.superpowers/
+
+# python
+.venv/
+__pycache__/
+
+# node / next.js
+node_modules/
+.next/
+
+# coverage
+coverage/

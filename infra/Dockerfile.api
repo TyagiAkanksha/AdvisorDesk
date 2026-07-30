@@ -1,0 +1,74 @@
+# syntax=docker/dockerfile:1
+# AdvisorDesk API image — build from the REPO ROOT context (infra/docker-compose.yml
+# sets `context: ..`, `dockerfile: infra/Dockerfile.api`):
+#   docker build -f infra/Dockerfile.api -t advisordesk-api .
+# Runtime config is env-only (DATABASE_URL, OPENAI_API_KEY, ... — PRD §9); no
+# .env file is ever baked in. Alembic is the only DDL path (CONVENTIONS.md
+# §6) — migrations are NOT run at container startup. Run them explicitly:
+#   docker compose -f infra/docker-compose.yml run --rm api uv run alembic upgrade head
+
+# ---------- Stage 1: resolve the uv project into a venv ----------
+FROM ghcr.io/astral-sh/uv:python3.12-bookworm-slim AS builder
+
+ENV UV_LINK_MODE=copy UV_COMPILE_BYTECODE=1
+
+WORKDIR /app
+
+# Manifests first (layer-cached until a dependency changes).
+COPY apps/api/pyproject.toml apps/api/uv.lock ./
+
+# Third-party dependencies only — no application source copied yet.
+RUN uv sync --frozen --no-dev --no-install-project
+
+# The sources the runtime image needs: the app package + Alembic migrations.
+COPY apps/api/app ./app
+COPY apps/api/alembic ./alembic
+COPY apps/api/alembic.ini ./alembic.ini
+
+# Install the project itself (non-editable) so the runtime stage needs the
+# venv alone.
+RUN uv sync --frozen --no-dev
+
+# ---------- Stage 2: runtime ----------
+FROM python:3.12-slim-bookworm
+
+RUN useradd --create-home --uid 1001 appuser
+
+WORKDIR /app
+COPY --from=builder --chown=appuser:appuser /app/.venv /app/.venv
+COPY --from=builder --chown=appuser:appuser /app/app ./app
+COPY --from=builder --chown=appuser:appuser /app/alembic ./alembic
+COPY --from=builder --chown=appuser:appuser /app/alembic.ini ./alembic.ini
+# The `uv` binary itself (not just the venv it built) — the README-documented
+# migration invocation is `uv run alembic upgrade head` (task-05 Interfaces:
+# phase-4 task-04 reuses that exact command), so `uv` must exist in the
+# runtime image too, not just the builder stage.
+COPY --from=builder /usr/local/bin/uv /usr/local/bin/uv
+ENV PATH="/app/.venv/bin:$PATH"
+
+USER appuser
+EXPOSE 8000
+
+# urlopen raises on any non-2xx/connection failure -> non-zero exit
+# (CONVENTIONS.md §11: stdlib-only HEALTHCHECK, no curl/wget in the image).
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+  CMD ["python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/v1/healthz', timeout=4)"]
+
+# --proxy-headers --forwarded-allow-ips "*": trust X-Forwarded-For/Proto so
+# request.client.host reflects the real client IP, not a proxy's container
+# IP. `--proxy-headers` alone would trust those headers from ANY direct
+# peer, which is too broad; pairing it with `--forwarded-allow-ips "*"` here
+# is safe only because this port is never published beyond loopback in
+# infra/docker-compose.yml (compose network / 127.0.0.1) — in phase-6
+# deployment the only direct peer is the managed platform's own proxy, so
+# "*" still means "the proxy", not "the internet". Revisit if that changes.
+#
+# DATABASE_URL_SHELL_OVERRIDE -> DATABASE_URL promotion: infra/docker-compose.yml
+# cannot let a shell-exported DATABASE_URL override env_file's DATABASE_URL
+# without ALSO blanking it whenever the shell doesn't have one set (see that
+# file's `environment:` comment for the verified reasoning) — so a shell
+# override arrives here under a different name, and this promotes it to
+# DATABASE_URL only when it's actually non-empty; otherwise env_file's value
+# (the root .env) is left untouched. `exec` hands PID 1 off to uvicorn so
+# signal handling (SIGTERM on `docker stop`) still reaches it directly.
+CMD ["sh", "-c", "if [ -n \"$DATABASE_URL_SHELL_OVERRIDE\" ]; then export DATABASE_URL=\"$DATABASE_URL_SHELL_OVERRIDE\"; fi; exec uvicorn app.main:app --host 0.0.0.0 --port 8000 --proxy-headers --forwarded-allow-ips '*'"]

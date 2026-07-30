@@ -206,7 +206,8 @@ describe('ContentListScreen', () => {
 
     await waitFor(() => {
       const listCall = fetchMock.mock.calls.find(
-        ([input, init]) => pathnameOf(input) === '/api/v1/content' && requestMethod(input, init) === 'GET',
+        ([input, init]) =>
+          pathnameOf(input) === '/api/v1/content' && requestMethod(input, init) === 'GET',
       );
       expect(listCall).toBeDefined();
       const url = new URL(requestUrl(listCall![0]));

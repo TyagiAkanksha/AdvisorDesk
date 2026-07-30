@@ -41,7 +41,8 @@ function jsonResponse(body: unknown, status = 200): Response {
 
 const contentFixtureA: ContentDto = {
   author_id: null,
-  body_md: '# Roth IRA Conversion Basics\n\nSample content for demonstration purposes — not financial advice.',
+  body_md:
+    '# Roth IRA Conversion Basics\n\nSample content for demonstration purposes — not financial advice.',
   created_at: '2026-01-01T00:00:00Z',
   id: '11111111-1111-1111-1111-111111111111',
   published_at: null,
@@ -55,7 +56,8 @@ const contentFixtureA: ContentDto = {
 
 const contentFixtureB: ContentDto = {
   author_id: null,
-  body_md: '# Estate Planning 101\n\nSample content for demonstration purposes — not financial advice.',
+  body_md:
+    '# Estate Planning 101\n\nSample content for demonstration purposes — not financial advice.',
   created_at: '2025-12-01T00:00:00Z',
   id: '22222222-2222-2222-2222-222222222222',
   published_at: '2025-12-05T00:00:00Z',
@@ -131,7 +133,8 @@ describe('contentApi', () => {
     );
 
     const listCall = fetchMock.mock.calls.find(
-      ([input, init]) => pathnameOf(input) === '/api/v1/content' && requestMethod(input, init) === 'GET',
+      ([input, init]) =>
+        pathnameOf(input) === '/api/v1/content' && requestMethod(input, init) === 'GET',
     );
     expect(listCall).toBeDefined();
     const url = new URL(requestUrl(listCall![0]));
@@ -153,7 +156,8 @@ describe('contentApi', () => {
     await store.dispatch(contentApi.endpoints.listContent.initiate({ status: 'published' }));
 
     const listCall = fetchMock.mock.calls.find(
-      ([input, init]) => pathnameOf(input) === '/api/v1/content' && requestMethod(input, init) === 'GET',
+      ([input, init]) =>
+        pathnameOf(input) === '/api/v1/content' && requestMethod(input, init) === 'GET',
     );
     expect(listCall).toBeDefined();
     const url = new URL(requestUrl(listCall![0]));

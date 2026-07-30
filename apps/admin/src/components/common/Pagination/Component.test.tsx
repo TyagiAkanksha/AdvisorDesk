@@ -22,11 +22,23 @@ describe('Pagination', () => {
     expect(screen.getByText('Showing 41–45 of 45')).toBeInTheDocument();
   });
 
-  it('shows "No items" instead of a nonsensical range when total is zero', () => {
-    render(<Pagination page={1} pageSize={20} total={0} onPageChange={vi.fn()} />);
+  it('renders nothing at all when total is zero (fix round, F7: pager suppressed entirely)', () => {
+    const { container } = render(
+      <Pagination page={1} pageSize={20} total={0} onPageChange={vi.fn()} />,
+    );
+
+    expect(container).toBeEmptyDOMElement();
+  });
+
+  it('shows "No items" (not a nonsensical range) but keeps the pager mounted on a stranded page (fix round, F7 / t05 M10)', () => {
+    // The exact M10 repro: page 2, pageSize 20, total 20 (a stranding refetch after the sole
+    // page-2 row was deleted) previously rendered "Showing 21–20 of 20".
+    render(<Pagination page={2} pageSize={20} total={20} onPageChange={vi.fn()} />);
 
     expect(screen.getByText('No items')).toBeInTheDocument();
     expect(screen.queryByText(/showing/i)).not.toBeInTheDocument();
+    // The escape hatch stays: the pager control itself is still mounted, offering a way back.
+    expect(screen.getByRole('button', { name: 'Go to previous page' })).toBeInTheDocument();
   });
 
   it('calls onPageChange with the clicked page number', async () => {

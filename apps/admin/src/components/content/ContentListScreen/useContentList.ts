@@ -14,6 +14,10 @@ const PAGE_SIZE = 20;
 // fix round 1, F2: friendly fallback when a DELETE failure carries no §9 envelope message
 // (e.g. a network error rather than a server-produced error response).
 const DELETE_ERROR_FALLBACK = "Couldn't delete this item. Please try again.";
+// Final review, finding F8/C-4: shown when a background refetch (e.g. another screen's mutation
+// invalidating the `'Content'` tag while this list is still mounted) fails while a previously
+// loaded page is still cached — non-destructive, unlike the full-screen ErrorState.
+const REFRESH_ERROR_FALLBACK = "Couldn't refresh this list — showing the last loaded page.";
 
 export interface UseContentListResult {
   items: ContentDto[];
@@ -22,6 +26,10 @@ export interface UseContentListResult {
   pageSize: number;
   isLoading: boolean;
   isError: boolean;
+  /** `true` once a page has been loaded into `items` at least once (final review, finding F8) —
+   * lets the Component distinguish "nothing to show, replace with ErrorState" from "a
+   * background refetch failed but a previously loaded page is still cached". */
+  hasData: boolean;
   status: ContentStatus | '';
   setStatus: (status: ContentStatus | '') => void;
   tag: string;
@@ -35,6 +43,10 @@ export interface UseContentListResult {
   deleteError: string | null;
   /** Clears `deleteError` — called on dialog close and at the start of every retry. */
   clearDeleteError: () => void;
+  /** §9-friendly message for a background list-refetch failure with a page still cached. */
+  refreshErrorMessage: string | null;
+  /** Dismisses the current `refreshErrorMessage` — a later, distinct failure gets its own. */
+  dismissRefreshError: () => void;
 }
 
 export function useContentList(): UseContentListResult {
@@ -57,6 +69,17 @@ export function useContentList(): UseContentListResult {
     page,
     page_size: PAGE_SIZE,
   });
+  const hasData = data !== undefined;
+
+  // Final review, finding F8/C-4: same idiom as useContentEditor's `refreshErrorDismissed`
+  // (task-06 fix round 2, N2) — reset the dismissal once `isError` clears, so a LATER, distinct
+  // background-refetch failure gets its own alert rather than staying silenced by an earlier
+  // dismissal.
+  const [refreshErrorDismissed, setRefreshErrorDismissed] = useState(false);
+  if (!isError && refreshErrorDismissed) {
+    setRefreshErrorDismissed(false);
+  }
+  const backgroundRefetchFailed = hasData && isError && !refreshErrorDismissed;
 
   const [triggerDelete, { isLoading: isDeleting }] = useDeleteContentMutation();
   const [deleteError, setDeleteError] = useState<string | null>(null);
@@ -91,6 +114,7 @@ export function useContentList(): UseContentListResult {
   };
 
   const clearDeleteError = () => setDeleteError(null);
+  const dismissRefreshError = () => setRefreshErrorDismissed(true);
 
   return {
     items: data?.items ?? [],
@@ -99,6 +123,7 @@ export function useContentList(): UseContentListResult {
     pageSize: PAGE_SIZE,
     isLoading,
     isError,
+    hasData,
     status,
     setStatus: setStatusAndResetPage,
     tag,
@@ -110,5 +135,7 @@ export function useContentList(): UseContentListResult {
     isDeleting,
     deleteError,
     clearDeleteError,
+    refreshErrorMessage: backgroundRefetchFailed ? REFRESH_ERROR_FALLBACK : null,
+    dismissRefreshError,
   };
 }

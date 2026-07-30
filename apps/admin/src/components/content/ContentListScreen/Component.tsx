@@ -3,6 +3,7 @@
 import { useState } from 'react';
 
 import {
+  AppSnackbar,
   Box,
   Button,
   ConfirmDialog,
@@ -36,6 +37,7 @@ export default function Component() {
     pageSize,
     isLoading,
     isError,
+    hasData,
     status,
     setStatus,
     tag,
@@ -47,6 +49,8 @@ export default function Component() {
     isDeleting,
     deleteError,
     clearDeleteError,
+    refreshErrorMessage,
+    dismissRefreshError,
   } = useContentList();
   const { data: tags } = useListTagsQuery();
   const [deleteTarget, setDeleteTarget] = useState<ContentDto | null>(null);
@@ -99,19 +103,33 @@ export default function Component() {
         <TextField label="Search" value={q} onChange={setQ} placeholder="Search by title…" />
       </Box>
 
-      {isLoading ? <LoadingIndicator /> : null}
-      {!isLoading && isError ? <ErrorState message="Couldn't load content." /> : null}
-      {!isLoading && !isError && items.length === 0 ? (
-        <EmptyState message="No content found." />
+      {/* Final review, finding F8/C-4: `isError` alone used to blank the whole list back to
+          `ErrorState` even when a page was still cached from an earlier successful load — a
+          background refetch failure (e.g. another screen's mutation invalidating the
+          `'Content'` tag while this list is still mounted) looked identical to never having
+          loaded anything. `ErrorState` now only replaces the list when there is genuinely
+          nothing cached to show; a background failure with data still cached surfaces through
+          the snackbar below instead, and the table/pager stay mounted with the last-loaded
+          page. */}
+      {isLoading && !hasData ? <LoadingIndicator /> : null}
+      {!hasData && isError ? <ErrorState message="Couldn't load content." /> : null}
+      {hasData ? (
+        <AppSnackbar
+          open={refreshErrorMessage !== null}
+          message={refreshErrorMessage}
+          severity="warning"
+          onClose={dismissRefreshError}
+        />
       ) : null}
-      {!isLoading && !isError && items.length > 0 ? (
+      {hasData && items.length === 0 ? <EmptyState message="No content found." /> : null}
+      {hasData && items.length > 0 ? (
         <ContentTable items={items} onDeleteClick={handleDeleteClick} />
       ) : null}
       {/* fix round 2, C2: hoisted out of the items.length>0 branch — a stranded empty page
           (e.g. deleting the sole row on page 2, whose refetch then answers zero items) must
           not unmount the pager along with the table, or there is no way back to an earlier
           page except side effects. EmptyState still replaces only the table above. */}
-      {!isLoading && !isError ? (
+      {hasData ? (
         <Pagination page={page} pageSize={pageSize} total={total} onPageChange={setPage} />
       ) : null}
 

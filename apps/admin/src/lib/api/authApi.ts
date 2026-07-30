@@ -16,7 +16,13 @@ export const authApi = baseApi.injectEndpoints({
         url: '/api/v1/auth/logout',
         method: 'POST',
       }),
-      invalidatesTags: ['Content', 'Tags', 'Stats', 'Me'],
+      // Final review, finding C-8: matches the error-guard function form every
+      // contentApi mutation uses (lib/api/contentApi.ts) — a bare array
+      // invalidates on both success AND failure, and a failed logout changed
+      // nothing server-side (the session cookie is still live), so nothing
+      // should be invalidated (and no unnecessary getMe/list refetch race
+      // right after the failure).
+      invalidatesTags: (_result, error) => (error ? [] : ['Content', 'Tags', 'Stats', 'Me']),
     }),
   }),
 });

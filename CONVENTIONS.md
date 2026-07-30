@@ -21,6 +21,8 @@ to AdvisorDesk's PRD §3.1 layout. Two deliberate deviations from the reference 
 - Prefer `collections.abc` types (`Callable`, `Sequence`, `Mapping`, `Iterator`) over concrete
   types in annotations.
 - No bare `except Exception` and no `raise Exception(...)` — use the typed family (§4).
+- Keep files small; each function serves **one purpose**. A module accumulating unrelated
+  responsibilities is a split-smell — raise it rather than growing it.
 
 ## 2. Layout & layering (import-linter-enforced)
 
@@ -65,6 +67,10 @@ Hard rules, declared as import-linter contracts in `apps/api/pyproject.toml` and
 **Contract-verification ritual** (run once when adding a contract): inject a deliberately violating
 import, confirm `lint-imports` exits 1, revert, confirm exit 0. A contract that has never failed is
 untested.
+
+**No tight coupling between modules — no exceptions.** The contracts above are the enforcement,
+not the boundary of the rule: if two modules can only change together, restructure them even when
+no contract forbids the import.
 
 ## 3. Services
 
@@ -169,10 +175,23 @@ uv run lint-imports
 uv run pytest -q
 ```
 
-All five must be clean before every commit that touches `apps/api`.
+All five must be clean before every commit that touches `apps/api`. Additionally, run
+`uv run mypy` **after every implementation or significant change** — not only at the commit gate;
+type drift caught immediately is cheap, caught at commit time it hides which change caused it.
 
 ## 10. Tests
 
+- **Tests are part of the task. No test means the task is not complete.** The unit-test baseline
+  grows with every task; a change without covering tests does not merge.
+- **TDD is mandatory:** the failing test (RED) exists and is run before the implementation
+  (GREEN); both runs are recorded as evidence in the task report.
+- **Test-author is a separate agent from the implementer.** A task's failing tests are written by
+  the test-author agent from the task brief; the implementer makes them pass and may add tests,
+  but may not weaken, modify, or delete the authored tests without controller approval.
+- **Simulate actual usage, don't mock the interaction.** API tests drive the real entry points —
+  `TestClient` over the HTTP surface, real throwaway-schema DB fixtures — and assert observable
+  behavior. Mock ONLY true external seams (OpenAI, Google OAuth, the clock), never internal
+  collaborators; a test that exercises a mock of our own code verifies nothing.
 - Layout: `apps/api/tests/`, **no `__init__.py`** anywhere under tests (conftest scoping), unique
   test-file basenames across the whole tree.
 - DB tests use a **throwaway schema per test**: the fixture creates `advisordesk_test_<hex>`, runs
@@ -207,3 +226,10 @@ All five must be clean before every commit that touches `apps/api`.
 - Reference the task id in a trailing parenthetical: `feat(api): content CRUD services (phase-2
   task-02)`.
 - **Path-scoped `git add` only** — never `git add .` / `-A`. Never stage `.env` or secrets.
+
+## 13. AI-assisted workflow
+
+The working rules for AI agents in this repo — plan-mode-first, small task-sized dispatches,
+test-author/implementer/reviewer agent separation, Sonnet-first model policy, fresh agent per
+task, review-is-never-a-rubber-stamp — live in [`CLAUDE.md`](CLAUDE.md) (single source; not
+restated here).

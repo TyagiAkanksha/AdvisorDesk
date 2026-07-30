@@ -19,6 +19,9 @@ has **two** apps with different data-fetching defaults (§6).
   `type-check` · `test` · `test:watch` · `codegen`.
 - TypeScript `strict: true` in both apps (PRD §9). `any` is banned; document any exception inline
   with the reason.
+- **Run `type-check` (tsc) after every implementation or significant change** — not only before
+  commits. Type drift caught immediately is cheap; caught at the gate it hides which change
+  caused it.
 
 ## 2. UI stack: Material UI (no Tailwind)
 
@@ -46,6 +49,11 @@ has **two** apps with different data-fetching defaults (§6).
   `src/lib/hooks/`.
 - No inline Props interfaces in `Component.tsx` — they live in `interface.ts`.
 - No classes anywhere in `src/` (`grep -rn "^\s*class " src` returns zero matches).
+- **Components are dumb.** A component renders props and raises events — business logic
+  (fetching, validation, state machines, derived data) lives in VM hooks and `lib/` modules,
+  never in the component body. Each component serves one purpose.
+- **Keep files small.** A `Component.tsx` approaching ~150 lines is a split-smell: extract leaf
+  components (`<Parent>/components/<Leaf>/`) or move logic into the VM hook.
 
 ## 4. Primitives layer — wrap MUI, don't scatter it
 
@@ -57,6 +65,9 @@ has **two** apps with different data-fetching defaults (§6).
   `role="img"` + `aria-label`; absent → `aria-hidden="true"`.
 - Grow `common/` on demand (Button, StatusChip, ConfirmDialog, EmptyState, ErrorState,
   PageContainer, ...); wrap, don't hand-roll what MUI already provides.
+- **No tight coupling between modules — no exceptions.** The import boundaries here (common/
+  wraps the library; types/ owns codegen; screens own their VM hooks) are the enforcement, not
+  the limit of the rule: two modules that can only change together get restructured.
 
 ## 5. Types — one codegen boundary
 
@@ -87,6 +98,13 @@ has **two** apps with different data-fetching defaults (§6).
 
 ## 7. Testing
 
+- **Tests are part of the task. No test means the task is not complete.** TDD applies: failing
+  test before implementation, both runs recorded.
+- **Simulate actual user interactions — don't mock the interaction.** Drive components the way a
+  user does: `@testing-library/user-event` for clicks and typing (not `fireEvent` internals, and
+  never a mocked callback standing in for the interaction itself), queries by role/label. Mock
+  ONLY the network edge (fetch/stream fixtures) — never internal components or hooks; a test
+  that renders a mock of our own component verifies nothing.
 - vitest + @testing-library/react + jest-dom. `environment: 'node'` is the default; component
   tests declare `// @vitest-environment jsdom` as the literal first line.
 - `globals: false` — `describe`/`it`/`expect`/`vi` are imported explicitly.

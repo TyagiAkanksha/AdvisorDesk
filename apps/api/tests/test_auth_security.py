@@ -106,7 +106,7 @@ def test_callback_sets_httponly_lax_non_secure_cookie_in_development(tmp_engine:
     assert set_cookie.startswith(f"{COOKIE_NAME}=")
     assert "HttpOnly" in set_cookie
     assert "SameSite=lax" in set_cookie
-    assert "Secure" not in set_cookie
+    assert "; Secure" not in set_cookie
 
 
 def test_callback_sets_secure_cookie_in_production(tmp_engine: Engine) -> None:

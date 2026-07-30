@@ -23,6 +23,17 @@ cp .env.example .env
 Fill in `.env` — see PRD §9 for what each variable does. `DATABASE_URL` has two valid values,
 described next. **Never commit `.env`** (it's gitignored; only `.env.example` is tracked).
 
+Generate a `SESSION_SECRET` (required in every environment, including local/offline dev —
+`app.main` fails fast at boot if it's empty):
+
+```sh
+python3 -c "import secrets; print(secrets.token_urlsafe(48))"
+```
+
+Admin login additionally needs real Google OAuth credentials (`GOOGLE_CLIENT_ID`/
+`GOOGLE_CLIENT_SECRET`); without them the app still boots in dev, but logging into the admin
+app won't work until they're set.
+
 ### 2. Choose a database path (PRD §9)
 
 **Supabase (default, and the deployed target):** set `DATABASE_URL` in `.env` to your Supabase

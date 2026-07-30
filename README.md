@@ -34,6 +34,10 @@ Admin login additionally needs real Google OAuth credentials (`GOOGLE_CLIENT_ID`
 `GOOGLE_CLIENT_SECRET`); without them the app still boots in dev, but logging into the admin
 app won't work until they're set.
 
+`CORS_ORIGINS` ships pre-filled with the two local dev origins (`http://localhost:3000,
+http://localhost:3001`) so cross-origin requests from `apps/client`/`apps/admin` work
+out of the box; update it to your deployed frontend origins outside local dev.
+
 ### 2. Choose a database path (PRD §9)
 
 **Supabase (default, and the deployed target):** set `DATABASE_URL` in `.env` to your Supabase

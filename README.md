@@ -194,3 +194,10 @@ pnpm -C apps/client test
   the builder stage (`ghcr.io/astral-sh/uv:python3.12-bookworm-slim`) and local dev already use, so
   the runtime image stays version-matched to dev rather than drifting to whatever "latest 3.11+"
   a generic base image resolves to later.
+- **Pagination envelope field names (phase-2 task-03).** Every paginated list response uses the
+  same four field names — `items`, `total`, `page`, `page_size` — via a generic
+  `app.models.schemas.common.PaginatedResponse[T]` that per-resource DTOs (e.g.
+  `ContentListResponse`) specialize rather than reinventing. `total` is the full filtered count,
+  independent of `page`/`page_size`. Any later paginated endpoint (e.g. PRD §5.3's
+  `GET /public/content`) should specialize the same generic instead of introducing new field
+  names, so the admin/client codegen consumers only ever deal with one page shape.

@@ -1,6 +1,201 @@
 {
   "components": {
     "schemas": {
+      "ContentCreate": {
+        "description": "`POST /content`'s request body: a new draft (PRD \u00a75.2, \u00a74 slug rules).",
+        "properties": {
+          "body_md": {
+            "default": "",
+            "title": "Body Md",
+            "type": "string"
+          },
+          "tags": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Tags",
+            "type": "array"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "title"
+        ],
+        "title": "ContentCreate",
+        "type": "object"
+      },
+      "ContentListResponse": {
+        "description": "`GET /content`'s list envelope: one page of `ContentResponse` items (PRD \u00a75.2).",
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/ContentResponse"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "page": {
+            "title": "Page",
+            "type": "integer"
+          },
+          "page_size": {
+            "title": "Page Size",
+            "type": "integer"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "total",
+          "page",
+          "page_size"
+        ],
+        "title": "ContentListResponse",
+        "type": "object"
+      },
+      "ContentResponse": {
+        "description": "`Content` as returned by every by-id and list route (PRD \u00a75.2).\n\n`tags` is populated by the route layer via\n`app.services.tags.tags_for_contents` \u2014 this schema carries no ORM\nknowledge of its own (CONVENTIONS.md \u00a72: `app.models` is a pure leaf).",
+        "properties": {
+          "author_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Author Id"
+          },
+          "body_md": {
+            "title": "Body Md",
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "published_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Published At"
+          },
+          "slug": {
+            "title": "Slug",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "tags": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Tags",
+            "type": "array"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          },
+          "updated_by": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Updated By"
+          }
+        },
+        "required": [
+          "id",
+          "title",
+          "slug",
+          "body_md",
+          "status",
+          "tags",
+          "author_id",
+          "updated_by",
+          "published_at",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "ContentResponse",
+        "type": "object"
+      },
+      "ContentUpdate": {
+        "description": "`PATCH /content/{id}`'s request body: partial update, slug never included (PRD \u00a74.1).\n\nEvery field is optional so a caller can send only what changed; `None`\nmeans \"leave untouched\" for `title`/`body_md`, and for `tags` means\n\"leave the existing tag associations untouched\" (mirrors\n`app.services.content.update_content`'s own `None`-means-unchanged\ncontract for `tags`).",
+        "properties": {
+          "body_md": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Body Md"
+          },
+          "tags": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tags"
+          },
+          "title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title"
+          }
+        },
+        "title": "ContentUpdate",
+        "type": "object"
+      },
       "HTTPValidationError": {
         "properties": {
           "detail": {
@@ -56,6 +251,56 @@
           "avatar_url"
         ],
         "title": "MeResponse",
+        "type": "object"
+      },
+      "StatsResponse": {
+        "description": "Content counts by status and by tag, excluding soft-deleted content (PRD \u00a75.2).",
+        "properties": {
+          "by_status": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "By Status",
+            "type": "object"
+          },
+          "by_tag": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "By Tag",
+            "type": "object"
+          }
+        },
+        "required": [
+          "by_status",
+          "by_tag"
+        ],
+        "title": "StatsResponse",
+        "type": "object"
+      },
+      "TagWithCount": {
+        "description": "One non-deleted tag plus its usage count over non-deleted content (PRD \u00a75.2).",
+        "properties": {
+          "count": {
+            "title": "Count",
+            "type": "integer"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "count"
+        ],
+        "title": "TagWithCount",
         "type": "object"
       },
       "ValidationError": {
@@ -206,6 +451,349 @@
         "summary": "Auth Me"
       }
     },
+    "/api/v1/content": {
+      "get": {
+        "description": "PRD \u00a75.2: list content, filtered by `status`/`tag`/`q`, paginated.\n\n`q=\"\"` (present but empty) is treated identically to `q` omitted \u2014 no\ntitle filter \u2014 per the task-03 brief's explicit pin.",
+        "operationId": "content_list",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "status",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Status"
+            }
+          },
+          {
+            "in": "query",
+            "name": "tag",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Tag"
+            }
+          },
+          {
+            "in": "query",
+            "name": "q",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Q"
+            }
+          },
+          {
+            "in": "query",
+            "name": "page",
+            "required": false,
+            "schema": {
+              "default": 1,
+              "minimum": 1,
+              "title": "Page",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "page_size",
+            "required": false,
+            "schema": {
+              "default": 20,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Page Size",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ContentListResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Content List"
+      },
+      "post": {
+        "description": "PRD \u00a75.2: create a draft `Content` row (slug generated per \u00a74 rules).",
+        "operationId": "content_create",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ContentCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ContentResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Content Create"
+      }
+    },
+    "/api/v1/content/{content_id}": {
+      "delete": {
+        "description": "PRD \u00a75.2: soft-delete (tombstone + chunk removal in one transaction); no restore.",
+        "operationId": "content_delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "content_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Content Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Content Delete"
+      },
+      "get": {
+        "description": "PRD \u00a75.2: fetch one active `Content` row by id (soft-deleted/unknown -> 404, \u00a75).",
+        "operationId": "content_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "content_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Content Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ContentResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Content Get"
+      },
+      "patch": {
+        "description": "PRD \u00a75.2: update title/body/tags (slug unchanged); re-chunks iff already published.",
+        "operationId": "content_update",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "content_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Content Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ContentUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ContentResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Content Update"
+      }
+    },
+    "/api/v1/content/{content_id}/archive": {
+      "post": {
+        "description": "PRD \u00a75.2: archive \u2014 status -> archived, chunks removed.",
+        "operationId": "content_archive",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "content_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Content Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ContentResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Content Archive"
+      }
+    },
+    "/api/v1/content/{content_id}/publish": {
+      "post": {
+        "description": "PRD \u00a75.2/\u00a74: publish transaction \u2014 status, `published_at`, then (re)chunk.",
+        "operationId": "content_publish",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "content_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Content Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ContentResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Content Publish"
+      }
+    },
     "/api/v1/healthz": {
       "get": {
         "description": "Liveness probe: `{\"status\": \"ok\"}`, always \u2014 no auth, no DB touch (PRD \u00a79).",
@@ -227,6 +815,48 @@
           }
         },
         "summary": "Healthz"
+      }
+    },
+    "/api/v1/stats": {
+      "get": {
+        "description": "PRD \u00a75.2: content counts by status and by tag, excluding soft-deleted content.",
+        "operationId": "stats_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StatsResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Stats Get"
+      }
+    },
+    "/api/v1/tags": {
+      "get": {
+        "description": "PRD \u00a75.2: non-deleted tags with usage counts over non-deleted content only.",
+        "operationId": "tags_list",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/TagWithCount"
+                  },
+                  "title": "Response Tags List",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Tags List"
       }
     }
   }

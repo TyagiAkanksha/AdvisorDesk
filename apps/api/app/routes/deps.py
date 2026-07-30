@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session
 
 from app.auth.oauth import GoogleOAuthClient
 from app.config import Settings
+from app.services.lifecycle import ChunkPipeline
 
 
 def get_session(request: Request) -> Iterator[Session]:
@@ -63,3 +64,15 @@ def get_oauth_client(request: Request) -> GoogleOAuthClient:
     DB-less/schema-only caller does that.
     """
     return cast(GoogleOAuthClient, request.app.state.oauth_client)
+
+
+def get_chunk_pipeline(request: Request) -> ChunkPipeline:
+    """Return the `ChunkPipeline` `create_app` stored on `app.state` (PRD §4 lifecycle seam).
+
+    `create_app` always resolves this to a concrete `ChunkPipeline`
+    (`NoopChunkPipeline` by default, task-03's `RecordingChunkPipeline` fake
+    in tests, the real phase-3 pipeline later) — never `None` — so, unlike
+    `get_oauth_client`/`get_session`, there is no DB-less/unset case to
+    document here.
+    """
+    return cast(ChunkPipeline, request.app.state.chunk_pipeline)

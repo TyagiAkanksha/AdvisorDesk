@@ -101,7 +101,6 @@ def auth_callback(
 @router.post(
     "/auth/logout",
     operation_id="auth_logout",
-    responses={401: {"model": ErrorEnvelope}},
 )
 def auth_logout() -> Response:
     """PRD §5.1: clear the session cookie.

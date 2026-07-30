@@ -40,9 +40,9 @@ from app.services.stats import content_stats
 from app.services.tags import list_tags_with_counts, tags_for_contents
 
 # Review round 1, finding F2: every route below sits behind `require_admin`
-# (401) and, since every route also has at least a query/path/body field
-# FastAPI validates, can 422 — declared once here rather than repeated on
-# each decorator. `ErrorEnvelope` (not FastAPI's default
+# (401), and all but `tags_list`/`stats_get` (no request fields) can 422 —
+# declared once here rather than repeated on each decorator, a simplicity
+# trade that knowingly over-declares 422 on those two. `ErrorEnvelope` (not FastAPI's default
 # `HTTPValidationError{detail}`) replaces the 422 schema too, so the
 # committed `openapi.json` baseline — and both frontends' codegen — reflect
 # the `{"error": {"code","message"}}` shape `register_error_handlers`

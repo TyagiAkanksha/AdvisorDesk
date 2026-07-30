@@ -39,7 +39,14 @@ def auth_login(
 @router.get(
     "/auth/callback",
     operation_id="auth_callback",
+    status_code=303,
+    response_class=RedirectResponse,
     responses={
+        303: {
+            "description": (
+                "Session cookie set; redirects to the admin app (settings.admin_app_url)."
+            ),
+        },
         403: {"model": ErrorEnvelope},
         422: {"model": ErrorEnvelope},
     },
@@ -50,7 +57,7 @@ def auth_callback(
     oauth_client: GoogleOAuthClient = Depends(get_oauth_client),
     settings: Settings = Depends(get_settings),
     session: Session = Depends(get_session),
-) -> Response:
+) -> RedirectResponse:
     """PRD §5.1: exchange `code`, reject non-allowlisted emails, upsert, set the session cookie.
 
     `state` is accepted (Google always sends back what `/auth/login`
@@ -77,6 +84,20 @@ def auth_callback(
     no `require_admin` dependency, so, unlike the admin routes in
     `app.routes.content_routes`, no 401 applies here.
 
+    Callback landing (task-01 review M8 resolution, amended before task-04):
+    success now 303-redirects to `settings.admin_app_url` with the session
+    cookie set on that SAME `RedirectResponse` — a bodyless 200 dead-ended
+    the browser on the API's own origin after Google sign-in, since nothing
+    in the admin SPA runs there to pick the flow back up.
+    `status_code=303`/`response_class=RedirectResponse` on the decorator
+    (rather than leaving FastAPI's implicit 200 default) makes the OpenAPI
+    baseline's success entry both the true status code and correctly
+    body-less (`RedirectResponse.media_type` is `None`, unlike the default
+    `JSONResponse`) — `responses=`'s `403`/`422` arms are untouched by this
+    and still render as `ErrorEnvelope`. Error paths never construct a
+    response at all (they raise), so they are unaffected by this route
+    always building a `RedirectResponse` on the success path.
+
     Raises:
         ForbiddenError: the normalized email is not in `ADMIN_EMAILS` — the
             check runs before any row write (PRD §5.1/§9).
@@ -93,7 +114,7 @@ def auth_callback(
     }
     user = upsert_from_google(session, normalized_identity)
 
-    response = Response(status_code=200)
+    response = RedirectResponse(settings.admin_app_url, status_code=303)
     issue_cookie(response, user.id, settings)
     return response
 

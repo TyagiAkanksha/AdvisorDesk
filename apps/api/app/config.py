@@ -54,6 +54,16 @@ class Settings(BaseSettings):
     # `ENVIRONMENT=production`.
     environment: str = "development"
 
+    # Also not part of the PRD §9 env roster (phase-2 task-01 review M8
+    # resolution, amended before task-04): the admin SPA's origin.
+    # `app.routes.auth_routes.auth_callback` 303-redirects here on success
+    # so the browser lands back in the admin app after Google sign-in
+    # instead of dead-ending on a bodyless response on the API's own
+    # origin. Defaults to the local admin dev server so
+    # `Settings()`/`create_app()` stay zero-env-var constructible; a real
+    # deployment sets `ADMIN_APP_URL` to the admin app's real origin.
+    admin_app_url: str = "http://localhost:3001"
+
     # Implementation trap: pydantic-settings JSON-decodes "complex" field
     # types (list[str], dict, ...) from their env-var string BEFORE
     # validation, and raises on a bare comma-separated value like

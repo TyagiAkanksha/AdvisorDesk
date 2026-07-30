@@ -2,7 +2,7 @@
   "components": {
     "schemas": {
       "ContentCreate": {
-        "description": "`POST /content`'s request body: a new draft (PRD \u00a75.2, \u00a74 slug rules).",
+        "description": "`POST /content`'s request body: a new draft (PRD \u00a75.2, \u00a74 slug rules).\n\n`title` is `min_length=1` (review round 1, finding F4): an empty title\nnow 422s instead of creating a degenerate row. Plain length check only \u2014\na whitespace-only title (`\"   \"`) still passes; strip-then-check is\nledgered separately alongside task-02's slug fallback, not this round.",
         "properties": {
           "body_md": {
             "default": "",
@@ -17,6 +17,7 @@
             "type": "array"
           },
           "title": {
+            "minLength": 1,
             "title": "Title",
             "type": "string"
           }
@@ -105,6 +106,11 @@
             "type": "string"
           },
           "status": {
+            "enum": [
+              "draft",
+              "published",
+              "archived"
+            ],
             "title": "Status",
             "type": "string"
           },
@@ -154,7 +160,7 @@
         "type": "object"
       },
       "ContentUpdate": {
-        "description": "`PATCH /content/{id}`'s request body: partial update, slug never included (PRD \u00a74.1).\n\nEvery field is optional so a caller can send only what changed; `None`\nmeans \"leave untouched\" for `title`/`body_md`, and for `tags` means\n\"leave the existing tag associations untouched\" (mirrors\n`app.services.content.update_content`'s own `None`-means-unchanged\ncontract for `tags`).",
+        "description": "`PATCH /content/{id}`'s request body: partial update, slug never included (PRD \u00a74.1).\n\nEvery field is optional so a caller can send only what changed; `None`\nmeans \"leave untouched\" for `title`/`body_md`, and for `tags` means\n\"leave the existing tag associations untouched\" (mirrors\n`app.services.content.update_content`'s own `None`-means-unchanged\ncontract for `tags`).\n\n`title`, if given, is `min_length=1` (review round 1, finding F4, same\nscope note as `ContentCreate.title`) \u2014 `None` (omitted) still means\n\"leave untouched\" and is unaffected by the constraint.",
         "properties": {
           "body_md": {
             "anyOf": [
@@ -184,6 +190,7 @@
           "title": {
             "anyOf": [
               {
+                "minLength": 1,
                 "type": "string"
               },
               {
@@ -196,17 +203,36 @@
         "title": "ContentUpdate",
         "type": "object"
       },
-      "HTTPValidationError": {
+      "ErrorDetail": {
+        "description": "The `{\"code\", \"message\"}` object nested under `\"error\"` in the PRD \u00a79 envelope.",
         "properties": {
-          "detail": {
-            "items": {
-              "$ref": "#/components/schemas/ValidationError"
-            },
-            "title": "Detail",
-            "type": "array"
+          "code": {
+            "title": "Code",
+            "type": "string"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
           }
         },
-        "title": "HTTPValidationError",
+        "required": [
+          "code",
+          "message"
+        ],
+        "title": "ErrorDetail",
+        "type": "object"
+      },
+      "ErrorEnvelope": {
+        "description": "The PRD \u00a79 error envelope: `{\"error\": {\"code\", \"message\"}}`.\n\nReview round 1, finding F2: `app.routes.errors::register_error_handlers`\nhas always *rendered* this shape at runtime, but no route declared it in\nOpenAPI \u2014 every operation's committed `openapi.json` baseline instead\ncarried FastAPI's own default `{detail}` validation-error schema for\n422, and no 401/404 appeared anywhere. Declaring `responses={...:\n{\"model\": ErrorEnvelope}}` on routes (`app.routes.content_routes`,\n`app.routes.auth_routes`) makes the baseline \u2014 and both frontends'\n`openapi-typescript` codegen consuming it \u2014 match what the server\nactually answers, and replaces that default schema outright (verified\nby `tests/test_routes_errors.py`'s baseline-schema test: it is absent\nfrom the generated `openapi.json` component list). Modeled as nested\nmodels (not a bare `dict[str, Any]`) so codegen emits real, navigable\ntypes for `error.code`/`error.message` rather than an opaque blob.",
+        "properties": {
+          "error": {
+            "$ref": "#/components/schemas/ErrorDetail"
+          }
+        },
+        "required": [
+          "error"
+        ],
+        "title": "ErrorEnvelope",
         "type": "object"
       },
       "MeResponse": {
@@ -302,46 +328,6 @@
         ],
         "title": "TagWithCount",
         "type": "object"
-      },
-      "ValidationError": {
-        "properties": {
-          "ctx": {
-            "title": "Context",
-            "type": "object"
-          },
-          "input": {
-            "title": "Input"
-          },
-          "loc": {
-            "items": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "integer"
-                }
-              ]
-            },
-            "title": "Location",
-            "type": "array"
-          },
-          "msg": {
-            "title": "Message",
-            "type": "string"
-          },
-          "type": {
-            "title": "Error Type",
-            "type": "string"
-          }
-        },
-        "required": [
-          "loc",
-          "msg",
-          "type"
-        ],
-        "title": "ValidationError",
-        "type": "object"
       }
     }
   },
@@ -353,7 +339,7 @@
   "paths": {
     "/api/v1/auth/callback": {
       "get": {
-        "description": "PRD \u00a75.1: exchange `code`, reject non-allowlisted emails, upsert, set the session cookie.\n\n`state` is accepted (Google always sends back what `/auth/login`\ngenerated) but not cryptographically verified against a stored value \u2014\nPRD \u00a79 pins the allowlist/session-cookie/soft-delete behaviors, not a\nCSRF `state` round-trip, so this stays minimal.\n\nEmail normalization (phase-2 task-01 review round 1, finding I3):\n`identity[\"email\"]` is normalized (`strip().lower()`) exactly once, here,\nand the SAME normalized value is used both for the allowlist check and\nfor persistence \u2014 passing a raw, differently-cased email through to\n`upsert_from_google` would let e.g. `'Admin@Example.com'` and\n`'admin@example.com'` create two distinct `User` rows, splitting the\nadmin's identity and breaking the PRD \u00a74.1 same-row reactivation\nguarantee. `upsert_from_google` also normalizes defensively (belt and\nsuspenders for any future caller), but this route is the canonical place\nthe normalization is decided, since it is also what the allowlist check\nmust agree with. `name`/`avatar_url` are passed through unchanged.\n\nRaises:\n    ForbiddenError: the normalized email is not in `ADMIN_EMAILS` \u2014 the\n        check runs before any row write (PRD \u00a75.1/\u00a79).",
+        "description": "PRD \u00a75.1: exchange `code`, reject non-allowlisted emails, upsert, set the session cookie.\n\n`state` is accepted (Google always sends back what `/auth/login`\ngenerated) but not cryptographically verified against a stored value \u2014\nPRD \u00a79 pins the allowlist/session-cookie/soft-delete behaviors, not a\nCSRF `state` round-trip, so this stays minimal.\n\nEmail normalization (phase-2 task-01 review round 1, finding I3):\n`identity[\"email\"]` is normalized (`strip().lower()`) exactly once, here,\nand the SAME normalized value is used both for the allowlist check and\nfor persistence \u2014 passing a raw, differently-cased email through to\n`upsert_from_google` would let e.g. `'Admin@Example.com'` and\n`'admin@example.com'` create two distinct `User` rows, splitting the\nadmin's identity and breaking the PRD \u00a74.1 same-row reactivation\nguarantee. `upsert_from_google` also normalizes defensively (belt and\nsuspenders for any future caller), but this route is the canonical place\nthe normalization is decided, since it is also what the allowlist check\nmust agree with. `name`/`avatar_url` are passed through unchanged.\n\nReview round 1, finding F2: `responses=` declares the 403 `ForbiddenError`\nraises below plus the 422 a missing/malformed `code`/`state` query param\nproduces (both rendered as `ErrorEnvelope` by `register_error_handlers`,\nnever FastAPI's own default validation-error schema) \u2014 this route has\nno `require_admin` dependency, so, unlike the admin routes in\n`app.routes.content_routes`, no 401 applies here.\n\nRaises:\n    ForbiddenError: the normalized email is not in `ADMIN_EMAILS` \u2014 the\n        check runs before any row write (PRD \u00a75.1/\u00a79).",
         "operationId": "auth_callback",
         "parameters": [
           {
@@ -384,15 +370,25 @@
             },
             "description": "Successful Response"
           },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
           "422": {
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
+                  "$ref": "#/components/schemas/ErrorEnvelope"
                 }
               }
             },
-            "description": "Validation Error"
+            "description": "Unprocessable Entity"
           }
         },
         "summary": "Auth Callback"
@@ -417,7 +413,7 @@
     },
     "/api/v1/auth/logout": {
       "post": {
-        "description": "PRD \u00a75.1: clear the session cookie.",
+        "description": "PRD \u00a75.1: clear the session cookie.\n\nReview round 1, finding F2: 401 is declared on the OpenAPI baseline for\nsymmetry with `/auth/me` (both are \"current session\" endpoints) even\nthough this route has no `require_admin` dependency and never actually\nemits one today \u2014 logout intentionally clears the cookie regardless of\nwhether the caller has a valid session.",
         "operationId": "auth_logout",
         "responses": {
           "200": {
@@ -427,6 +423,16 @@
               }
             },
             "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Unauthorized"
           }
         },
         "summary": "Auth Logout"
@@ -446,6 +452,16 @@
               }
             },
             "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Unauthorized"
           }
         },
         "summary": "Auth Me"
@@ -463,6 +479,11 @@
             "schema": {
               "anyOf": [
                 {
+                  "enum": [
+                    "draft",
+                    "published",
+                    "archived"
+                  ],
                   "type": "string"
                 },
                 {
@@ -539,15 +560,25 @@
             },
             "description": "Successful Response"
           },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
           "422": {
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
+                  "$ref": "#/components/schemas/ErrorEnvelope"
                 }
               }
             },
-            "description": "Validation Error"
+            "description": "Unprocessable Entity"
           }
         },
         "summary": "Content List"
@@ -576,15 +607,25 @@
             },
             "description": "Successful Response"
           },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
           "422": {
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
+                  "$ref": "#/components/schemas/ErrorEnvelope"
                 }
               }
             },
-            "description": "Validation Error"
+            "description": "Unprocessable Entity"
           }
         },
         "summary": "Content Create"
@@ -610,15 +651,35 @@
           "204": {
             "description": "Successful Response"
           },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
           "422": {
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
+                  "$ref": "#/components/schemas/ErrorEnvelope"
                 }
               }
             },
-            "description": "Validation Error"
+            "description": "Unprocessable Entity"
           }
         },
         "summary": "Content Delete"
@@ -649,15 +710,35 @@
             },
             "description": "Successful Response"
           },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
           "422": {
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
+                  "$ref": "#/components/schemas/ErrorEnvelope"
                 }
               }
             },
-            "description": "Validation Error"
+            "description": "Unprocessable Entity"
           }
         },
         "summary": "Content Get"
@@ -698,15 +779,35 @@
             },
             "description": "Successful Response"
           },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
           "422": {
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
+                  "$ref": "#/components/schemas/ErrorEnvelope"
                 }
               }
             },
-            "description": "Validation Error"
+            "description": "Unprocessable Entity"
           }
         },
         "summary": "Content Update"
@@ -739,15 +840,35 @@
             },
             "description": "Successful Response"
           },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
           "422": {
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
+                  "$ref": "#/components/schemas/ErrorEnvelope"
                 }
               }
             },
-            "description": "Validation Error"
+            "description": "Unprocessable Entity"
           }
         },
         "summary": "Content Archive"
@@ -780,15 +901,35 @@
             },
             "description": "Successful Response"
           },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
           "422": {
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
+                  "$ref": "#/components/schemas/ErrorEnvelope"
                 }
               }
             },
-            "description": "Validation Error"
+            "description": "Unprocessable Entity"
           }
         },
         "summary": "Content Publish"
@@ -831,6 +972,26 @@
               }
             },
             "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
           }
         },
         "summary": "Stats Get"
@@ -854,6 +1015,26 @@
               }
             },
             "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
           }
         },
         "summary": "Tags List"

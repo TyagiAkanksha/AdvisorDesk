@@ -32,6 +32,13 @@ export interface paths {
          *     the normalization is decided, since it is also what the allowlist check
          *     must agree with. `name`/`avatar_url` are passed through unchanged.
          *
+         *     Review round 1, finding F2: `responses=` declares the 403 `ForbiddenError`
+         *     raises below plus the 422 a missing/malformed `code`/`state` query param
+         *     produces (both rendered as `ErrorEnvelope` by `register_error_handlers`,
+         *     never FastAPI's own default validation-error schema) — this route has
+         *     no `require_admin` dependency, so, unlike the admin routes in
+         *     `app.routes.content_routes`, no 401 applies here.
+         *
          *     Raises:
          *         ForbiddenError: the normalized email is not in `ADMIN_EMAILS` — the
          *             check runs before any row write (PRD §5.1/§9).
@@ -77,6 +84,12 @@ export interface paths {
         /**
          * Auth Logout
          * @description PRD §5.1: clear the session cookie.
+         *
+         *     Review round 1, finding F2: 401 is declared on the OpenAPI baseline for
+         *     symmetry with `/auth/me` (both are "current session" endpoints) even
+         *     though this route has no `require_admin` dependency and never actually
+         *     emits one today — logout intentionally clears the cookie regardless of
+         *     whether the caller has a valid session.
          */
         post: operations["auth_logout"];
         delete?: never;
@@ -288,6 +301,11 @@ export interface components {
         /**
          * ContentCreate
          * @description `POST /content`'s request body: a new draft (PRD §5.2, §4 slug rules).
+         *
+         *     `title` is `min_length=1` (review round 1, finding F4): an empty title
+         *     now 422s instead of creating a degenerate row. Plain length check only —
+         *     a whitespace-only title (`"   "`) still passes; strip-then-check is
+         *     ledgered separately alongside task-02's slug fallback, not this round.
          */
         ContentCreate: {
             /**
@@ -341,8 +359,11 @@ export interface components {
             published_at: string | null;
             /** Slug */
             slug: string;
-            /** Status */
-            status: string;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "draft" | "published" | "archived";
             /** Tags */
             tags: string[];
             /** Title */
@@ -364,6 +385,10 @@ export interface components {
          *     "leave the existing tag associations untouched" (mirrors
          *     `app.services.content.update_content`'s own `None`-means-unchanged
          *     contract for `tags`).
+         *
+         *     `title`, if given, is `min_length=1` (review round 1, finding F4, same
+         *     scope note as `ContentCreate.title`) — `None` (omitted) still means
+         *     "leave untouched" and is unaffected by the constraint.
          */
         ContentUpdate: {
             /** Body Md */
@@ -373,10 +398,36 @@ export interface components {
             /** Title */
             title?: string | null;
         };
-        /** HTTPValidationError */
-        HTTPValidationError: {
-            /** Detail */
-            detail?: components["schemas"]["ValidationError"][];
+        /**
+         * ErrorDetail
+         * @description The `{"code", "message"}` object nested under `"error"` in the PRD §9 envelope.
+         */
+        ErrorDetail: {
+            /** Code */
+            code: string;
+            /** Message */
+            message: string;
+        };
+        /**
+         * ErrorEnvelope
+         * @description The PRD §9 error envelope: `{"error": {"code", "message"}}`.
+         *
+         *     Review round 1, finding F2: `app.routes.errors::register_error_handlers`
+         *     has always *rendered* this shape at runtime, but no route declared it in
+         *     OpenAPI — every operation's committed `openapi.json` baseline instead
+         *     carried FastAPI's own default `{detail}` validation-error schema for
+         *     422, and no 401/404 appeared anywhere. Declaring `responses={...:
+         *     {"model": ErrorEnvelope}}` on routes (`app.routes.content_routes`,
+         *     `app.routes.auth_routes`) makes the baseline — and both frontends'
+         *     `openapi-typescript` codegen consuming it — match what the server
+         *     actually answers, and replaces that default schema outright (verified
+         *     by `tests/test_routes_errors.py`'s baseline-schema test: it is absent
+         *     from the generated `openapi.json` component list). Modeled as nested
+         *     models (not a bare `dict[str, Any]`) so codegen emits real, navigable
+         *     types for `error.code`/`error.message` rather than an opaque blob.
+         */
+        ErrorEnvelope: {
+            error: components["schemas"]["ErrorDetail"];
         };
         /**
          * MeResponse
@@ -424,19 +475,6 @@ export interface components {
             /** Name */
             name: string;
         };
-        /** ValidationError */
-        ValidationError: {
-            /** Context */
-            ctx?: Record<string, never>;
-            /** Input */
-            input?: unknown;
-            /** Location */
-            loc: (string | number)[];
-            /** Message */
-            msg: string;
-            /** Error Type */
-            type: string;
-        };
     };
     responses: never;
     parameters: never;
@@ -467,13 +505,22 @@ export interface operations {
                     "application/json": unknown;
                 };
             };
-            /** @description Validation Error */
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Unprocessable Entity */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
         };
@@ -516,6 +563,15 @@ export interface operations {
                     "application/json": unknown;
                 };
             };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
         };
     };
     auth_me: {
@@ -536,12 +592,21 @@ export interface operations {
                     "application/json": components["schemas"]["MeResponse"];
                 };
             };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
         };
     };
     content_list: {
         parameters: {
             query?: {
-                status?: string | null;
+                status?: ("draft" | "published" | "archived") | null;
                 tag?: string | null;
                 q?: string | null;
                 page?: number;
@@ -562,13 +627,22 @@ export interface operations {
                     "application/json": components["schemas"]["ContentListResponse"];
                 };
             };
-            /** @description Validation Error */
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Unprocessable Entity */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
         };
@@ -595,13 +669,22 @@ export interface operations {
                     "application/json": components["schemas"]["ContentResponse"];
                 };
             };
-            /** @description Validation Error */
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Unprocessable Entity */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
         };
@@ -626,13 +709,31 @@ export interface operations {
                     "application/json": components["schemas"]["ContentResponse"];
                 };
             };
-            /** @description Validation Error */
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Unprocessable Entity */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
         };
@@ -655,13 +756,31 @@ export interface operations {
                 };
                 content?: never;
             };
-            /** @description Validation Error */
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Unprocessable Entity */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
         };
@@ -690,13 +809,31 @@ export interface operations {
                     "application/json": components["schemas"]["ContentResponse"];
                 };
             };
-            /** @description Validation Error */
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Unprocessable Entity */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
         };
@@ -721,13 +858,31 @@ export interface operations {
                     "application/json": components["schemas"]["ContentResponse"];
                 };
             };
-            /** @description Validation Error */
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Unprocessable Entity */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
         };
@@ -752,13 +907,31 @@ export interface operations {
                     "application/json": components["schemas"]["ContentResponse"];
                 };
             };
-            /** @description Validation Error */
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Unprocessable Entity */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
         };
@@ -803,6 +976,24 @@ export interface operations {
                     "application/json": components["schemas"]["StatsResponse"];
                 };
             };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
         };
     };
     tags_list: {
@@ -821,6 +1012,24 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["TagWithCount"][];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
         };

@@ -15,6 +15,7 @@ amendment). List responses batch this into one call for the whole page
 from __future__ import annotations
 
 import uuid
+from typing import cast
 
 from fastapi import APIRouter, Depends, Query
 from fastapi.responses import Response
@@ -22,10 +23,12 @@ from sqlalchemy.orm import Session
 
 from app.auth.deps import AdminPrincipal, require_admin
 from app.models import Content
+from app.models.schemas.common import ErrorEnvelope
 from app.models.schemas.content import (
     ContentCreate,
     ContentListResponse,
     ContentResponse,
+    ContentStatus,
     ContentUpdate,
 )
 from app.models.schemas.stats import StatsResponse
@@ -36,11 +39,26 @@ from app.services.lifecycle import ChunkPipeline
 from app.services.stats import content_stats
 from app.services.tags import list_tags_with_counts, tags_for_contents
 
-router = APIRouter()
+# Review round 1, finding F2: every route below sits behind `require_admin`
+# (401) and, since every route also has at least a query/path/body field
+# FastAPI validates, can 422 — declared once here rather than repeated on
+# each decorator. `ErrorEnvelope` (not FastAPI's default
+# `HTTPValidationError{detail}`) replaces the 422 schema too, so the
+# committed `openapi.json` baseline — and both frontends' codegen — reflect
+# the `{"error": {"code","message"}}` shape `register_error_handlers`
+# actually renders (CONVENTIONS.md §8).
+router = APIRouter(
+    responses={401: {"model": ErrorEnvelope}, 422: {"model": ErrorEnvelope}},
+)
 
 # PRD §5.2: page_size is bounded so a caller can't force an unbounded scan;
 # 100 is a generous ceiling for an admin CMS list, not asserted by any test.
 _MAX_PAGE_SIZE = 100
+
+# The five by-id routes additionally 404 (soft-deleted/unknown id, PRD §5) —
+# merged with `router.responses` (401/422 above) by FastAPI's own
+# router-then-route `responses` merge, not repeated per decorator.
+_BY_ID_RESPONSES: dict[int | str, dict[str, object]] = {404: {"model": ErrorEnvelope}}
 
 
 def _to_content_response(content: Content, tags: list[str]) -> ContentResponse:
@@ -50,7 +68,13 @@ def _to_content_response(content: Content, tags: list[str]) -> ContentResponse:
         title=content.title,
         slug=content.slug,
         body_md=content.body_md,
-        status=content.status,
+        # `Content.status` (the ORM row) is a plain `Mapped[str]` —
+        # `app/models/content.py` deliberately does not import the
+        # schemas-layer `ContentStatus` Literal (schemas depend on the ORM
+        # layer, not the reverse). The DB `status_valid` CheckConstraint
+        # guarantees the value is always one of the three, so the cast here
+        # is the one place that runtime guarantee becomes a static one.
+        status=cast(ContentStatus, content.status),
         tags=tags,
         author_id=content.author_id,
         updated_by=content.updated_by,
@@ -62,7 +86,7 @@ def _to_content_response(content: Content, tags: list[str]) -> ContentResponse:
 
 @router.get("/content", operation_id="content_list", response_model=ContentListResponse)
 def content_list(
-    status: str | None = Query(default=None),
+    status: ContentStatus | None = Query(default=None),
     tag: str | None = Query(default=None),
     q: str | None = Query(default=None),
     page: int = Query(default=1, ge=1),
@@ -115,7 +139,12 @@ def content_create(
     return _to_content_response(content, tags)
 
 
-@router.get("/content/{content_id}", operation_id="content_get", response_model=ContentResponse)
+@router.get(
+    "/content/{content_id}",
+    operation_id="content_get",
+    response_model=ContentResponse,
+    responses=_BY_ID_RESPONSES,
+)
 def content_get(
     content_id: uuid.UUID,
     principal: AdminPrincipal = Depends(require_admin),
@@ -128,7 +157,10 @@ def content_get(
 
 
 @router.patch(
-    "/content/{content_id}", operation_id="content_update", response_model=ContentResponse
+    "/content/{content_id}",
+    operation_id="content_update",
+    response_model=ContentResponse,
+    responses=_BY_ID_RESPONSES,
 )
 def content_update(
     content_id: uuid.UUID,
@@ -151,7 +183,12 @@ def content_update(
     return _to_content_response(content, tags)
 
 
-@router.delete("/content/{content_id}", operation_id="content_delete", status_code=204)
+@router.delete(
+    "/content/{content_id}",
+    operation_id="content_delete",
+    status_code=204,
+    responses=_BY_ID_RESPONSES,
+)
 def content_delete(
     content_id: uuid.UUID,
     principal: AdminPrincipal = Depends(require_admin),
@@ -166,7 +203,10 @@ def content_delete(
 
 
 @router.post(
-    "/content/{content_id}/publish", operation_id="content_publish", response_model=ContentResponse
+    "/content/{content_id}/publish",
+    operation_id="content_publish",
+    response_model=ContentResponse,
+    responses=_BY_ID_RESPONSES,
 )
 def content_publish(
     content_id: uuid.UUID,
@@ -183,7 +223,10 @@ def content_publish(
 
 
 @router.post(
-    "/content/{content_id}/archive", operation_id="content_archive", response_model=ContentResponse
+    "/content/{content_id}/archive",
+    operation_id="content_archive",
+    response_model=ContentResponse,
+    responses=_BY_ID_RESPONSES,
 )
 def content_archive(
     content_id: uuid.UUID,

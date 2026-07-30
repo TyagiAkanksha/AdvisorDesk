@@ -71,8 +71,24 @@ def _validation_error_handler(request: Request, exc: Exception) -> JSONResponse:
     `RequestValidationError` (raised before any route body runs, e.g. a
     missing required field) with `{"error": {"code", "message"}}` — a 422,
     same as FastAPI's default status.
+
+    Review round 1, finding F1: `str(exc)` renders FastAPI 0.140's
+    *developer* form of a `RequestValidationError` — an absolute source
+    path, the endpoint's stack frame, and (worst of all) the raw
+    `'input': ...` value the caller submitted, verbatim, unauthenticated.
+    `POST /content` with `{"body_md": {"secret": "s3cr3t-value"}}` echoed
+    that literal secret back in the 422 body. The message is rebuilt here
+    from `exc.errors()` using ONLY `loc`/`msg` — never `input`/`ctx`/`url`
+    or any frame — so it can describe *which* field failed and *why*
+    without ever repeating what the caller sent.
     """
-    envelope = {"error": {"code": "validation_error", "message": str(exc)}}
+    parts: list[str] = []
+    if isinstance(exc, RequestValidationError):
+        for error in exc.errors():
+            loc = ".".join(str(segment) for segment in error["loc"])
+            parts.append(f"{loc}: {error['msg']}" if loc else error["msg"])
+    message = "; ".join(parts) if parts else "Validation error."
+    envelope = {"error": {"code": "validation_error", "message": message}}
     return JSONResponse(status_code=422, content=envelope)
 
 

@@ -19,6 +19,7 @@ from app.auth.oauth import GoogleOAuthClient
 from app.auth.sessions import clear_cookie, issue_cookie
 from app.config import Settings
 from app.models.schemas.auth import GoogleIdentity, MeResponse
+from app.models.schemas.common import ErrorEnvelope
 from app.routes.deps import get_oauth_client, get_session, get_settings
 from app.services.errors import AuthRequiredError, ForbiddenError
 from app.services.users import get_active_user, upsert_from_google
@@ -35,7 +36,14 @@ def auth_login(
     return RedirectResponse(oauth_client.authorization_url(state), status_code=307)
 
 
-@router.get("/auth/callback", operation_id="auth_callback")
+@router.get(
+    "/auth/callback",
+    operation_id="auth_callback",
+    responses={
+        403: {"model": ErrorEnvelope},
+        422: {"model": ErrorEnvelope},
+    },
+)
 def auth_callback(
     code: str,
     state: str,
@@ -62,6 +70,13 @@ def auth_callback(
     the normalization is decided, since it is also what the allowlist check
     must agree with. `name`/`avatar_url` are passed through unchanged.
 
+    Review round 1, finding F2: `responses=` declares the 403 `ForbiddenError`
+    raises below plus the 422 a missing/malformed `code`/`state` query param
+    produces (both rendered as `ErrorEnvelope` by `register_error_handlers`,
+    never FastAPI's own default validation-error schema) — this route has
+    no `require_admin` dependency, so, unlike the admin routes in
+    `app.routes.content_routes`, no 401 applies here.
+
     Raises:
         ForbiddenError: the normalized email is not in `ADMIN_EMAILS` — the
             check runs before any row write (PRD §5.1/§9).
@@ -83,15 +98,31 @@ def auth_callback(
     return response
 
 
-@router.post("/auth/logout", operation_id="auth_logout")
+@router.post(
+    "/auth/logout",
+    operation_id="auth_logout",
+    responses={401: {"model": ErrorEnvelope}},
+)
 def auth_logout() -> Response:
-    """PRD §5.1: clear the session cookie."""
+    """PRD §5.1: clear the session cookie.
+
+    Review round 1, finding F2: 401 is declared on the OpenAPI baseline for
+    symmetry with `/auth/me` (both are "current session" endpoints) even
+    though this route has no `require_admin` dependency and never actually
+    emits one today — logout intentionally clears the cookie regardless of
+    whether the caller has a valid session.
+    """
     response = Response(status_code=200)
     clear_cookie(response)
     return response
 
 
-@router.get("/auth/me", operation_id="auth_me", response_model=MeResponse)
+@router.get(
+    "/auth/me",
+    operation_id="auth_me",
+    response_model=MeResponse,
+    responses={401: {"model": ErrorEnvelope}},
+)
 def auth_me(
     principal: AdminPrincipal = Depends(require_admin),
     session: Session = Depends(get_session),

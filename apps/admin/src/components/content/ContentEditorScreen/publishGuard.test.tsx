@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import '@testing-library/jest-dom/vitest';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -174,5 +174,42 @@ describe('ContentEditorScreen save-then-publish', () => {
         requestMethod(input, init) === 'POST',
     );
     expect(publishCalls).toHaveLength(0);
+  });
+
+  // fix round 2, N3 (folded Minor): before this round, `isTransitioning` (the Publish button's
+  // `disabled` guard) never accounted for `isSaving` — so the save-then-publish PATCH this
+  // round's F2 introduced ran with Publish still clickable, and a fast double-click fired
+  // PATCH -> PATCH -> PUBLISH -> PUBLISH (two stale-body embeds from phase 3). Two synchronous
+  // `fireEvent.click`s (rather than two awaited `user.click`s, which would let a render commit
+  // — and the `disabled` attribute apply — in between) is what actually exercises the race.
+  it('double-clicking Publish on a dirty editor still fires exactly one PATCH and one POST /publish', async () => {
+    const fetchMock = mockFetch();
+    const user = userEvent.setup();
+
+    renderEdit();
+
+    const titleInput = await screen.findByRole('textbox', { name: /title/i });
+    await user.clear(titleInput);
+    await user.type(titleInput, 'Changed Title');
+
+    const publishButton = screen.getByRole('button', { name: /publish/i });
+    fireEvent.click(publishButton);
+    fireEvent.click(publishButton);
+
+    await waitFor(() => {
+      const publishCalls = fetchMock.mock.calls.filter(
+        ([input, init]) =>
+          pathnameOf(input) === `/api/v1/content/${draftFixture.id}/publish` &&
+          requestMethod(input, init) === 'POST',
+      );
+      expect(publishCalls).toHaveLength(1);
+    });
+
+    const patchCalls = fetchMock.mock.calls.filter(
+      ([input, init]) =>
+        pathnameOf(input) === `/api/v1/content/${draftFixture.id}` &&
+        requestMethod(input, init) === 'PATCH',
+    );
+    expect(patchCalls).toHaveLength(1);
   });
 });

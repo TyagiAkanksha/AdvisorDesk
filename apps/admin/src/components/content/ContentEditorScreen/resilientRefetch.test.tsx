@@ -122,4 +122,74 @@ describe('ContentEditorScreen resilient background refetch', () => {
     expect(alert).toBeVisible();
     expect(alert.textContent?.trim().length).toBeGreaterThan(0);
   });
+
+  // fix round 2, N2 (Important, blocking — re-review regression on this round's own F3 fix):
+  // `displayedSnackbarMessage` re-derived the alert from `isError && hasContent` on every
+  // render, so `closeSnackbar` (which only cleared the unrelated explicit `snackbarMessage`
+  // state) had no effect on it — zero escape hatches (Close, auto-hide, and clickaway all
+  // failed to dismiss it; clickaway was already correctly a no-op from this round's M2, which
+  // made the missing Close/auto-hide path show up as the alert being permanently stuck).
+  it('clicking Close dismisses the background-refetch alert; a later, distinct failure gets its own alert again', async () => {
+    let getCalls = 0;
+    const fetchMock = vi.fn<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>(
+      async (input, init) => {
+        const pathname = pathnameOf(input);
+        const method = requestMethod(input, init);
+
+        if (pathname === `/api/v1/content/${draftFixture.id}` && method === 'GET') {
+          getCalls += 1;
+          // 1: initial mount succeeds. 2: refetch after Save #1 fails (dismissed below).
+          // 3: refetch after Save #2 succeeds (clears the failure — and the dismissal with
+          // it). 4: refetch after Save #3 fails again — a NEW, distinct failure.
+          if (getCalls === 2 || getCalls === 4) {
+            return jsonResponse(
+              { error: { code: 'internal_error', message: 'Refresh failed.' } },
+              500,
+            );
+          }
+          return jsonResponse(draftFixture);
+        }
+        if (pathname === `/api/v1/content/${draftFixture.id}` && method === 'PATCH') {
+          return jsonResponse(draftFixture);
+        }
+        if (pathname === '/api/v1/tags' && method === 'GET') {
+          return jsonResponse([]);
+        }
+        return jsonResponse({ error: { code: 'not_found', message: 'unmocked route' } }, 404);
+      },
+    );
+    global.fetch = fetchMock;
+    const user = userEvent.setup();
+
+    renderEdit();
+
+    const titleInput = await screen.findByRole('textbox', { name: /title/i });
+
+    // Save #1 -> PATCH succeeds -> refetch #2 fails -> alert.
+    await user.clear(titleInput);
+    await user.type(titleInput, 'Edit One');
+    await user.click(screen.getByRole('button', { name: /save/i }));
+    await waitFor(() => expect(getCalls).toBeGreaterThanOrEqual(2));
+    await screen.findByRole('alert');
+
+    // Dismiss it.
+    await user.click(screen.getByRole('button', { name: /close/i }));
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+
+    // Save #2 (still dirty — the failed refetch never wrote a new `content` into the cache) ->
+    // PATCH succeeds -> refetch #3 succeeds this time -> `isError` clears, resetting the
+    // dismissal flag. No alert reappears just from the refetch finally succeeding.
+    await user.click(screen.getByRole('button', { name: /save/i }));
+    await waitFor(() => expect(getCalls).toBeGreaterThanOrEqual(3));
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+
+    // Edit again + Save #3 -> PATCH succeeds -> refetch #4 fails again: a genuinely NEW
+    // failure, not the one already dismissed — it gets shown.
+    await user.clear(titleInput);
+    await user.type(titleInput, 'Edit Two');
+    await user.click(screen.getByRole('button', { name: /save/i }));
+    await waitFor(() => expect(getCalls).toBeGreaterThanOrEqual(4));
+    const secondAlert = await screen.findByRole('alert');
+    expect(secondAlert).toBeVisible();
+  });
 });

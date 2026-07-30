@@ -112,6 +112,9 @@ export function useContentEditor({ contentId }: UseContentEditorArgs): UseConten
   const [snackbarMessage, setSnackbarMessage] = useState<string | null>(null);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
+  // fix round 2, N2: whether the admin has already dismissed the CURRENT background-refetch
+  // failure's alert (see the render-phase reset just below `hasContent`, and `closeSnackbar`).
+  const [refreshErrorDismissed, setRefreshErrorDismissed] = useState(false);
 
   // Reseed the editable fields only when a *different* record has finished loading (by id) —
   // a same-id refetch (e.g. after Publish/Archive, which only change status/published_at)
@@ -135,6 +138,15 @@ export function useContentEditor({ contentId }: UseContentEditorArgs): UseConten
   // even while a later background refetch is in flight or has failed — this is `true` once
   // we've ever had something to show for this record.
   const hasContent = mode === 'edit' && content !== undefined;
+
+  // fix round 2, N2: the F3 refresh alert was undismissable — `backgroundRefetchFailed` stayed
+  // true for as long as `isError` did, so closing it just re-derived the same message next
+  // render. Reset the dismissal (render-phase-adjust, same idiom as the `seededContentId` reseed
+  // above) once `isError` clears — a fresh, later failure is a NEW failure and gets its own
+  // alert rather than staying permanently silenced by an earlier dismissal.
+  if (!isError && refreshErrorDismissed) {
+    setRefreshErrorDismissed(false);
+  }
 
   const isDirty =
     mode === 'edit' && content
@@ -261,13 +273,26 @@ export function useContentEditor({ contentId }: UseContentEditorArgs): UseConten
       });
   };
 
-  // fix round 1, F3: an explicit mutation failure (save/publish/archive, set via
-  // `setSnackbarMessage` above) always takes priority; once dismissed (or if there never was
-  // one), a *background* refetch failure — `isError` true while a record is still cached — is
-  // itself surfaced through the same snackbar instead of tearing down the form.
-  const backgroundRefetchFailed = mode === 'edit' && isError && hasContent;
+  // fix round 1, F3 (dismissal added in fix round 2, N2): an explicit mutation failure
+  // (save/publish/archive, set via `setSnackbarMessage` above) always takes priority; once
+  // dismissed (or if there never was one), a *background* refetch failure — `isError` true
+  // while a record is still cached, and not yet dismissed — is itself surfaced through the same
+  // snackbar instead of tearing down the form.
+  const backgroundRefetchFailed =
+    mode === 'edit' && isError && hasContent && !refreshErrorDismissed;
   const displayedSnackbarMessage =
     snackbarMessage ?? (backgroundRefetchFailed ? REFRESH_ERROR_FALLBACK : null);
+  // N2: only the background-refetch alert needs a dismissal flag — an explicit
+  // `snackbarMessage` is already "dismissed" by clearing the state that produced it. Closing
+  // the explicit one (when both would otherwise apply) never touches the dismissal flag, so a
+  // background failure the admin hasn't actually seen yet still gets its own alert afterwards.
+  const closeSnackbar = () => {
+    if (!snackbarMessage && backgroundRefetchFailed) {
+      setRefreshErrorDismissed(true);
+      return;
+    }
+    setSnackbarMessage(null);
+  };
 
   return {
     mode,
@@ -300,6 +325,6 @@ export function useContentEditor({ contentId }: UseContentEditorArgs): UseConten
     previewOpen,
     togglePreview: () => setPreviewOpen((prev) => !prev),
     snackbarMessage: displayedSnackbarMessage,
-    closeSnackbar: () => setSnackbarMessage(null),
+    closeSnackbar,
   };
 }

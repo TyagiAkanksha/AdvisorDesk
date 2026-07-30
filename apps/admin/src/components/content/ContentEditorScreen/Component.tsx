@@ -67,16 +67,21 @@ export default function Component({ contentId }: ContentEditorScreenProps) {
         </Button>
         {editor.mode === 'edit' ? (
           <>
+            {/* fix round 2, N3: `isSaving` (not just `isTransitioning`) also disables Publish —
+                onPublish's own save-then-publish PATCH runs under `isSaving`, before
+                `isTransitioning` ever goes true, so without this a double-click fired
+                PATCH -> PATCH -> PUBLISH -> PUBLISH (two stale-body embeds). Archive gets the
+                same guard for consistency, even though it never PATCHes. */}
             <Button
               onClick={editor.onPublish}
-              disabled={!editor.canPublish || editor.isTransitioning}
+              disabled={!editor.canPublish || editor.isTransitioning || editor.isSaving}
               variant="outlined"
             >
               Publish
             </Button>
             <Button
               onClick={editor.onArchive}
-              disabled={!editor.canArchive || editor.isTransitioning}
+              disabled={!editor.canArchive || editor.isTransitioning || editor.isSaving}
               variant="outlined"
             >
               Archive

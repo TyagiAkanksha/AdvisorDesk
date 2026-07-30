@@ -16,6 +16,7 @@ from app.config import Settings
 from app.routes.auth_routes import router as auth_router
 from app.routes.errors import register_error_handlers
 from app.routes.health_routes import router as health_router
+from app.services.lifecycle import ChunkPipeline, NoopChunkPipeline
 
 _API_PREFIX = "/api/v1"
 
@@ -24,6 +25,7 @@ def create_app(
     session_factory: sessionmaker[Session] | None = None,
     settings: Settings | None = None,
     oauth_client: GoogleOAuthClient | None = None,
+    chunk_pipeline: ChunkPipeline | None = None,
 ) -> FastAPI:
     """Build the AdvisorDesk FastAPI application.
 
@@ -47,6 +49,13 @@ def create_app(
             route that dereferences it may be exercised — mirrors
             `session_factory`'s DB-less mode; `app/main.py` is the only
             caller that wires a real one.
+        chunk_pipeline: an optional `app.services.lifecycle.ChunkPipeline`.
+            `None` (phase-2's default, and every current caller) wires
+            `NoopChunkPipeline` instead — content lifecycle transitions
+            (publish/archive/delete/update) all run end to end with no real
+            embedding provider. phase-3 task-02 passes the real chunking +
+            embedding pipeline here; the parameter exists now so that swap
+            needs no signature change.
 
     Returns:
         A configured `FastAPI` app instance.
@@ -57,6 +66,7 @@ def create_app(
     app.state.settings = resolved_settings
     app.state.session_factory = session_factory
     app.state.oauth_client = oauth_client
+    app.state.chunk_pipeline = chunk_pipeline if chunk_pipeline is not None else NoopChunkPipeline()
 
     app.add_middleware(
         CORSMiddleware,

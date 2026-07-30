@@ -87,5 +87,10 @@ session_factory: sessionmaker[Session] = make_session_factory(engine)
 oauth_client: GoogleOAuthClient = HttpxGoogleOAuthClient.from_settings(settings)
 
 app: FastAPI = create_app(
-    session_factory=session_factory, settings=settings, oauth_client=oauth_client
+    session_factory=session_factory,
+    settings=settings,
+    oauth_client=oauth_client,
+    # NoopChunkPipeline default (phase-3 task-02 wires the real embedding
+    # pipeline here — see app.factory.create_app's chunk_pipeline docstring).
+    chunk_pipeline=None,
 )

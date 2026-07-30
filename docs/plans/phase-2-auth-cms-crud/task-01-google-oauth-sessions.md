@@ -49,6 +49,11 @@ rejection and §4.1 reactivating upsert, signed HttpOnly session cookie, logout,
     email; flips `is_deleted=False` on a soft-deleted row (§4.1); refreshes name/avatar.
   - Routes (operation_ids): `auth_login`, `auth_callback`, `auth_logout`, `auth_me`
     (`MeResponse{id,email,name,avatar_url}`).
+  - **Callback landing (task-01 review M8 resolution, amended before task-04):** on success
+    `auth_callback` sets the session cookie and responds `303 See Other` to
+    `settings.admin_app_url` (new Settings field; dev default `http://localhost:3001`, listed in
+    `.env.example`) so the browser lands back in the admin SPA. Error paths (403 unlisted email,
+    422) keep the JSON envelope.
   - Test helper `auth_helpers.py`: `login_as(client, email)` — drives the fake OAuth flow; used
     by every later admin-route test.
   - **Settings hardening (phase-1 final-review decision):** convert the secret-bearing `Settings`

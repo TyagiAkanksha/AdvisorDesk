@@ -279,6 +279,77 @@
         "title": "MeResponse",
         "type": "object"
       },
+      "PublicContentDetail": {
+        "description": "`GET /public/content/{slug}`'s response body (PRD \u00a75.3, exact field set).\n\nSame fields as `PublicContentSummary` plus `body_md` \u2014 the only\ndifference between the list and detail shapes.",
+        "properties": {
+          "body_md": {
+            "title": "Body Md",
+            "type": "string"
+          },
+          "published_at": {
+            "format": "date-time",
+            "title": "Published At",
+            "type": "string"
+          },
+          "slug": {
+            "title": "Slug",
+            "type": "string"
+          },
+          "tags": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Tags",
+            "type": "array"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "title",
+          "slug",
+          "body_md",
+          "tags",
+          "published_at"
+        ],
+        "title": "PublicContentDetail",
+        "type": "object"
+      },
+      "PublicContentSummary": {
+        "description": "One entry in `GET /public/content`'s bare list (PRD \u00a75.3, exact field set).",
+        "properties": {
+          "published_at": {
+            "format": "date-time",
+            "title": "Published At",
+            "type": "string"
+          },
+          "slug": {
+            "title": "Slug",
+            "type": "string"
+          },
+          "tags": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Tags",
+            "type": "array"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "title",
+          "slug",
+          "tags",
+          "published_at"
+        ],
+        "title": "PublicContentSummary",
+        "type": "object"
+      },
       "StatsResponse": {
         "description": "Content counts by status and by tag, excluding soft-deleted content (PRD \u00a75.2).",
         "properties": {
@@ -951,6 +1022,89 @@
           }
         },
         "summary": "Healthz"
+      }
+    },
+    "/api/v1/public/content": {
+      "get": {
+        "description": "PRD \u00a75.3: published-and-non-deleted content, newest-published first, tags included.\n\nBare list, no pagination envelope \u2014 test-author-resolved,\ncontroller-approved (mirrors `GET /tags`'s bare `list[TagWithCount]`\nshape; task-03 test-author report ambiguity #1).",
+        "operationId": "public_content_list",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/PublicContentSummary"
+                  },
+                  "title": "Response Public Content List",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          }
+        },
+        "summary": "Public Content List"
+      }
+    },
+    "/api/v1/public/content/{slug}": {
+      "get": {
+        "description": "PRD \u00a75.3: by-slug detail for a published-and-non-deleted item (404 otherwise).\n\nA draft/archived item's slug, a soft-deleted (still `status='published'`)\nitem's slug, and a slug that never existed all 404 the same way \u2014 see\n`content_service.get_published_by_slug`'s \u00a79 pin.",
+        "operationId": "public_content_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "slug",
+            "required": true,
+            "schema": {
+              "title": "Slug",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicContentDetail"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          }
+        },
+        "summary": "Public Content Get"
       }
     },
     "/api/v1/stats": {

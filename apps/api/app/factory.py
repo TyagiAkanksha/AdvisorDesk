@@ -17,6 +17,7 @@ from app.routes.auth_routes import router as auth_router
 from app.routes.content_routes import router as content_router
 from app.routes.errors import register_error_handlers
 from app.routes.health_routes import router as health_router
+from app.routes.public_routes import router as public_router
 from app.services.lifecycle import ChunkPipeline, NoopChunkPipeline
 
 _API_PREFIX = "/api/v1"
@@ -92,5 +93,6 @@ def create_app(
     app.include_router(health_router, prefix=_API_PREFIX)
     app.include_router(auth_router, prefix=_API_PREFIX)
     app.include_router(content_router, prefix=_API_PREFIX)
+    app.include_router(public_router, prefix=_API_PREFIX)
 
     return app

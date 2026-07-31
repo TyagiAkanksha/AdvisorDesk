@@ -10,9 +10,11 @@ spec: advisordesk-prd.md §7.1, §9
 
 ## Goal
 
-`chunk_markdown(body_md)` deterministically splits article markdown by headings into ~500-token
-chunks with 50-token overlap (§7.1), preserving order via `chunk_index`. Pure function — the
-lifecycle pipeline (task-02) and the groundedness harness (phase 7) both call it.
+`chunk_markdown(body_md)` deterministically splits article markdown by headings into ~400-token
+chunks with 50-token overlap (§7.1, v1.5 — lowered from 500: the embedding model's input window
+is 512 of *its* tokens and tokenizers differ, so 400 keeps a safe margin), preserving order via
+`chunk_index`. Pure function — the lifecycle pipeline (task-02) and the groundedness harness
+(phase 7) both call it.
 
 ## Context (read ONLY these)
 
@@ -31,7 +33,7 @@ lifecycle pipeline (task-02) and the groundedness harness (phase 7) both call it
 - **Consumes:** nothing internal (pure module).
 - **Produces (later tasks rely on — produce exactly):**
   - `@dataclass(frozen=True) ChunkData: text: str; chunk_index: int; token_count: int`
-  - `chunk_markdown(body_md: str, *, target_tokens: int = 500, overlap_tokens: int = 50)
+  - `chunk_markdown(body_md: str, *, target_tokens: int = 400, overlap_tokens: int = 50)
     -> list[ChunkData]`
   - `count_tokens(text: str) -> int` (tiktoken `cl100k_base` — implementation note: PRD says
     "tokens" without naming a tokenizer).
@@ -43,9 +45,9 @@ lifecycle pipeline (task-02) and the groundedness harness (phase 7) both call it
 ## Steps (TDD)
 
 - [ ] **Step 1: Write the failing tests** (`test_chunking.py`, no DB — plain unit tests):
-  - heading split: two `## `-headed sections under 500 tokens each → 2 chunks, boundaries at the
+  - heading split: two `## `-headed sections under 400 tokens each → 2 chunks, boundaries at the
     headings, indices `[0, 1]`;
-  - long-section split: a single section of ~1200 synthetic tokens → chunks each ≤ ~550 tokens,
+  - long-section split: a single section of ~1200 synthetic tokens → chunks each ≤ ~450 tokens,
     and the first `overlap_tokens` tokens of chunk N+1 appear at the tail of chunk N (assert on
     token lists, not chars);
   - order + indices: shuffled input headings come back in document order with contiguous indices;

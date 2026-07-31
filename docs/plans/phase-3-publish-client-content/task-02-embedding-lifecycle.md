@@ -28,25 +28,35 @@ behavior for free.
 
 - Create: `apps/api/app/rag/{embeddings.py,pipeline.py}`
 - Create: `apps/api/tests/test_lifecycle.py`
-- Modify: `apps/api/app/main.py` (wire `EmbeddingChunkPipeline` as the app's pipeline),
-  `apps/api/pyproject.toml` (runtime dep: `openai`)
+- Create: `apps/api/alembic/versions/0002_*.py` (v1.5: `chunks.embedding` `vector(1536)` →
+  `vector(1024)`; recreate the HNSW index; parity gate must stay green)
+- Modify: `apps/api/app/main.py` (wire `EmbeddingChunkPipeline` as the app's pipeline; prod
+  guard: `nvidia_api_key` joins the not-`is_dev` required list), `apps/api/app/config.py`
+  (v1.5 provider config: `nvidia_api_key: SecretStr` replaces `openai_api_key` as the live
+  key; `llm_base_url` default `https://integrate.api.nvidia.com/v1`; `embedding_model` default
+  `nvidia/nv-embedqa-e5-v5`; `embedding_dimensions` default `1024`), `apps/api/app/models/`
+  (Chunk embedding column dims follow the migration), `apps/api/pyproject.toml` (runtime dep:
+  `openai` — the SDK speaks the compatible wire protocol via `base_url`)
 
 ## Interfaces
 
 - **Consumes:** `chunk_markdown`/`ChunkData` (task-01); `ChunkPipeline` protocol + content
   services (p2-t02); `Chunk` model (p1-t02).
 - **Produces (later tasks rely on — produce exactly):**
-  - `app.rag.embeddings`: `class Embedder(Protocol): def embed_texts(self, texts:
-    Sequence[str]) -> list[list[float]]` · `class OpenAIEmbedder(Embedder)` (model
-    `text-embedding-3-small`, 1536 dims, one batched call per content item §7.2, raises
-    `EmbeddingFailedError` on API errors). **Retrieval (phase-4 task-01) reuses `Embedder` for
-    query embedding.**
+  - `app.rag.embeddings` (v1.5): `class Embedder(Protocol): def embed_texts(self, texts:
+    Sequence[str], *, input_type: Literal["passage", "query"] = "passage") ->
+    list[list[float]]` · `class OpenAICompatibleEmbedder(Embedder)` — model/dims/base-URL/key
+    from `Settings` (defaults: `nvidia/nv-embedqa-e5-v5`, 1024 dims, NVIDIA endpoint), one
+    batched call per content item (§7.2), passes `input_type` through (the model is
+    asymmetric) plus `truncate="END"` via `extra_body`, raises `EmbeddingFailedError` on API
+    errors AND on a response whose vector length ≠ `settings.embedding_dimensions` (drift
+    guard). **Retrieval (phase-4 task-01) reuses `Embedder` with `input_type="query"`.**
   - `app.rag.pipeline`: `class EmbeddingChunkPipeline(ChunkPipeline)` —
     `__init__(embedder: Embedder)`; `rebuild_chunks(session, content)` deletes old rows for the
     content id, chunks `body_md`, embeds, inserts new `Chunk` rows (flush, no commit) and returns
     the count; `remove_chunks(session, content_id)` deletes and returns count.
   - Factory wiring: `create_app(..., chunk_pipeline=None)` now defaults to Noop only in tests;
-    `main.py` passes `EmbeddingChunkPipeline(OpenAIEmbedder(settings))`.
+    `main.py` passes `EmbeddingChunkPipeline(OpenAICompatibleEmbedder.from_settings(settings))`.
 
 - **Embedding column typing (phase-1 final-review note):** `Chunk.embedding` is annotated
   `list[float] | None` but pgvector returns a numpy `ndarray` at runtime. This task is the first
@@ -58,8 +68,11 @@ behavior for free.
 
 - [ ] **Step 1: Failing lifecycle tests** (`test_lifecycle.py`; DB fixture + `FakeEmbedder`
   returning deterministic vectors, and `FailingEmbedder` raising on call):
-  - publish a draft → chunk rows exist with correct `chunk_index` order and 1536-dim vectors;
-    status `published`, `published_at` set — all in one transaction;
+  - publish a draft → chunk rows exist with correct `chunk_index` order and
+    `settings.embedding_dimensions`-dim vectors (1024 default); status `published`,
+    `published_at` set — all in one transaction;
+  - batch call passes `input_type="passage"` (FakeEmbedder records it — the asymmetric-model
+    pin phase-4 depends on);
   - edit a published item → old chunk rows gone, new rows present, count matches new chunking;
   - edit a draft → embedder never called;
   - archive → chunks removed, status `archived`;
@@ -78,8 +91,9 @@ behavior for free.
 ```bash
 cd apps/api
 TEST_DATABASE_URL=... uv run pytest tests/test_lifecycle.py -q   # all passed
-grep -rn "OpenAIEmbedder" tests/                                  # no hits — seam only in prod wiring
+grep -rn "OpenAICompatibleEmbedder" tests/                        # no hits — seam only in prod wiring
 uv run mypy && uv run lint-imports                                # clean
+uv run alembic upgrade head                                       # 0002 applies; parity gate green
 ```
 
 ## Acceptance
@@ -87,4 +101,7 @@ uv run mypy && uv run lint-imports                                # clean
 - Every §4 lifecycle bullet has a passing test, including both rollback paths (§9).
 - Phase-2 service signatures untouched (`git diff` on `services/content.py` shows wiring-only
   changes at most); the admin editor from phase-2 publishes with real embeddings, zero UI change.
-- The real OpenAI client appears only in `main.py` wiring, never in tests.
+- The real embedder client appears only in `main.py` wiring, never in tests.
+- **Live smoke (controller-run, not a test):** with `NVIDIA_API_KEY` set, publish one real
+  article and confirm 1024-dim vectors landed in `chunks` — the provider integration itself is
+  exactly the class of untested-real-client gap that bit phase 2 twice.

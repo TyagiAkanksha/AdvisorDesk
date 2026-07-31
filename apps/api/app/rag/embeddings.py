@@ -15,6 +15,7 @@ embeds the user's question with `input_type="query"` through this same
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Sequence
 from typing import Literal, Protocol
 
@@ -22,6 +23,8 @@ from openai import OpenAI, OpenAIError
 
 from app.config import Settings
 from app.services.errors import EmbeddingFailedError
+
+logger = logging.getLogger(__name__)
 
 __all__ = ["Embedder", "EmbeddingFailedError", "OpenAICompatibleEmbedder"]
 
@@ -97,9 +100,24 @@ class OpenAICompatibleEmbedder:
         boot-safe; a real embedding attempt with a placeholder key still
         fails, correctly, as an `EmbeddingFailedError` at request time —
         "won't work until it's set," never "won't boot."
+
+        `timeout=settings.embedding_timeout_seconds` and
+        `max_retries=settings.embedding_max_retries` replace the `openai`
+        SDK's own defaults (`read=600s`, `max_retries=2`) — review round 1,
+        finding I1: this pipeline calls the embedder inside the same DB
+        transaction it's about to `flush()` into (PRD §4 atomicity), so an
+        unbounded client budget would hold that write transaction open for
+        up to ~30 minutes against a stalled provider, and phase-4 reuses
+        this same client on the public chat path where first-token latency
+        matters.
         """
         api_key = settings.nvidia_api_key.get_secret_value() or "unset"
-        client = OpenAI(api_key=api_key, base_url=settings.llm_base_url)
+        client = OpenAI(
+            api_key=api_key,
+            base_url=settings.llm_base_url,
+            timeout=settings.embedding_timeout_seconds,
+            max_retries=settings.embedding_max_retries,
+        )
         return cls(
             client=client,
             model=settings.embedding_model,
@@ -115,24 +133,49 @@ class OpenAICompatibleEmbedder:
         `truncate="END"` (PRD §7.2: "a defense against over-length input")
         via `extra_body`, since neither is a parameter the `openai` SDK's
         `embeddings.create` knows natively — both are NVIDIA NIM-specific
-        additions to the OpenAI-compatible request body.
+        additions to the OpenAI-compatible request body. `encoding_format=
+        "float"` is passed explicitly (review round 1, finding M5): left
+        unset, the SDK silently requests `"base64"` and decodes it back
+        client-side, a non-deterministic wire shape for a call PRD §7.2
+        promises stays "provider-agnostic" — pinning `"float"` keeps the
+        actual HTTP request body plain JSON floats.
+
+        The response is validated once, completely, at this seam: every
+        returned vector's count and every vector's dimension are checked
+        before any is handed back, so no partially-validated response ever
+        reaches the caller.
 
         Raises:
             EmbeddingFailedError: the provider call itself failed (any
                 `openai.OpenAIError` — auth, rate limit, connection,
-                non-2xx, ...), or a returned vector's length does not match
-                `self._dimensions` (a provider/config drift guard: the
-                caller asked for `Settings.embedding_dimensions`-dim
-                vectors and got something else).
+                non-2xx, ...); the provider returned a different number of
+                vectors than `texts` submitted (review round 1, finding M1 —
+                a truncated/short batch response, left unchecked, previously
+                escaped as an unhandled `ValueError` from `zip(...,
+                strict=True)` in `app.rag.pipeline`); or a returned vector's
+                length does not match `self._dimensions` (a provider/config
+                drift guard: the caller asked for
+                `Settings.embedding_dimensions`-dim vectors and got
+                something else). The client-facing message is always a
+                fixed, generic string (review round 1, finding M6) — never
+                the raw provider exception text, which is logged instead.
         """
         try:
             response = self._client.embeddings.create(
                 model=self._model,
                 input=list(texts),
+                encoding_format="float",
                 extra_body={"input_type": input_type, "truncate": "END"},
             )
         except OpenAIError as exc:
-            raise EmbeddingFailedError(f"embedding provider call failed: {exc}") from exc
+            # Review round 1, finding M6: the provider's raw exception text
+            # (which can carry request/response detail not meant for an
+            # end user — this client is reused on phase-4's public chat
+            # path) is logged for operators, never placed in
+            # `EmbeddingFailedError.message`/the §9 envelope; `from exc`
+            # still chains it into the traceback for local debugging.
+            logger.warning("embedding provider call failed: %s", exc)
+            raise EmbeddingFailedError("The embedding provider call failed.") from exc
 
         # The API's documented contract is response-order == request-order,
         # but each item also carries its own `index` — sorting by it is a
@@ -140,6 +183,17 @@ class OpenAICompatibleEmbedder:
         # never silently gets a sibling chunk's vector.
         ordered = sorted(response.data, key=lambda item: item.index)
         vectors = [item.embedding for item in ordered]
+
+        # Review round 1, finding M1: a provider that silently truncates a
+        # batch (fewer embeddings than inputs) must fail here, explicitly,
+        # as `EmbeddingFailedError` — not escape as a raw `ValueError` from
+        # `app.rag.pipeline`'s `zip(chunk_data, vectors, strict=True)`,
+        # which the §9 envelope has no mapping for (an unhandled 500).
+        if len(vectors) != len(texts):
+            raise EmbeddingFailedError(
+                f"embedding provider returned {len(vectors)} vector(s) for "
+                f"{len(texts)} input text(s)."
+            )
 
         for vector in vectors:
             if len(vector) != self._dimensions:

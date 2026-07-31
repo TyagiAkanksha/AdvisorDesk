@@ -35,6 +35,7 @@ from __future__ import annotations
 import logging
 
 from fastapi import FastAPI
+from pgvector.sqlalchemy import Vector
 from sqlalchemy import Engine
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -42,6 +43,7 @@ from app.auth.oauth import GoogleOAuthClient, HttpxGoogleOAuthClient
 from app.config import Settings
 from app.db import make_engine, make_session_factory
 from app.factory import create_app
+from app.models import Chunk
 from app.rag.embeddings import OpenAICompatibleEmbedder
 from app.rag.pipeline import EmbeddingChunkPipeline
 
@@ -112,6 +114,29 @@ if not settings.is_dev:
     # reason as the three GOOGLE_* guards above: the offline dev path must
     # still boot with it empty; admin login just won't work until it's set.
     _require_nonempty(settings.admin_emails, "ADMIN_EMAILS", "admin_emails")
+
+# Review round 1, finding M3: `settings.embedding_dimensions` and
+# `Chunk.embedding`'s actual pgvector column width (migration 0002) are two
+# independent sources of truth for the same number, reconciled nowhere —
+# a config-only change to EMBEDDING_DIMENSIONS with no matching migration
+# would boot cleanly and only fail on the first real publish, as a
+# dimension-mismatch `EmbeddingFailedError` from `app.rag.pipeline`'s own
+# defense-in-depth guard, which is a request-time surprise for what is
+# really a deployment configuration error. Asserted here, at boot, instead.
+_chunk_embedding_type = Chunk.__table__.c.embedding.type
+if not isinstance(_chunk_embedding_type, Vector) or _chunk_embedding_type.dim is None:
+    raise RuntimeError(
+        "Chunk.embedding must be a dimensioned pgvector Vector column for the "
+        "embedding_dimensions boot assertion below to read its width."
+    )
+if settings.embedding_dimensions != _chunk_embedding_type.dim:
+    raise RuntimeError(
+        f"settings.embedding_dimensions is {settings.embedding_dimensions} but "
+        f"Chunk.embedding is a {_chunk_embedding_type.dim}-dim pgvector column "
+        "(migration 0002) — these must match. Set EMBEDDING_DIMENSIONS to the "
+        "column's width, or write/run a migration that resizes the column to "
+        "match EMBEDDING_DIMENSIONS."
+    )
 
 if not settings.cors_origin_list:
     # Final review, finding C-1: an empty CORS_ORIGINS silently killed every

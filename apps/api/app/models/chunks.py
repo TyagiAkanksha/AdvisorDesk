@@ -44,6 +44,16 @@ class Chunk(Base, TimestampMixin):
     embedding: Mapped[list[float] | None] = mapped_column(Vector(1024), nullable=True)
 
 
+def _normalize_embedding(chunk: Chunk) -> None:
+    """Coerce `chunk.embedding` to a plain `list[float]` if it isn't already one.
+
+    Shared body for both the `"load"` and `"refresh"` listeners below — see
+    their docstrings for why both are needed.
+    """
+    if chunk.embedding is not None and not isinstance(chunk.embedding, list):
+        chunk.embedding = [float(value) for value in chunk.embedding]
+
+
 @event.listens_for(Chunk, "load")
 def _normalize_embedding_on_load(chunk: Chunk, _context: Any) -> None:
     """Coerce a freshly loaded `chunk.embedding` to a plain `list[float]`.
@@ -58,9 +68,15 @@ def _normalize_embedding_on_load(chunk: Chunk, _context: Any) -> None:
     bare numpy `ndarray`, or a list of numpy scalar elements). SQLAlchemy's
     `"load"` event fires every time an ORM instance is populated from a
     result row, including a genuinely fresh session with no identity-map
-    hit, so this is the one hook that covers every read path — including a
-    plain `session.execute(select(Chunk)...)`, not just reads that happen to
-    go through `app.rag.pipeline`.
+    hit — but it does NOT fire on `session.refresh(chunk)` or an
+    expired-attribute reload (an attribute accessed after `session.expire()`
+    or at the end of a committed transaction with `expire_on_commit=True`),
+    which SQLAlchemy routes through the separate `"refresh"` event instead
+    (review round 1, finding M2) — see `_normalize_embedding_on_refresh`
+    below for that path. Together, the two events are what actually cover
+    every read path — including a plain `session.execute(select(Chunk)...)`
+    load AND a `session.refresh()`/expired-attribute reload, not just reads
+    that happen to go through `app.rag.pipeline`.
 
     This is deliberately a normalization event, not a new SQLAlchemy column
     type: keeping the mapped column itself as a bare `pgvector.sqlalchemy.
@@ -71,5 +87,27 @@ def _normalize_embedding_on_load(chunk: Chunk, _context: Any) -> None:
     autogenerate type comparison flagging a spurious diff for no schema
     reason at all.
     """
-    if chunk.embedding is not None and not isinstance(chunk.embedding, list):
-        chunk.embedding = [float(value) for value in chunk.embedding]
+    _normalize_embedding(chunk)
+
+
+@event.listens_for(Chunk, "refresh")
+def _normalize_embedding_on_refresh(chunk: Chunk, _context: Any, _attrs: Any) -> None:
+    """Coerce `chunk.embedding` to a plain `list[float]` on a `"refresh"` reload.
+
+    Review round 1, finding M2: the `"load"` listener above only fires when
+    an ORM instance is first populated from a result row — `session.
+    refresh(chunk)` and an expired-attribute reload (e.g. an attribute
+    touched after `session.expire()`, or after a commit under
+    `expire_on_commit=True`) repopulate an *existing* instance in place and
+    fire SQLAlchemy's separate `"refresh"` event instead, which the `"load"`
+    listener never sees. Without this twin, that path could hand back a
+    non-`list` `chunk.embedding` despite the `"load"` guard, silently
+    breaking the same `list[float]`-on-every-read contract for exactly the
+    callers most likely to hit it (a long-lived session that re-reads a
+    `Chunk` after another transaction touched it). `_attrs` (the specific
+    attribute names being refreshed, or `None` for "all") is unused — the
+    normalization always re-checks `embedding` unconditionally, same as the
+    `"load"` listener, since re-deriving it from an already-normalized list
+    is a no-op.
+    """
+    _normalize_embedding(chunk)

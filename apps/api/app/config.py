@@ -65,6 +65,23 @@ class Settings(BaseSettings):
     # its matching Alembic migration together.
     embedding_dimensions: int = 1024
 
+    # Not part of the PRD §9 env roster (phase-3 task-02 review round 1,
+    # finding I1): the `openai` SDK's own defaults for an unconfigured
+    # client are `read=600s` with `max_retries=2` (3 attempts total) — since
+    # `app.rag.pipeline.EmbeddingChunkPipeline` calls the embedder inside the
+    # same DB transaction it's about to `flush()` into (PRD §4 atomicity),
+    # those defaults would hold that write transaction open for up to ~30
+    # minutes on a stalled/misbehaving provider. `embedding_timeout_seconds`
+    # bounds a single embedding request/attempt; `embedding_max_retries`
+    # bounds how many times the SDK retries a failed one. Config-only (PRD
+    # §7.2 "a provider swap never touches code") so a real deployment can
+    # tighten both without a code change — phase-4's query-embedding path
+    # (same `Embedder`, on the public chat request path where first-token
+    # latency matters) may reuse a lower `embedding_timeout_seconds` than
+    # publish-time bulk embedding needs.
+    embedding_timeout_seconds: float = 30.0
+    embedding_max_retries: int = 2
+
     # Not part of the PRD §9 env roster: the real `HttpxGoogleOAuthClient`
     # (app.auth.oauth, phase-2 task-01) needs a fixed, Google-console-
     # registered callback URL to exchange a code — this is that URL. Empty

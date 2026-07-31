@@ -283,3 +283,36 @@ def test_nonempty_cors_origins_logs_no_warning(
         _reload_main(monkeypatch, {"CORS_ORIGINS": "http://localhost:3001"})
 
     assert caplog.records == []
+
+
+# ---------------------------------------------------------------------------
+# Phase-3 task-02 review round 1, finding M3: settings.embedding_dimensions
+# must match Chunk.embedding's actual pgvector column width, asserted at boot
+# ---------------------------------------------------------------------------
+
+
+def test_mismatched_embedding_dimensions_fails_boot_naming_both_numbers(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`EMBEDDING_DIMENSIONS` drifting from `Chunk.embedding`'s 1024-dim column fails fast at
+    boot, naming both numbers, instead of booting cleanly and only surfacing as a
+    dimension-mismatch `EmbeddingFailedError` on the first real publish (a config/schema drift
+    that's cheap to catch at import time and expensive to catch at request time).
+    """
+    with pytest.raises(RuntimeError) as exc_info:
+        _reload_main(monkeypatch, {"EMBEDDING_DIMENSIONS": "768"})
+
+    message = str(exc_info.value)
+    assert "768" in message
+    assert "1024" in message
+
+
+def test_matching_embedding_dimensions_does_not_raise(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`EMBEDDING_DIMENSIONS` left at its 1024 default (matching `Chunk.embedding`'s column)
+    boots cleanly — the happy path the mismatch test above contrasts with.
+    """
+    main_module = _reload_main(monkeypatch, {"EMBEDDING_DIMENSIONS": "1024"})
+
+    assert main_module.app.title == "AdvisorDesk API"

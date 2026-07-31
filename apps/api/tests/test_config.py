@@ -17,6 +17,8 @@ _ENV_ROSTER = [
     "LLM_BASE_URL",
     "EMBEDDING_MODEL",
     "EMBEDDING_DIMENSIONS",
+    "EMBEDDING_TIMEOUT_SECONDS",
+    "EMBEDDING_MAX_RETRIES",
     "DATABASE_URL",
     "GOOGLE_CLIENT_ID",
     "GOOGLE_CLIENT_SECRET",
@@ -52,6 +54,12 @@ def test_defaults_match_prd_with_empty_env(clean_env: None) -> None:
     assert settings.llm_base_url == "https://integrate.api.nvidia.com/v1"
     assert settings.embedding_model == "nvidia/nv-embedqa-e5-v5"
     assert settings.embedding_dimensions == 1024
+    # Phase-3 task-02 review round 1, finding I1: bounds the `openai` SDK
+    # client's read timeout/retry budget so `EmbeddingChunkPipeline` never
+    # holds its publish transaction open for the SDK's own much larger
+    # defaults (read=600s, max_retries=2).
+    assert settings.embedding_timeout_seconds == 30.0
+    assert settings.embedding_max_retries == 2
     assert settings.google_client_id == ""
     assert settings.google_client_secret.get_secret_value() == ""
     assert settings.google_redirect_uri == ""

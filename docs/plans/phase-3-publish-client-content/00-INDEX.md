@@ -19,8 +19,9 @@ client app's server-rendered content pages. After this phase, the §4 guarantee 
 `ChunkPipeline` implementation swapped into the phase-2 seam via factory wiring (service
 signatures untouched); public routes with their own DTOs; client app fetches server-side (RSC).
 
-**Tech Stack:** tiktoken (token counting — implementation note) · OpenAI
-`text-embedding-3-small` · react-markdown + remark-gfm over MUI Typography.
+**Tech Stack:** tiktoken (token counting — implementation note) · `nvidia/nv-embedqa-e5-v5`
+(1024d) over NVIDIA NIM's OpenAI-compatible `/v1/embeddings` endpoint (v1.5; superseded the
+original `text-embedding-3-small` plan) · react-markdown + remark-gfm over MUI Typography.
 
 ## Global Constraints
 

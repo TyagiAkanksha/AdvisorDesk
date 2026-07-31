@@ -193,6 +193,13 @@ pnpm -C apps/client test
   (`OPENAI_API_KEY`, `SESSION_SECRET`, `GOOGLE_CLIENT_SECRET`, `DATABASE_URL`, ...); none of that
   belongs inside a browser-served Next.js image. The frontend services get only the one value they
   actually need, `NEXT_PUBLIC_API_URL`, passed as an explicit build `arg` instead.
+- **Chunking tokenizer choice (`app/rag/chunking.py`, phase-3 task-01).** PRD §7.1 sizes chunks in
+  "tokens" without naming a tokenizer. `count_tokens`/`chunk_markdown` use `tiktoken`'s
+  `cl100k_base` encoding — a stable, deterministic, offline-after-first-download proxy for chunk
+  sizing. This is **not** the embedding model's own tokenizer: `nvidia/nv-embedqa-e5-v5` (PRD §7.1
+  v1.5) is an NVIDIA NIM model and does not publish a `tiktoken` encoding, so `cl100k_base` is used
+  purely to make the ~400-token target/50-token-overlap budget reproducible, not to mirror the
+  embedding model's exact token boundaries.
 - **Runtime Python version.** `Dockerfile.api`'s runtime stage runs on `python:3.12-slim-bookworm`.
   `apps/api/pyproject.toml` sets `requires-python = ">=3.11"` as a floor, not a pin; `3.12` is what
   the builder stage (`ghcr.io/astral-sh/uv:python3.12-bookworm-slim`) and local dev already use, so

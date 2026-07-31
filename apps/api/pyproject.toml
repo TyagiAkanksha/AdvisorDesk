@@ -13,6 +13,7 @@ dependencies = [
     "pydantic-settings",
     "itsdangerous>=2.2.0",
     "httpx>=0.28.1",
+    "tiktoken>=0.13.0",
 ]
 
 [dependency-groups]

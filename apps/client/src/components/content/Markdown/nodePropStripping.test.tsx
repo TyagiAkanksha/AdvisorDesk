@@ -13,9 +13,14 @@ import { Markdown } from '.';
 //
 // TWIN FIXTURE (F6): this file and apps/admin/src/components/content/MarkdownPreview/
 // nodePropStripping.test.tsx share the SAME canonical fixture string, verbatim, and the same
-// assertions. The two renderer maps (content/Markdown vs. MarkdownPreview) are byte-identical
-// with no shared code enforcing that — this pair of tests is the enforcement: a `node`-stripping
-// fix applied to one copy and not the other fails exactly one of these two suites, never neither.
+// assertions.
+//
+// Scope of what this actually pins (final review correction — the original wording here
+// overstated this as a general anti-drift guarantee): it proves each renderer map
+// independently strips `node` before it reaches the DOM — a `node`-stripping regression in
+// either copy fails exactly that copy's suite. It does NOT prove the two maps otherwise stay
+// identical (e.g. a `Typography` variant/tag or `Link` prop that drifts in one copy but not the
+// other) — that broader mapping-drift guarantee doesn't exist and is separately ledgered.
 const NODE_PROP_FIXTURE = `# Fixture Heading
 
 Fixture paragraph with a [fixture link](https://example.com/fixture).

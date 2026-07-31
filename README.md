@@ -191,8 +191,15 @@ pnpm -C apps/client test
 - **Frontend containers never see backend secrets.** `admin`/`client` in `infra/docker-compose.yml`
   deliberately omit `env_file: ../.env` — only `api` has it. `.env` carries backend secrets
   (`NVIDIA_API_KEY`, `SESSION_SECRET`, `GOOGLE_CLIENT_SECRET`, `DATABASE_URL`, ...); none of that
-  belongs inside a browser-served Next.js image. The frontend services get only the one value they
-  actually need, `NEXT_PUBLIC_API_URL`, passed as an explicit build `arg` instead.
+  belongs inside a browser-served Next.js image. Each frontend service gets only the API-base
+  value(s) it actually needs, passed explicitly rather than inherited wholesale: `admin` takes
+  `NEXT_PUBLIC_API_URL` as a build `arg` (inlined into its browser bundle); `client` takes both
+  `NEXT_PUBLIC_API_URL` as a build `arg` (harmless/unused — apps/client has no client-rendered
+  fetch today) and `API_URL` as **both** a build `arg` and an `environment:` entry (final review,
+  F1) — `API_URL` backs apps/client's server-only `src/lib/publicApi.ts`, which `next build`
+  itself calls during prerendering (build-time) and which also runs per-request after the
+  container starts (runtime), so a build arg alone isn't enough. Both point at the compose
+  network's `api:8000` origin, not `localhost`.
 - **Chunking tokenizer choice (`app/rag/chunking.py`, phase-3 task-01).** PRD §7.1 sizes chunks in
   "tokens" without naming a tokenizer. `count_tokens`/`chunk_markdown` use `tiktoken`'s
   `cl100k_base` encoding — a stable, deterministic, offline-after-first-download proxy for chunk

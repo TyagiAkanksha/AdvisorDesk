@@ -91,7 +91,19 @@ services:
       args:
         APP: client
         NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8000}
+        # Final review, F1: apps/client's server-only src/lib/publicApi.ts reads `API_URL`
+        # directly (not NEXT_PUBLIC_-prefixed — see that file's own comment) and `next build`
+        # runs page code that calls it during its "Generating static pages" step, so this
+        # container-network origin (service name `api`, not localhost — containers reach each
+        # other over the compose network, same reasoning as the `db` service note above) is
+        # needed as a build arg here...
+        API_URL: http://api:8000
     image: advisordesk-client
+    # ...AND again here, at container runtime: publicApi.ts's fetches run per-request (SSR),
+    # not just once at build time, so the same value has to be present in the running
+    # container's environment too — a build arg alone only covers the build-time prerender path.
+    environment:
+      API_URL: http://api:8000
     ports:
       - "127.0.0.1:3000:3000"
 

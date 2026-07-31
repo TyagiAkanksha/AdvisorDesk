@@ -46,6 +46,20 @@ COPY --from=builder --chown=appuser:appuser /app/alembic.ini ./alembic.ini
 COPY --from=builder /usr/local/bin/uv /usr/local/bin/uv
 ENV PATH="/app/.venv/bin:$PATH"
 
+# Pre-warm tiktoken's cl100k_base BPE table into the image at build time
+# (phase-3 task-01 review F3): unpatched, `tiktoken.get_encoding` downloads
+# its rank file over HTTPS on first use and caches it under an ephemeral
+# `/tmp` by default, so a fresh container's first `chunk_markdown` call --
+# inside the publish transaction -- would silently make a network call and
+# lose the cache on the next restart. TIKTOKEN_CACHE_DIR gives it a durable,
+# image-baked home instead. This RUN executes as root (still has build-time
+# network access) so the download can write into a fresh directory under
+# /app, then hands ownership to appuser before the USER switch below -- the
+# runtime process itself never touches the network for this.
+ENV TIKTOKEN_CACHE_DIR=/app/.tiktoken-cache
+RUN python -c "import tiktoken; tiktoken.get_encoding('cl100k_base')" \
+    && chown -R appuser:appuser "$TIKTOKEN_CACHE_DIR"
+
 USER appuser
 EXPOSE 8000
 

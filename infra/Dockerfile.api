@@ -2,7 +2,7 @@
 # AdvisorDesk API image — build from the REPO ROOT context (infra/docker-compose.yml
 # sets `context: ..`, `dockerfile: infra/Dockerfile.api`):
 #   docker build -f infra/Dockerfile.api -t advisordesk-api .
-# Runtime config is env-only (DATABASE_URL, OPENAI_API_KEY, ... — PRD §9); no
+# Runtime config is env-only (DATABASE_URL, NVIDIA_API_KEY, ... — PRD §9); no
 # .env file is ever baked in. Alembic is the only DDL path (CONVENTIONS.md
 # §6) — migrations are NOT run at container startup. Run them explicitly:
 #   docker compose -f infra/docker-compose.yml run --rm api uv run alembic upgrade head

@@ -13,7 +13,10 @@ from app.config import Settings
 # developer's ambient shell exports can never leak into the "empty env"
 # scenario these tests are pinning.
 _ENV_ROSTER = [
-    "OPENAI_API_KEY",
+    "NVIDIA_API_KEY",
+    "LLM_BASE_URL",
+    "EMBEDDING_MODEL",
+    "EMBEDDING_DIMENSIONS",
     "DATABASE_URL",
     "GOOGLE_CLIENT_ID",
     "GOOGLE_CLIENT_SECRET",
@@ -45,7 +48,10 @@ def test_defaults_match_prd_with_empty_env(clean_env: None) -> None:
     # added by the phase-2 final review, finding C-5): compare the
     # unwrapped plaintext, never the SecretStr instance itself.
     assert settings.database_url.get_secret_value() == ""
-    assert settings.openai_api_key.get_secret_value() == ""
+    assert settings.nvidia_api_key.get_secret_value() == ""
+    assert settings.llm_base_url == "https://integrate.api.nvidia.com/v1"
+    assert settings.embedding_model == "nvidia/nv-embedqa-e5-v5"
+    assert settings.embedding_dimensions == 1024
     assert settings.google_client_id == ""
     assert settings.google_client_secret.get_secret_value() == ""
     assert settings.google_redirect_uri == ""

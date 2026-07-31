@@ -190,7 +190,7 @@ pnpm -C apps/client test
   such trick since it's reachable over the public internet from a normally-bridged container.
 - **Frontend containers never see backend secrets.** `admin`/`client` in `infra/docker-compose.yml`
   deliberately omit `env_file: ../.env` — only `api` has it. `.env` carries backend secrets
-  (`OPENAI_API_KEY`, `SESSION_SECRET`, `GOOGLE_CLIENT_SECRET`, `DATABASE_URL`, ...); none of that
+  (`NVIDIA_API_KEY`, `SESSION_SECRET`, `GOOGLE_CLIENT_SECRET`, `DATABASE_URL`, ...); none of that
   belongs inside a browser-served Next.js image. The frontend services get only the one value they
   actually need, `NEXT_PUBLIC_API_URL`, passed as an explicit build `arg` instead.
 - **Chunking tokenizer choice (`app/rag/chunking.py`, phase-3 task-01).** PRD §7.1 sizes chunks in

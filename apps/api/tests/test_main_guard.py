@@ -1,11 +1,13 @@
 """Pins `app/main.py`'s boot-time fail-fast guard (phase-2 task-01 review round 1, finding I1;
-policy narrowed in review round 2).
+policy narrowed in review round 2; `NVIDIA_API_KEY` joined the not-`is_dev` list in phase-3
+task-02).
 
 `app/main.py` runs module-level code on import: build `Settings()`, then
 unconditionally require `DATABASE_URL`/`SESSION_SECRET` to be non-empty, and
 additionally require `GOOGLE_CLIENT_ID`/`GOOGLE_CLIENT_SECRET`/
-`GOOGLE_REDIRECT_URI` to be non-empty whenever `not settings.is_dev` (i.e.
-`ENVIRONMENT=production`), before wiring a real engine + OAuth client.
+`GOOGLE_REDIRECT_URI`/`ADMIN_EMAILS`/`NVIDIA_API_KEY` to be non-empty
+whenever `not settings.is_dev` (i.e. `ENVIRONMENT=production`), before
+wiring a real engine + OAuth client + embedding pipeline.
 `Settings()`/`create_app()` themselves stay zero-env-var constructible
 (CONVENTIONS.md §5) — this guard is `app.main`-only, so these tests import
 `app.main` fresh (never cached in `sys.modules`) under a fully controlled
@@ -46,6 +48,9 @@ _VALID_ENV = {
     # list below, same dev-exempt/production-required shape as the three
     # GOOGLE_* vars above.
     "ADMIN_EMAILS": "admin@example.com",
+    # Phase-3 task-02: NVIDIA_API_KEY joined the not-is_dev required list
+    # below, same dev-exempt/production-required shape.
+    "NVIDIA_API_KEY": "test-nvidia-api-key",
 }
 
 
@@ -146,11 +151,15 @@ def test_main_imports_cleanly_in_dev_with_only_database_url_and_session_secret_s
     """The offline-dev boot pin: this is the exact case round 1's guard broke.
 
     `ENVIRONMENT=development` + only `DATABASE_URL`/`SESSION_SECRET` set
-    (every `GOOGLE_*` var empty) must import cleanly — this is
-    `.env.example`'s and the README's documented offline local-db path
-    (`cp .env.example .env`, set `DATABASE_URL`,
+    (every `GOOGLE_*` var AND `NVIDIA_API_KEY` empty) must import cleanly —
+    this is `.env.example`'s and the README's documented offline local-db
+    path (`cp .env.example .env`, set `DATABASE_URL`,
     `docker compose --profile local-db up`), which round 1's unconditional
-    five-guard policy broke by crash-looping the api container.
+    five-guard policy broke by crash-looping the api container. Also pins
+    phase-3 task-02's real embedder-client boot-safety fix
+    (`app.rag.embeddings`'s `from_settings` constructor): building the
+    `openai` SDK client with a blank API key must not itself raise, since
+    `NVIDIA_API_KEY` is dev-exempt same as the `GOOGLE_*` vars.
     """
     main_module = _reload_main(
         monkeypatch,
@@ -159,6 +168,7 @@ def test_main_imports_cleanly_in_dev_with_only_database_url_and_session_secret_s
             "GOOGLE_CLIENT_ID": "",
             "GOOGLE_CLIENT_SECRET": "",
             "GOOGLE_REDIRECT_URI": "",
+            "NVIDIA_API_KEY": "",
         },
     )
 
@@ -197,6 +207,44 @@ def test_admin_emails_guard_does_not_raise_in_development_when_blank(
     must still boot.
     """
     main_module = _reload_main(monkeypatch, {"ADMIN_EMAILS": "", "ENVIRONMENT": "development"})
+
+    assert main_module.app.title == "AdvisorDesk API"
+
+
+# ---------------------------------------------------------------------------
+# Phase-3 task-02: NVIDIA_API_KEY joins the not-is_dev required list
+# ---------------------------------------------------------------------------
+
+
+def test_nvidia_api_key_guard_raises_in_production_when_blank(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`NVIDIA_API_KEY`, blanked alone, fails `app.main` import under production.
+
+    An empty `NVIDIA_API_KEY` in production boots cleanly but every
+    publish/edit-of-published call fails at the first real embedding
+    request instead — never until an admin actually tries to publish, which
+    is worse than failing fast at boot.
+    """
+    with pytest.raises(RuntimeError) as exc_info:
+        _reload_main(monkeypatch, {"NVIDIA_API_KEY": "", "ENVIRONMENT": "production"})
+
+    message = str(exc_info.value)
+    assert "NVIDIA_API_KEY" in message
+    assert "nvidia_api_key" in message
+
+
+def test_nvidia_api_key_guard_does_not_raise_in_development_when_blank(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`NVIDIA_API_KEY`, blanked alone, is exempt under dev — same shape as the `GOOGLE_*` guards.
+
+    The offline dev path never has a real NVIDIA key configured either;
+    publishing just won't work until it's set, but the app must still boot
+    (`app.rag.embeddings`'s real embedder client tolerates the empty value
+    at construction time — see its `from_settings` docstring).
+    """
+    main_module = _reload_main(monkeypatch, {"NVIDIA_API_KEY": "", "ENVIRONMENT": "development"})
 
     assert main_module.app.title == "AdvisorDesk API"
 

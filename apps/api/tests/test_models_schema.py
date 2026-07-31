@@ -66,13 +66,18 @@ def test_status_check_constraint_rejects_bogus_value(db_session: Session) -> Non
     db_session.rollback()
 
 
-def test_chunk_embedding_round_trips_1536_floats(db_session: Session) -> None:
-    """`chunks.embedding` stores/returns a 1536-dim vector (PRD §4, §7.2)."""
+def test_chunk_embedding_round_trips_1024_floats(db_session: Session) -> None:
+    """`chunks.embedding` stores/returns a 1024-dim vector (PRD §4, §7.2, v1.5).
+
+    Migration 0002 resized this column from the earlier 1536-dim
+    (`text-embedding-3-small`) shape to 1024 (`nvidia/nv-embedqa-e5-v5`,
+    phase-3 task-02).
+    """
     content = Content(title="Embeddable", slug="embeddable")
     db_session.add(content)
     db_session.flush()
 
-    vector = [(i % 100) / 100.0 for i in range(1536)]
+    vector = [(i % 100) / 100.0 for i in range(1024)]
     chunk = Chunk(content_id=content.id, chunk_index=0, text="hello world", embedding=vector)
     db_session.add(chunk)
     db_session.flush()
@@ -81,7 +86,8 @@ def test_chunk_embedding_round_trips_1536_floats(db_session: Session) -> None:
     stored = db_session.get(Chunk, chunk.id)
     assert stored is not None
     assert stored.embedding is not None
-    assert len(stored.embedding) == 1536
+    assert isinstance(stored.embedding, list)
+    assert len(stored.embedding) == 1024
     assert stored.embedding == pytest.approx(vector, rel=1e-4)
 
 

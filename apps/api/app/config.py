@@ -24,7 +24,7 @@ class Settings(BaseSettings):
     the only place that enforces it is non-empty before wiring a real
     engine.
 
-    `openai_api_key`/`google_client_secret`/`session_secret`/`database_url`
+    `nvidia_api_key`/`google_client_secret`/`session_secret`/`database_url`
     are `SecretStr` (phase-2 task-01 Settings hardening; `database_url`
     added in the phase-2 final review, finding C-5 — a Postgres DSN embeds
     the connection password, e.g. `postgresql://user:pw@host/db`, so a naive
@@ -33,14 +33,37 @@ class Settings(BaseSettings):
     logging — never leaks a secret value; call sites read the plaintext via
     `.get_secret_value()`. Empty-string defaults become `SecretStr("")`,
     preserving the zero-env-vars constructibility guarantee above.
+
+    `nvidia_api_key` (v1.5; phase-3 task-02) replaces the earlier
+    `openai_api_key` field name: PRD §7.2 pins the NVIDIA NIM
+    OpenAI-compatible endpoint (`https://integrate.api.nvidia.com/v1`,
+    `NVIDIA_API_KEY`) as the live chat-completion/embedding provider, not
+    OpenAI itself — `app.rag.embeddings.OpenAICompatibleEmbedder` talks to
+    it via the `openai` SDK purely because that SDK speaks the compatible
+    wire protocol, hence the class name staying provider-neutral while the
+    settings field name reflects the actual provider.
     """
 
-    openai_api_key: SecretStr = SecretStr("")
+    nvidia_api_key: SecretStr = SecretStr("")
     database_url: SecretStr = SecretStr("")
     google_client_id: str = ""
     google_client_secret: SecretStr = SecretStr("")
     session_secret: SecretStr = SecretStr("")
     admin_emails: str = ""
+
+    # NVIDIA NIM's OpenAI-compatible base URL (PRD §7.2, v1.5) — embeddings
+    # today (phase-3 task-02); the phase-4 chat/agent LLM client reuses the
+    # same field. Config-only so a provider swap never touches code.
+    llm_base_url: str = "https://integrate.api.nvidia.com/v1"
+    # `nvidia/nv-embedqa-e5-v5` (PRD §7.2, v1.5) — asymmetric embedding
+    # model: `input_type="passage"` at publish time, `input_type="query"` at
+    # retrieval time (phase-4 task-01 reuses `Embedder` for the latter).
+    embedding_model: str = "nvidia/nv-embedqa-e5-v5"
+    # The model's output vector width (PRD §7.2, v1.5) — also the
+    # `chunks.embedding` pgvector column's dimension (migration 0002); a
+    # provider/model swap with a different width updates this one value and
+    # its matching Alembic migration together.
+    embedding_dimensions: int = 1024
 
     # Not part of the PRD §9 env roster: the real `HttpxGoogleOAuthClient`
     # (app.auth.oauth, phase-2 task-01) needs a fixed, Google-console-

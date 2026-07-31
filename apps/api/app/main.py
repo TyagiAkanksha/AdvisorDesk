@@ -4,12 +4,14 @@ CONVENTIONS.md §5: `app/main.py` is the only wiring point — load settings,
 build the engine + session factory, call `create_app(...)`, expose `app`.
 It's also the only place that requires `DATABASE_URL` and `SESSION_SECRET`
 to be non-empty, unconditionally, and `GOOGLE_CLIENT_ID`/
-`GOOGLE_CLIENT_SECRET`/`GOOGLE_REDIRECT_URI`/`ADMIN_EMAILS` to be non-empty
-outside dev (phase-2 task-01 review round 1, finding I1; narrowed in review
-round 2 — see below; `ADMIN_EMAILS` added by the phase-2 final review,
-finding C-6). A real deployment booted without one of these would otherwise
-sign every session with an empty secret / talk to Google with an empty
-client id / lock every admin out of `/auth/callback` silently, which is far
+`GOOGLE_CLIENT_SECRET`/`GOOGLE_REDIRECT_URI`/`ADMIN_EMAILS`/`NVIDIA_API_KEY`
+to be non-empty outside dev (phase-2 task-01 review round 1, finding I1;
+narrowed in review round 2 — see below; `ADMIN_EMAILS` added by the phase-2
+final review, finding C-6; `NVIDIA_API_KEY` added by phase-3 task-02, same
+dev-exempt/production-required shape). A real deployment booted without one
+of these would otherwise sign every session with an empty secret / talk to
+Google with an empty client id / lock every admin out of `/auth/callback`
+silently / publish content whose chunks never actually embed, which is far
 worse than a boot-time crash.
 `Settings`/`create_app` themselves stay DB-less and secret-less so tests and
 the OpenAPI baseline export don't need either a database or real OAuth
@@ -40,6 +42,9 @@ from app.auth.oauth import GoogleOAuthClient, HttpxGoogleOAuthClient
 from app.config import Settings
 from app.db import make_engine, make_session_factory
 from app.factory import create_app
+from app.models import embedding_column_dims
+from app.rag.embeddings import OpenAICompatibleEmbedder
+from app.rag.pipeline import EmbeddingChunkPipeline
 
 logger = logging.getLogger(__name__)
 
@@ -87,6 +92,20 @@ if not settings.is_dev:
         "google_client_secret",
     )
     _require_nonempty(settings.google_redirect_uri, "GOOGLE_REDIRECT_URI", "google_redirect_uri")
+    # Phase-3 task-02: an empty NVIDIA_API_KEY in production boots cleanly
+    # but every publish/edit-of-published call fails at the first real
+    # embedding request (EmbeddingFailedError, PRD §4 atomicity rolls the
+    # whole transaction back) — never silently, but also never until an
+    # admin actually tries to publish, which is worse than failing at boot.
+    # Dev-exempt for the same reason as the three GOOGLE_* guards: the
+    # offline dev path (`cp .env.example .env`, which ships this blank)
+    # must still boot; publishing just won't work until it's set
+    # (`OpenAICompatibleEmbedder.from_settings` tolerates the empty value at
+    # construction time — see its docstring — so this is purely a
+    # request-time failure, not a boot-time one, when left unset in dev).
+    _require_nonempty(
+        settings.nvidia_api_key.get_secret_value(), "NVIDIA_API_KEY", "nvidia_api_key"
+    )
     # Final review, finding C-6: an empty ADMIN_EMAILS in production boots
     # cleanly but locks EVERY Google identity out of `/auth/callback`
     # (`ForbiddenError` on every login attempt, PRD §5.1) — no admin could
@@ -94,6 +113,28 @@ if not settings.is_dev:
     # reason as the three GOOGLE_* guards above: the offline dev path must
     # still boot with it empty; admin login just won't work until it's set.
     _require_nonempty(settings.admin_emails, "ADMIN_EMAILS", "admin_emails")
+
+# Review round 1, finding M3: `settings.embedding_dimensions` and
+# `Chunk.embedding`'s actual pgvector column width (migration 0002) are two
+# independent sources of truth for the same number, reconciled nowhere —
+# a config-only change to EMBEDDING_DIMENSIONS with no matching migration
+# would boot cleanly and only fail on the first real publish, as a
+# dimension-mismatch `EmbeddingFailedError` from `app.rag.pipeline`'s own
+# defense-in-depth guard, which is a request-time surprise for what is
+# really a deployment configuration error. Asserted here, at boot, instead.
+# `embedding_column_dims()` (final review: promoted from a private copy of
+# this same read that used to live here, near-identical to
+# `app.rag.pipeline`'s own) raises `RuntimeError` itself if the column isn't
+# a dimensioned `Vector`, so no separate guard is needed before comparing.
+_chunk_embedding_dim = embedding_column_dims()
+if settings.embedding_dimensions != _chunk_embedding_dim:
+    raise RuntimeError(
+        f"settings.embedding_dimensions is {settings.embedding_dimensions} but "
+        f"Chunk.embedding is a {_chunk_embedding_dim}-dim pgvector column "
+        "(migration 0002) — these must match. Set EMBEDDING_DIMENSIONS to the "
+        "column's width, or write/run a migration that resizes the column to "
+        "match EMBEDDING_DIMENSIONS."
+    )
 
 if not settings.cors_origin_list:
     # Final review, finding C-1: an empty CORS_ORIGINS silently killed every
@@ -116,11 +157,13 @@ engine: Engine = make_engine(settings.database_url.get_secret_value())
 session_factory: sessionmaker[Session] = make_session_factory(engine)
 oauth_client: GoogleOAuthClient = HttpxGoogleOAuthClient.from_settings(settings)
 
+chunk_pipeline: EmbeddingChunkPipeline = EmbeddingChunkPipeline(
+    OpenAICompatibleEmbedder.from_settings(settings)
+)
+
 app: FastAPI = create_app(
     session_factory=session_factory,
     settings=settings,
     oauth_client=oauth_client,
-    # NoopChunkPipeline default (phase-3 task-02 wires the real embedding
-    # pipeline here — see app.factory.create_app's chunk_pipeline docstring).
-    chunk_pipeline=None,
+    chunk_pipeline=chunk_pipeline,
 )

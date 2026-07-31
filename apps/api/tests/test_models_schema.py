@@ -66,13 +66,18 @@ def test_status_check_constraint_rejects_bogus_value(db_session: Session) -> Non
     db_session.rollback()
 
 
-def test_chunk_embedding_round_trips_1536_floats(db_session: Session) -> None:
-    """`chunks.embedding` stores/returns a 1536-dim vector (PRD §4, §7.2)."""
+def test_chunk_embedding_round_trips_1024_floats(db_session: Session) -> None:
+    """`chunks.embedding` stores/returns a 1024-dim vector (PRD §4, §7.2, v1.5).
+
+    Migration 0002 resized this column from the earlier 1536-dim
+    (`text-embedding-3-small`) shape to 1024 (`nvidia/nv-embedqa-e5-v5`,
+    phase-3 task-02).
+    """
     content = Content(title="Embeddable", slug="embeddable")
     db_session.add(content)
     db_session.flush()
 
-    vector = [(i % 100) / 100.0 for i in range(1536)]
+    vector = [(i % 100) / 100.0 for i in range(1024)]
     chunk = Chunk(content_id=content.id, chunk_index=0, text="hello world", embedding=vector)
     db_session.add(chunk)
     db_session.flush()
@@ -81,7 +86,8 @@ def test_chunk_embedding_round_trips_1536_floats(db_session: Session) -> None:
     stored = db_session.get(Chunk, chunk.id)
     assert stored is not None
     assert stored.embedding is not None
-    assert len(stored.embedding) == 1536
+    assert isinstance(stored.embedding, list)
+    assert len(stored.embedding) == 1024
     assert stored.embedding == pytest.approx(vector, rel=1e-4)
 
 
@@ -113,9 +119,20 @@ def test_inspector_sees_hnsw_and_fk_indexes(tmp_engine: Engine) -> None:
     chat_messages_index_names = {ix["name"] for ix in inspector.get_indexes("chat_messages")}
     assert "ix_chat_messages_session_created" in chat_messages_index_names
 
+    # Final review (p3 t03 reviewer incident): `pg_indexes` is a whole-database view, not
+    # scoped to `tmp_engine`'s throwaway schema — an unscoped `indexname` match can hit a
+    # same-named leftover index in the `public` schema (e.g. dev migrations run there
+    # directly) or, under parallel test runs, another schema entirely, either of which turns
+    # `.scalar_one()` into `MultipleResultsFound`. `tmp_engine` is connected with
+    # `search_path=<schema>,public` (`app.db.make_engine`'s `schema` kwarg), so
+    # `current_schema()` on this same connection resolves to exactly this test's own
+    # throwaway schema — scope the query to it instead of a bare `indexname` match.
     with tmp_engine.connect() as conn:
         index_def = conn.execute(
-            sa.text("SELECT indexdef FROM pg_indexes WHERE indexname = 'ix_chunks_embedding_hnsw'")
+            sa.text(
+                "SELECT indexdef FROM pg_indexes "
+                "WHERE schemaname = current_schema() AND indexname = 'ix_chunks_embedding_hnsw'"
+            )
         ).scalar_one()
     assert "USING hnsw" in index_def
     assert "vector_cosine_ops" in index_def

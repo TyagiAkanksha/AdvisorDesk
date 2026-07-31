@@ -13,6 +13,8 @@ dependencies = [
     "pydantic-settings",
     "itsdangerous>=2.2.0",
     "httpx>=0.28.1",
+    "tiktoken>=0.13.0",
+    "openai>=2.51.0",
 ]
 
 [dependency-groups]
@@ -93,6 +95,20 @@ forbidden_modules = [
     "app.mcp",
     "app.rag",
     "app.agent",
+    "app.main",
+    "app.db",
+    "app.factory",
+]
+
+[[tool.importlinter.contracts]]
+name = "app.rag imports only app.services, app.models, and app.config"
+type = "forbidden"
+source_modules = ["app.rag"]
+forbidden_modules = [
+    "app.routes",
+    "app.mcp",
+    "app.agent",
+    "app.auth",
     "app.main",
     "app.db",
     "app.factory",

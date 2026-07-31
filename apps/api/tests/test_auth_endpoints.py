@@ -93,13 +93,14 @@ def _soft_delete_user_by_email(engine: Engine, email: str) -> None:
 def test_settings_repr_hides_secret_values() -> None:
     """Interfaces block (Settings hardening): `session_secret`/`google_client_secret`/
 
-    `openai_api_key` become pydantic `SecretStr` — a naive `repr(Settings(...))` (e.g. via
-    structured logging) must never leak them. DB-less: runs with no `TEST_DATABASE_URL`.
+    `nvidia_api_key` (phase-3 task-02: renamed from `openai_api_key`) become pydantic
+    `SecretStr` — a naive `repr(Settings(...))` (e.g. via structured logging) must never leak
+    them. DB-less: runs with no `TEST_DATABASE_URL`.
     """
     settings = Settings(
         session_secret="test-secret",
         google_client_secret="super-secret-google-value",
-        openai_api_key="super-secret-openai-value",
+        nvidia_api_key="super-secret-nvidia-value",
         admin_emails="admin@example.com",
     )
 
@@ -107,7 +108,7 @@ def test_settings_repr_hides_secret_values() -> None:
 
     assert "test-secret" not in rendered
     assert "super-secret-google-value" not in rendered
-    assert "super-secret-openai-value" not in rendered
+    assert "super-secret-nvidia-value" not in rendered
 
 
 def test_login_redirects_to_fake_google_consent_url() -> None:

@@ -1,7 +1,7 @@
 # AdvisorDesk — Product Requirements Document (PRD)
 
 **AI-Powered Advisory Content Platform**
-Version 1.4 · Owner: Akanksha Tyagi
+Version 1.5 · Owner: Akanksha Tyagi
 Status: Approved for implementation · Scope: full production-quality build
 
 > **Purpose:** a complete, self-contained spec that an implementing agent can execute end-to-end with zero outside context. All decisions from the pre-implementation review are merged inline — no companion documents are required.
@@ -90,7 +90,10 @@ Seeded with realistic **sample** advisory content. No real customer or financial
 - **Two frontends, one backend, one database.** Do not create a second backend.
 - The MCP server runs **inside the FastAPI app process** and its tools call the same service functions as the REST endpoints — no duplicated business logic.
 - **MCP exposure rule:** tools are invoked in-process by the agent loop. Exposing the MCP server over HTTP (for external MCP clients) is OFF by default (`MCP_HTTP_ENABLED=false`); if enabled, the MCP route requires the same admin session auth as §5.2. CMS write tools must never be reachable unauthenticated.
-- LLM provider: **OpenAI** — chat completions for the RAG assistant and the agent loop; embeddings API for vectors.
+- LLM provider (v1.5): **NVIDIA-hosted models over the OpenAI-compatible API**
+  (`https://integrate.api.nvidia.com/v1`, key `NVIDIA_API_KEY`) — chat completions for the RAG
+  assistant and the agent loop; embeddings API for vectors. The code talks the OpenAI wire
+  protocol via a configurable base URL, so the provider is a config swap, not a code change.
 
 ### 3.1 Repository layout (monorepo)
 ```
@@ -176,7 +179,7 @@ chunks (
   content_id uuid not null references content(id) on delete cascade,
   chunk_index int not null,
   text text not null,
-  embedding vector(1536),            -- text-embedding-3-small
+  embedding vector(1024),            -- nvidia/nv-embedqa-e5-v5 (v1.5; was 1536/text-embedding-3-small)
   created_at timestamptz not null default now()
 )
 create index on chunks using hnsw (embedding vector_cosine_ops);
@@ -302,12 +305,12 @@ All tools read and write non-deleted rows only (§4.1) — a `content_id` addres
 
 ## 7. RAG pipeline (client assistant)
 
-1. **Chunking:** split `body_md` by markdown headings, then to ~500-token chunks with 50-token overlap. Store `chunk_index`.
-2. **Embedding:** OpenAI `text-embedding-3-small` (1536 dims). Batch per content item.
+1. **Chunking:** split `body_md` by markdown headings, then to ~400-token chunks with 50-token overlap (v1.5: lowered from 500 — the embedding model's input window is 512 of *its* tokens, and tokenizers differ; 400 keeps a safe margin). Store `chunk_index`.
+2. **Embedding:** `nvidia/nv-embedqa-e5-v5` (1024 dims) via the OpenAI-compatible `/v1/embeddings` endpoint (v1.5). The model is **asymmetric**: pass `input_type="passage"` when embedding chunks at publish time and `input_type="query"` when embedding user questions at retrieval time; send `truncate="END"` as a defense against over-length input. Batch per content item. Model/dims/base-URL are env-configurable (`EMBEDDING_MODEL`, `EMBEDDING_DIMENSIONS`, `LLM_BASE_URL`) so a provider swap never touches code.
 3. **Retrieval:** embed the user query → nearest neighbors over `chunks` via the HNSW index → top 6 → threshold filter.
    **Similarity convention (implementation trap — read carefully):** pgvector's `<=>` operator returns cosine **distance**. Define once in the retrieval module: `similarity = 1 - (embedding <=> query_embedding)`. Apply `SIMILARITY_THRESHOLD` (default `0.35`, env-configurable) to that **similarity** value — chunks below it are dropped. A unit test pins this conversion (§9).
 4. **Retrieval outcome recording:** when persisting the assistant message, set `top_similarity` to the best similarity observed (null if the index returned nothing) and `retrieval_found = false` iff no chunk cleared the threshold.
-5. **Answer synthesis:** OpenAI chat model. System prompt (verbatim intent, wording adjustable):
+5. **Answer synthesis:** NVIDIA-hosted instruct model over the OpenAI-compatible chat-completions API (exact model pinned in the phase-4 plan; `CHAT_MODEL` env-configurable). System prompt (verbatim intent, wording adjustable):
    - Answer ONLY from the provided context chunks.
    - Cite with bracketed numbers [1], [2] mapping to the provided sources.
    - If the context does not contain the answer: reply that no published guidance covers this, suggest asking the advisory team, and DO NOT answer from general knowledge.
@@ -346,7 +349,8 @@ All tools read and write non-deleted rows only (§4.1) — a `content_id` addres
   - `RATE_LIMIT_PER_DAY` (default 50) messages per day per session
   - `SESSION_CREATE_PER_DAY` (default 20) new sessions per day per IP — prevents resetting the per-session cap by minting fresh sessions
   - Violations return `429` with the standard error envelope.
-- **Config:** all secrets and tunables via env vars: `OPENAI_API_KEY`, `DATABASE_URL`, `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `SESSION_SECRET`, `ADMIN_EMAILS`, `CORS_ORIGINS`, `SIMILARITY_THRESHOLD`, `RATE_LIMIT_PER_MIN`, `RATE_LIMIT_PER_DAY`, `SESSION_CREATE_PER_DAY`, `MCP_HTTP_ENABLED`. `.env.example` provided. Never commit secrets.
+- **Config:** all secrets and tunables via env vars: `NVIDIA_API_KEY` (v1.5; was
+  `OPENAI_API_KEY`), `LLM_BASE_URL`, `EMBEDDING_MODEL`, `EMBEDDING_DIMENSIONS`, `CHAT_MODEL`, `DATABASE_URL`, `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `SESSION_SECRET`, `ADMIN_EMAILS`, `CORS_ORIGINS`, `SIMILARITY_THRESHOLD`, `RATE_LIMIT_PER_MIN`, `RATE_LIMIT_PER_DAY`, `SESSION_CREATE_PER_DAY`, `MCP_HTTP_ENABLED`. `.env.example` provided. Never commit secrets.
 - **Streaming latency:** first token < ~2s on typical questions; a simple middleware logs p50/p95.
 - **Error handling:** consistent JSON error envelope `{error: {code, message}}` (also used inside SSE `error` events); frontends surface friendly messages.
 - **Type safety:** TypeScript strict mode in both frontends; Pydantic everywhere on the API boundary.
@@ -387,7 +391,7 @@ Definition of done: a stranger can follow the README, run the demo script end to
 
 | # | Decision | Default chosen | Alternatives |
 |---|---|---|---|
-| 1 | OpenAI models | `gpt-4o-mini` for chat + agent, `text-embedding-3-small` | `gpt-4o` for better answers at higher cost |
+| 1 | LLM/embedding models (v1.5) | NVIDIA-hosted via OpenAI-compatible API: `nvidia/nv-embedqa-e5-v5` embeddings (1024d); chat model pinned in phase 4 | OpenAI `gpt-4o-mini` + `text-embedding-3-small` (original v1.4 default — config swap away) |
 | 2 | Repo structure | Single monorepo | Split repos per app |
 | 3 | Client app auth | Public, anonymous sessions | Add optional Google login for clients |
 | 4 | Admin access control | Email allowlist via env var (`ADMIN_EMAILS`) | Open login for local development only |

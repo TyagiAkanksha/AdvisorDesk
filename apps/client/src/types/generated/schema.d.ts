@@ -270,6 +270,54 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/public/content": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Public Content List
+         * @description PRD §5.3: published-and-non-deleted content, newest-published first, tags included.
+         *
+         *     Bare list, no pagination envelope — test-author-resolved,
+         *     controller-approved (mirrors `GET /tags`'s bare `list[TagWithCount]`
+         *     shape; task-03 test-author report ambiguity #1).
+         */
+        get: operations["public_content_list"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/public/content/{slug}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Public Content Get
+         * @description PRD §5.3: by-slug detail for a published-and-non-deleted item (404 otherwise).
+         *
+         *     A draft/archived item's slug, a soft-deleted (still `status='published'`)
+         *     item's slug, and a slug that never existed all 404 the same way — see
+         *     `content_service.get_published_by_slug`'s §9 pin.
+         */
+        get: operations["public_content_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/stats": {
         parameters: {
             query?: never;
@@ -465,6 +513,45 @@ export interface components {
             id: string;
             /** Name */
             name: string | null;
+        };
+        /**
+         * PublicContentDetail
+         * @description `GET /public/content/{slug}`'s response body (PRD §5.3, exact field set).
+         *
+         *     Same fields as `PublicContentSummary` plus `body_md` — the only
+         *     difference between the list and detail shapes.
+         */
+        PublicContentDetail: {
+            /** Body Md */
+            body_md: string;
+            /**
+             * Published At
+             * Format: date-time
+             */
+            published_at: string;
+            /** Slug */
+            slug: string;
+            /** Tags */
+            tags: string[];
+            /** Title */
+            title: string;
+        };
+        /**
+         * PublicContentSummary
+         * @description One entry in `GET /public/content`'s bare list (PRD §5.3, exact field set).
+         */
+        PublicContentSummary: {
+            /**
+             * Published At
+             * Format: date-time
+             */
+            published_at: string;
+            /** Slug */
+            slug: string;
+            /** Tags */
+            tags: string[];
+            /** Title */
+            title: string;
         };
         /**
          * StatsResponse
@@ -972,6 +1059,75 @@ export interface operations {
                     "application/json": {
                         [key: string]: string;
                     };
+                };
+            };
+        };
+    };
+    public_content_list: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PublicContentSummary"][];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    public_content_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                slug: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PublicContentDetail"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
         };

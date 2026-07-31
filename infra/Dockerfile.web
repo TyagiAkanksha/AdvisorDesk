@@ -8,6 +8,20 @@
 # NEXT_PUBLIC_API_URL is a BUILD-time arg: Next.js inlines NEXT_PUBLIC_* into
 # the JS bundle at `next build` time. ONE IMAGE PER ENVIRONMENT — changing
 # it means a rebuild, not a restart (see infra/docker-compose.yml).
+#
+# API_URL (final review, F1) is apps/client-only: src/lib/publicApi.ts reads
+# `process.env.API_URL` directly (deliberately NOT NEXT_PUBLIC_-prefixed —
+# it only ever runs server-side, see that file's own comment) and throws if
+# it's unset under NODE_ENV=production. `next build` runs page code during
+# its "Generating static pages" step even for a `cache: 'no-store'` route
+# (verified empirically: `docker build --build-arg APP=client` with no
+# API_URL failed there with exactly that thrown error), so this needs a
+# build-time value in stage 1 exactly like NEXT_PUBLIC_API_URL above, AND a
+# runtime value in stage 2 for the per-request fetches after the container
+# starts — see both stages' ARG/ENV pairs below and docker-compose.yml's
+# `client` service (build.args AND environment: both set it). Harmless,
+# unused ARG/ENV for the admin build — nothing in apps/admin reads
+# process.env.API_URL.
 
 # ---------- Stage 1: install + build ----------
 FROM node:24-slim AS builder
@@ -31,6 +45,11 @@ RUN pnpm install --frozen-lockfile --filter "./apps/${APP}..."
 ARG NEXT_PUBLIC_API_URL=http://localhost:8000
 ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL
 
+# apps/client's server-only API base (see the top-of-file comment) — needed
+# during this stage's `next build` too, not just at container runtime.
+ARG API_URL=http://localhost:8000
+ENV API_URL=$API_URL
+
 # Next's standalone tracer never writes apps/${APP}/public itself, and
 # neither app ships one yet — create it so stage 2's COPY always has a
 # source, even for an app with zero static assets.
@@ -45,6 +64,14 @@ ARG APP
 # Baked in at build time (see ARG-in-CMD note below) — one image per app.
 ENV APP=${APP}
 ENV NODE_ENV=production PORT=3000 HOSTNAME=0.0.0.0
+
+# Runtime default for apps/client's server-only API_URL (see the top-of-file
+# comment) — infra/docker-compose.yml's `client` service overrides this via
+# its own `environment:` block with the container-network origin. Unused at
+# runtime by apps/admin (its NEXT_PUBLIC_API_URL is already inlined into the
+# built bundle by stage 1).
+ARG API_URL=http://localhost:8000
+ENV API_URL=$API_URL
 
 WORKDIR /app
 

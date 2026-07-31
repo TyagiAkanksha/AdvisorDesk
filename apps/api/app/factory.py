@@ -17,6 +17,7 @@ from app.routes.auth_routes import router as auth_router
 from app.routes.content_routes import router as content_router
 from app.routes.errors import register_error_handlers
 from app.routes.health_routes import router as health_router
+from app.routes.public_routes import router as public_router
 from app.services.lifecycle import ChunkPipeline, NoopChunkPipeline
 
 _API_PREFIX = "/api/v1"
@@ -51,12 +52,14 @@ def create_app(
             `session_factory`'s DB-less mode; `app/main.py` is the only
             caller that wires a real one.
         chunk_pipeline: an optional `app.services.lifecycle.ChunkPipeline`.
-            `None` (phase-2's default, and every current caller) wires
-            `NoopChunkPipeline` instead — content lifecycle transitions
-            (publish/archive/delete/update) all run end to end with no real
-            embedding provider. phase-3 task-02 passes the real chunking +
-            embedding pipeline here; the parameter exists now so that swap
-            needs no signature change.
+            `None` wires `NoopChunkPipeline` instead — content lifecycle
+            transitions (publish/archive/delete/update) all run end to end
+            with no real embedding provider; this is still what DB-less
+            tests and the OpenAPI baseline export get by omitting the
+            argument. `app/main.py` (the real caller, since phase-3
+            task-02) passes `EmbeddingChunkPipeline` instead — the
+            parameter existed from phase-2 onward so that swap needed no
+            signature change here.
 
     Returns:
         A configured `FastAPI` app instance.
@@ -90,5 +93,6 @@ def create_app(
     app.include_router(health_router, prefix=_API_PREFIX)
     app.include_router(auth_router, prefix=_API_PREFIX)
     app.include_router(content_router, prefix=_API_PREFIX)
+    app.include_router(public_router, prefix=_API_PREFIX)
 
     return app

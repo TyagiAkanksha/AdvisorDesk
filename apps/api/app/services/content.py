@@ -235,6 +235,98 @@ def list_content(
     return items, total
 
 
+def list_published_content(session: Session) -> list[Content]:
+    """Return every published, non-deleted `Content` row, newest-published first (PRD §5.3).
+
+    Distinct from `list_content` (PRD §5.2's paginated admin list) rather
+    than a parameter bolted onto it: `GET /public/content` is a bare,
+    unpaginated feed (test-author-resolved, controller-approved — mirrors
+    `app.services.tags.list_tags_with_counts` / `GET /tags`'s own bare
+    `list[TagWithCount]` shape, task-03 test-author report ambiguity #1),
+    so reusing `list_content`'s `(items, total)`/`page`/`page_size` contract
+    would mean faking an unbounded `page_size` to avoid truncating the feed
+    at its default of 20 — messier, and riskier for `list_content`'s
+    existing callers/tests, than one small dedicated read. This leaves
+    `list_content`'s signature completely untouched.
+
+    Built on `active_select(Content)` so a soft-deleted row never appears
+    (§9 pin) even though its `status` stays `'published'` — `delete_content`
+    deliberately leaves `status`/`published_at` untouched (PRD §4.1) — plus
+    an explicit `status == 'published'` filter, since `active_select` alone
+    only excludes soft-deleted rows, not drafts/archived ones.
+
+    Ordered `published_at` DESC (test-author ambiguity #2, controller-
+    approved: newest first) with `Content.id.desc()` as a stable tiebreaker
+    for rows sharing the same `published_at`, mirroring `list_content`'s own
+    `created_at`-tie rationale (review finding F1).
+
+    Args:
+        session: the caller's `Session`.
+
+    Returns:
+        Every published, non-deleted `Content` row, newest-published first.
+    """
+    stmt = (
+        active_select(Content)
+        .where(Content.status == "published")
+        .order_by(Content.published_at.desc(), Content.id.desc())
+    )
+    return list(session.execute(stmt).scalars().all())
+
+
+def get_published_by_slug(session: Session, slug: str) -> Content:
+    """Return the published, non-deleted `Content` row for `slug` (PRD §5.3).
+
+    §9 public soft-delete-visibility pin: a soft-deleted row keeps
+    `status='published'` (PRD §4.1's delete leaves lifecycle fields
+    untouched), so `active_select` plus an explicit `status` filter is
+    required together — either alone would wrongly surface a
+    soft-deleted-but-still-`published` row, or a draft/archived one.
+    Mirrors `get_content`'s active-row discipline for the admin by-id
+    route. A slug belonging to a draft/archived item, or one that never
+    existed, 404s the same way (PRD §4.1: a deleted item's slug is never
+    reassigned, so this 404 is permanent, not until some other item claims
+    the slug).
+
+    Review round 1, finding I1: `slug` is an unvalidated path parameter on
+    this app's only unauthenticated, DB-touching route
+    (`GET /public/content/{slug}`) — a caller can send a NUL byte
+    (`.../content/abc%00def`), which a real `_slugify`-generated slug
+    (`[a-z0-9-]` only, see that function's docstring) can never contain. A
+    NUL byte survives FastAPI's path decoding and reaches Postgres, whose
+    text comparison rejects it (psycopg raises `DataError`), which would
+    otherwise bubble past every typed handler to the generic 500 — a free,
+    anonymous, error-log-flood vector. Short-circuiting to "no match" here
+    (skipping the query entirely) instead routes it through the exact same
+    `NotFoundError` and `f"content slug {slug!r} not found"` message
+    construction as any other not-found slug, so the response is
+    byte-for-byte indistinguishable from an unknown slug's 404 — no new
+    branch's worth of distinguishing information leaks to the caller.
+
+    Args:
+        session: the caller's `Session`.
+        slug: the `Content.slug` to look up.
+
+    Returns:
+        The published, non-deleted `Content` row.
+
+    Raises:
+        NotFoundError: no published, non-deleted row exists for `slug`,
+            including a `slug` containing a NUL byte (`"\x00"`), which is
+            never queried against the DB (finding I1).
+    """
+    content = (
+        session.execute(
+            active_select(Content).where(Content.slug == slug, Content.status == "published")
+        ).scalar_one_or_none()
+        if "\x00" not in slug
+        else None
+    )
+    if content is None:
+        raise NotFoundError(f"content slug {slug!r} not found")
+    return content
+
+
 def update_content(
     session: Session,
     content_id: uuid.UUID,

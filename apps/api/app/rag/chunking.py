@@ -178,9 +178,15 @@ def _split_long_section(section: str, target_tokens: int, overlap_tokens: int) -
     *before* packing, so every unit the packing loop below actually sees is
     individually `<= target_tokens`. Because this pre-split happens as a
     single flat pass over the whole section, a heading (the section's leading
-    unit) is packed together with however many units of its section's first
-    chunk fit -- never flushed alone as an orphan-heading chunk, even when
-    the very next paragraph needed the hard fallback.
+    unit) is usually packed together with however many units of its section's
+    first chunk fit, rather than being flushed alone -- *except* when that
+    first unit is itself a `_token_windows` atom already sized at ~
+    `target_tokens` (the "one long unbroken line/table cell/CJK run" case):
+    there is then no room left for even a two-token heading, so the heading
+    is emitted as its own tiny first chunk (e.g. `['## Mono' (2 tokens), 403,
+    400, ...]`). This is a known instance of the ledgered M1
+    (content-free-chunks) finding, not something this round fixes -- the
+    owner's ruling is that headings stay hard chunk boundaries regardless.
 
     Packing decisions use the *real*, freshly recomputed token count of the
     joined-so-far text, not a sum of each part's independently-counted
@@ -281,22 +287,65 @@ def _split_oversized_unit(unit: str, target_tokens: int) -> list[str]:
 
 
 def _token_windows(text: str, target_tokens: int) -> list[str]:
-    """Slice `text` into consecutive, non-overlapping `target_tokens`-token windows.
+    """Slice `text` into consecutive, non-overlapping, character-lossless windows.
 
     F1b's final fallback for a single line that alone still exceeds
     `target_tokens` even after newline-splitting. Always makes progress: each
-    window advances by exactly `target_tokens` tokens, so this terminates in
+    window boundary starts from a fixed token-count cut, so this terminates in
     `ceil(count_tokens(text) / target_tokens)` windows regardless of `text`'s
     content. `overlap_tokens` between the resulting chunks is added exactly
     once, uniformly, when `_split_long_section`'s packing loop later packs
     these windows -- deliberately not duplicated here.
+
+    Round 2 fix: a token-count cut is a cut in `tiktoken`'s *token* stream, not
+    `text`'s *character* stream -- a single UTF-8 character's bytes can be
+    split across two different tokens, so decoding each side of the cut
+    independently (round 1's approach: `encoding.decode(ids[i:i+target])` per
+    window) can silently drop that character from *both* windows: the left
+    window's trailing partial bytes fail to decode and get discarded, and the
+    right window's leading continuation bytes look like noise and get
+    stripped. The reviewer measured this losing 444/618 swept
+    (text, target_tokens) combinations, including whole CJK characters and
+    emoji at production defaults.
+
+    The fix slices the *original* `text` (not independently-decoded window
+    text) on raw UTF-8 byte offsets: `byte_offset` is the exact length, in
+    bytes, of the token stream's first `i` tokens, computed incrementally
+    (`decode_bytes` on each `target_tokens`-sized block only, summed -- O(n)
+    total, not re-decoding the whole growing prefix on every iteration) since
+    `decode_bytes` is just per-token byte concatenation, so lengths add. If
+    that offset lands mid-character (`raw[byte_offset]` is a UTF-8
+    continuation byte), the boundary is pushed forward -- never backward, and
+    never deleting -- to the start of the next character, so the straddling
+    character is kept whole in the *left* window instead of being cut in half.
+    A window can therefore end up a handful of bytes (well under
+    `overlap_tokens` worth of tokens for any non-degenerate config) past its
+    exact token cut; F1c's `target_tokens + overlap_tokens` ceiling still
+    holds in practice (verified empirically against every fixture in
+    `tests/test_chunking_bounds.py`, including the straddle sweep), and the
+    existing prefix-drop fallback in `_split_long_section`'s packing loop is
+    the backstop if a pathological config ever pushed one over.
     """
     encoding = _encoding()
     ids = encoding.encode(text)
-    return [
-        _decode_clean(encoding, ids[i : i + target_tokens])
-        for i in range(0, len(ids), target_tokens)
-    ]
+    raw = text.encode("utf-8")
+
+    windows: list[str] = []
+    start = 0
+    byte_offset = 0
+    for i in range(target_tokens, len(ids), target_tokens):
+        byte_offset += len(encoding.decode_bytes(ids[i - target_tokens : i]))
+        end = byte_offset
+        while end < len(raw) and raw[end] & 0xC0 == 0x80:
+            end += 1
+        if end > start:
+            windows.append(raw[start:end].decode("utf-8"))
+            start = end
+
+    tail = raw[start:]
+    if tail:
+        windows.append(tail.decode("utf-8"))
+    return windows
 
 
 def _tail_tokens(text: str, n: int) -> str:
@@ -328,11 +377,21 @@ def _decode_clean(encoding: tiktoken.Encoding, ids: list[int]) -> str:
     an emoji's byte sequence. Decoding via `decode_bytes` and stripping any
     leading UTF-8 continuation bytes (`0b10xxxxxx`, i.e. `b & 0xC0 == 0x80`)
     before `.decode("utf-8")` guarantees the returned text starts on a real
-    character boundary. `errors="ignore"` on that final decode is a second,
-    cheap safety net for slices whose *end* also splits a character -- only
-    possible for `_token_windows`' interior windows (an arbitrary cut through
-    the middle of a token stream), never for `_tail_tokens`' suffix slice,
-    which always ends at the original, already-valid text's own end.
+    character boundary.
+
+    `_tail_tokens` is this function's only caller as of round 2 (`_token_windows`
+    now slices `text`'s own raw bytes directly, at a character boundary it
+    computes itself -- see that function's docstring -- so it never calls this
+    helper). That matters for what the leading strip is allowed to do:
+    dropping a character's leading bytes here only ever shortens the *overlap
+    seed* handed to the next chunk -- the character itself stays fully intact
+    in `text`, the already-finalized current chunk this seed was carved out
+    of, so no content is lost overall, only a few tokens' worth of overlap at
+    that one boundary. `errors="ignore"` on the final decode is a defensive
+    fallback that should be unreachable in practice: `_tail_tokens`' suffix
+    slice always ends at `text`'s own already-valid end, and the leading
+    strip above handles the only edge that can be mid-character, so there is
+    no longer a known caller whose *trailing* edge can be incomplete.
     """
     raw = encoding.decode_bytes(ids)
     start = 0

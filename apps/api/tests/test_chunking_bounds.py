@@ -1,20 +1,26 @@
-"""Phase-3 task-01 review round 1 (F1/F2/F4/F5): pins the hard chunk-size bound and its
-companion fixes against pathological markdown that `tests/test_chunking.py`'s fixtures never
-exercise (that file is sha256-pinned and stays untouched -- this is a separate, fresh file).
+"""Phase-3 task-01 review rounds 1 (F1/F2/F4/F5) and 2 (lossless `_token_windows` boundaries):
+pins the hard chunk-size bound and its companion fixes against pathological markdown that
+`tests/test_chunking.py`'s fixtures never exercise (that file is sha256-pinned and stays
+untouched -- this is a separate, fresh file).
 
-The reviewer's finding: unbounded chunks are not just untidy -- the embedder downstream
-truncates at its own token limit, so any chunk content past that point is stored but never
-vectorized, i.e. permanently unretrievable. Every test below either measures the exact same
-pathological shape the review's live probes hit (an 80-row table, a 50-item tight list, a CRLF
-document, a single very long line, a CJK paragraph with no ASCII whitespace) or a specific
-algorithmic defect (`overlap_tokens=0` growth, U+FFFD corruption, tokenizer drift).
+Round 1's finding: unbounded chunks are not just untidy -- the embedder downstream truncates at
+its own token limit, so any chunk content past that point is stored but never vectorized, i.e.
+permanently unretrievable. Round 2's finding: round 1's own `_token_windows` fallback, in fixing
+that, introduced a *different* content-loss bug -- decoding each token-count-cut window
+independently could silently delete a UTF-8 character whose bytes straddled the cut, from both
+sides at once. Every test below either measures the exact same pathological shape one of the two
+review rounds' live probes hit (an 80-row table, a 50-item tight list, a CRLF document, a single
+very long line, a CJK/emoji document, the reviewer's "aé🎉b" straddle case) or a specific
+algorithmic defect (`overlap_tokens=0` growth, U+FFFD corruption, tokenizer drift, character
+deletion at a token-window boundary).
 
 Fixture technique: reuses the same "vocabulary of near-certainly-single-token common words"
 approach as `tests/test_chunking.py` (see that file's module docstring for the full rationale)
 so `str.split()` word lists are a faithful proxy for token lists, letting content-conservation
 be checked as "input words remain an in-order subsequence of the concatenated chunk text" per
-the brief. The CJK fixture has no ASCII whitespace at all, so it uses a coarser, explicitly
-documented conservation check instead (see `test_cjk_paragraph_stays_within_bound_and_uncorrupted`).
+the brief. The CJK/emoji fixtures have no ASCII whitespace at all, so they use exact
+whole-string or exact-per-character reconstruction checks instead (round 2's byte-offset fix
+makes exactness achievable where round 1 could only claim "most of it survives").
 """
 
 from __future__ import annotations
@@ -159,15 +165,20 @@ def test_cjk_paragraph_stays_within_bound_and_uncorrupted() -> None:
     """F1 + F4: a CJK paragraph with no ASCII whitespace at all -- `_split_oversized_unit` finds
     no `\\n` to split on, so this exercises `_token_windows`' raw token-window slicing directly,
     on real multi-byte UTF-8 content (unlike the ASCII-vocabulary fixtures elsewhere in this
-    file). Content conservation is checked at a coarser grain than the word-subsequence
-    technique used above (CJK text has no whitespace for `str.split()` to key on): the heading
-    survives intact in the first chunk, and most of the original 26-character sentence's
-    repeated occurrences reappear across the chunks. A handful of losses at internal
-    token-window boundaries is an accepted, documented trade-off of the hard fallback (see
-    `_decode_clean`) -- what must never happen is a crash or a U+FFFD replacement character."""
+    file). Round 2: `_token_windows` slices on byte offsets that only ever move forward to the
+    next character boundary, never deleting, so calling it directly (with the exact
+    `target_tokens` the end-to-end call below uses internally, via `_split_oversized_unit`) must
+    concatenate back to *exactly* the original text -- not "most of it" (round 1's `>= 50%`
+    threshold here actually licensed losing half the document, precisely the shape of bug the
+    reviewer found). The end-to-end `chunk_markdown` output is checked separately: bound, heading
+    survives intact in the first chunk, and no U+FFFD ever appears."""
     cjk_sentence = "这是一段用于测试的中文内容示例文本没有任何空白字符"
     repeats = 30
-    body = "## CJK Section\n\n" + cjk_sentence * repeats
+    body_text = cjk_sentence * repeats
+    body = "## CJK Section\n\n" + body_text
+
+    windows = chunking._token_windows(body_text, 50)
+    assert "".join(windows) == body_text
 
     chunks = chunk_markdown(body, target_tokens=50, overlap_tokens=10)
 
@@ -177,9 +188,42 @@ def test_cjk_paragraph_stays_within_bound_and_uncorrupted() -> None:
     for chunk in chunks:
         assert "�" not in chunk.text
 
+
+def test_token_window_straddle_characters_are_never_dropped() -> None:
+    """Round 2 (Important): a token-count cut is a cut in the *token* stream, not the *character*
+    stream -- a single UTF-8 character's bytes can land in two different tokens. The reviewer's
+    example, "aé🎉b", mixes a 1-byte, a 2-byte, and a 4-byte UTF-8 character; sweeping
+    `target_tokens` over a wide range against text built from it guarantees at least one value
+    lands a cut mid-character. Before this fix, that dropped the straddling character from *both*
+    windows (the left window's incomplete tail failed to decode and was silently discarded via
+    `errors="ignore"`, the right window's leading continuation bytes were stripped as noise) --
+    the reviewer measured 444 of 618 swept (text, target_tokens) combinations losing content this
+    way. Every value here must now reconstruct the original text exactly: no loss, no
+    duplication (`_token_windows`' windows are non-overlapping by construction)."""
+    text = "aé🎉b" * 20 + "测试" * 20
+
+    for target_tokens in range(1, 40):
+        windows = chunking._token_windows(text, target_tokens)
+        assert "".join(windows) == text, f"target_tokens={target_tokens} corrupted the text"
+
+
+def test_cjk_emoji_end_to_end_every_distinct_character_survives() -> None:
+    """Round 2, end-to-end: a document mixing many distinct CJK and emoji glyphs back-to-back (so
+    consecutive characters sit at unpredictable byte offsets relative to any given
+    `target_tokens` cut, repeatedly exercising the straddle-sensitive `_token_windows` fallback)
+    must surface every distinct input character somewhere in the chunked output -- the
+    byte-offset fix makes exact-per-character conservation achievable end-to-end, not just inside
+    `_token_windows` itself."""
+    glyphs = "测试内容一二三四五六七八九十🎉🎊🎈🎁😀😁😂🤣😃😄"
+    body = "## Glyphs\n\n" + glyphs * 15
+
+    chunks = chunk_markdown(body, target_tokens=50, overlap_tokens=10)
+
+    assert len(chunks) > 1
+    _assert_bound(chunks, target_tokens=50, overlap_tokens=10)
     reconstructed = "".join(chunk.text for chunk in chunks)
-    recovered_repeats = reconstructed.count(cjk_sentence)
-    assert recovered_repeats >= repeats * 0.5
+    missing = [glyph for glyph in dict.fromkeys(glyphs) if glyph not in reconstructed]
+    assert not missing, f"glyphs missing from every chunk: {missing}"
 
 
 # ---------------------------------------------------------------------------

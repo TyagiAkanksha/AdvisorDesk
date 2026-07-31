@@ -385,6 +385,11 @@ describe('ContentEditorScreen', () => {
     await user.click(screen.getByRole('button', { name: /preview/i }));
 
     const previewRegion = await screen.findByRole('region', { name: /preview/i });
-    expect(previewRegion).toHaveTextContent(draftFixture.body_md);
+    // phase-3 task-04: MarkdownPreview now renders real markdown (react-markdown + remark-gfm)
+    // instead of task-06's `<pre>` placeholder, so the preview region's visible text is the
+    // parsed heading — the leading `# ` markdown syntax from `draftFixture.body_md` is stripped
+    // by design, not left as literal text.
+    expect(previewRegion).toHaveTextContent('Roth IRA Conversion Basics');
+    expect(previewRegion).not.toHaveTextContent(draftFixture.body_md);
   });
 });

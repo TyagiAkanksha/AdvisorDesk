@@ -11,6 +11,14 @@ PRD §5.3: "client routes are public", no session/cookie of any kind.
 brief Interfaces block, same rule `app.routes.content_routes` follows) —
 the list route batches it into one call for the whole result set (no
 N+1); the detail route calls it once for its single id.
+
+Review round 1, finding M3: a slash-bearing or otherwise unroutable slug
+(e.g. `.../content/a/b`) never reaches `public_content_get` at all — it
+404s at the ROUTER, before any handler runs, with code `http_404` (via
+`app.routes.errors::_http_exception_handler`), distinct from a routable-
+but-unknown slug's `not_found` code from `get_published_by_slug`; both are
+"this slug doesn't resolve to content" and task-04's error handling should
+treat them the same way.
 """
 
 from __future__ import annotations

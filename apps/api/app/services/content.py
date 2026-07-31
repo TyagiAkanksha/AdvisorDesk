@@ -288,6 +288,21 @@ def get_published_by_slug(session: Session, slug: str) -> Content:
     reassigned, so this 404 is permanent, not until some other item claims
     the slug).
 
+    Review round 1, finding I1: `slug` is an unvalidated path parameter on
+    this app's only unauthenticated, DB-touching route
+    (`GET /public/content/{slug}`) — a caller can send a NUL byte
+    (`.../content/abc%00def`), which a real `_slugify`-generated slug
+    (`[a-z0-9-]` only, see that function's docstring) can never contain. A
+    NUL byte survives FastAPI's path decoding and reaches Postgres, whose
+    text comparison rejects it (psycopg raises `DataError`), which would
+    otherwise bubble past every typed handler to the generic 500 — a free,
+    anonymous, error-log-flood vector. Short-circuiting to "no match" here
+    (skipping the query entirely) instead routes it through the exact same
+    `NotFoundError` and `f"content slug {slug!r} not found"` message
+    construction as any other not-found slug, so the response is
+    byte-for-byte indistinguishable from an unknown slug's 404 — no new
+    branch's worth of distinguishing information leaks to the caller.
+
     Args:
         session: the caller's `Session`.
         slug: the `Content.slug` to look up.
@@ -296,11 +311,17 @@ def get_published_by_slug(session: Session, slug: str) -> Content:
         The published, non-deleted `Content` row.
 
     Raises:
-        NotFoundError: no published, non-deleted row exists for `slug`.
+        NotFoundError: no published, non-deleted row exists for `slug`,
+            including a `slug` containing a NUL byte (`"\x00"`), which is
+            never queried against the DB (finding I1).
     """
-    content = session.execute(
-        active_select(Content).where(Content.slug == slug, Content.status == "published")
-    ).scalar_one_or_none()
+    content = (
+        session.execute(
+            active_select(Content).where(Content.slug == slug, Content.status == "published")
+        ).scalar_one_or_none()
+        if "\x00" not in slug
+        else None
+    )
     if content is None:
         raise NotFoundError(f"content slug {slug!r} not found")
     return content

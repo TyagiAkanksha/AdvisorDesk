@@ -91,7 +91,9 @@ behavior for free.
 ```bash
 cd apps/api
 TEST_DATABASE_URL=... uv run pytest tests/test_lifecycle.py -q   # all passed
-grep -rn "OpenAICompatibleEmbedder" tests/                        # no hits — seam only in prod wiring
+grep -rln "OpenAICompatibleEmbedder" tests/   # ONLY tests/test_embeddings_client.py (zero-network
+                                              # MockTransport wire-capture tests — review round 1);
+                                              # the lifecycle suite itself never touches the real client
 uv run mypy && uv run lint-imports                                # clean
 uv run alembic upgrade head                                       # 0002 applies; parity gate green
 ```

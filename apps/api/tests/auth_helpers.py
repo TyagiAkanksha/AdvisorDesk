@@ -12,8 +12,9 @@ from __future__ import annotations
 import secrets
 from dataclasses import dataclass, field
 
-from app.auth.oauth import GoogleIdentity
 from fastapi.testclient import TestClient
+
+from app.auth.oauth import GoogleIdentity
 
 _CALLBACK_PATH = "/api/v1/auth/callback"
 

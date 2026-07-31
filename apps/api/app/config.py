@@ -6,6 +6,7 @@ configuration through `Settings` rather than `os.environ` directly.
 
 from __future__ import annotations
 
+from pydantic import SecretStr
 from pydantic_settings import BaseSettings
 
 
@@ -22,14 +23,49 @@ class Settings(BaseSettings):
     defaults to `""` rather than being a required field; `app/main.py` is
     the only place that enforces it is non-empty before wiring a real
     engine.
+
+    `openai_api_key`/`google_client_secret`/`session_secret`/`database_url`
+    are `SecretStr` (phase-2 task-01 Settings hardening; `database_url`
+    added in the phase-2 final review, finding C-5 — a Postgres DSN embeds
+    the connection password, e.g. `postgresql://user:pw@host/db`, so a naive
+    `repr(Settings(...))`/structured-log line leaked it exactly like the
+    other three) so a naive `repr(Settings(...))` — e.g. via structured
+    logging — never leaks a secret value; call sites read the plaintext via
+    `.get_secret_value()`. Empty-string defaults become `SecretStr("")`,
+    preserving the zero-env-vars constructibility guarantee above.
     """
 
-    openai_api_key: str = ""
-    database_url: str = ""
+    openai_api_key: SecretStr = SecretStr("")
+    database_url: SecretStr = SecretStr("")
     google_client_id: str = ""
-    google_client_secret: str = ""
-    session_secret: str = ""
+    google_client_secret: SecretStr = SecretStr("")
+    session_secret: SecretStr = SecretStr("")
     admin_emails: str = ""
+
+    # Not part of the PRD §9 env roster: the real `HttpxGoogleOAuthClient`
+    # (app.auth.oauth, phase-2 task-01) needs a fixed, Google-console-
+    # registered callback URL to exchange a code — this is that URL. Empty
+    # by default so `Settings()`/`create_app()` stay zero-env-var
+    # constructible; only a real deployment sets it.
+    google_redirect_uri: str = ""
+
+    # Also not part of the PRD §9 env roster: the minimal signal
+    # `app.auth.sessions.issue_cookie` needs to decide the session cookie's
+    # `Secure` flag ("Secure when not dev" — task-01 brief). Defaults to
+    # `"development"` so local `docker compose up`/tests (plain HTTP) get a
+    # cookie that actually round-trips; a real deployment sets
+    # `ENVIRONMENT=production`.
+    environment: str = "development"
+
+    # Also not part of the PRD §9 env roster (phase-2 task-01 review M8
+    # resolution, amended before task-04): the admin SPA's origin.
+    # `app.routes.auth_routes.auth_callback` 303-redirects here on success
+    # so the browser lands back in the admin app after Google sign-in
+    # instead of dead-ending on a bodyless response on the API's own
+    # origin. Defaults to the local admin dev server so
+    # `Settings()`/`create_app()` stay zero-env-var constructible; a real
+    # deployment sets `ADMIN_APP_URL` to the admin app's real origin.
+    admin_app_url: str = "http://localhost:3001"
 
     # Implementation trap: pydantic-settings JSON-decodes "complex" field
     # types (list[str], dict, ...) from their env-var string BEFORE
@@ -53,3 +89,22 @@ class Settings(BaseSettings):
         blank origin).
         """
         return [origin.strip() for origin in self.cors_origins.split(",") if origin.strip()]
+
+    @property
+    def admin_email_set(self) -> set[str]:
+        """The `ADMIN_EMAILS` allowlist, parsed once (PRD §5.1/§9).
+
+        Comma-separated, case-insensitively compared (email local/domain
+        parts are conventionally treated case-insensitively) — mirrors
+        `cors_origin_list`'s parsing shape.
+        """
+        return {email.strip().lower() for email in self.admin_emails.split(",") if email.strip()}
+
+    @property
+    def is_dev(self) -> bool:
+        """Whether `ENVIRONMENT` selects local-development defaults (task-01 brief).
+
+        Anything other than `"production"` (case-insensitive) is treated as
+        dev — the safer default when the var is unset entirely.
+        """
+        return self.environment.strip().lower() != "production"

@@ -31,7 +31,9 @@ the build. Includes the §9 smoke test (`boot the API and hit /api/v1/stats`).
 ## Interfaces
 
 - **Consumes:** `require_admin` (task-01); all task-02 services; `get_session`/pipeline state
-  (p1-t03 / task-02).
+  (p1-t03 / task-02); `tags_for_contents(session, content_ids) -> dict[uuid.UUID, list[str]]`
+  (task-02 review amendment — batch tag-name lookup for `ContentResponse.tags`; routes never
+  query `Tag`/`ContentTag` directly, services stay the only ORM layer).
 - **Produces (later tasks rely on — produce exactly):**
   - Routes/operation_ids: `GET /content` `content_list` (params `status,tag,q,page,page_size`) ·
     `POST /content` `content_create` (201) · `GET /content/{id}` `content_get` ·

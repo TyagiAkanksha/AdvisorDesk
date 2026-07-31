@@ -12,7 +12,9 @@ from typing import cast
 from fastapi import Request
 from sqlalchemy.orm import Session
 
+from app.auth.oauth import GoogleOAuthClient
 from app.config import Settings
+from app.services.lifecycle import ChunkPipeline
 
 
 def get_session(request: Request) -> Iterator[Session]:
@@ -51,3 +53,26 @@ def get_session(request: Request) -> Iterator[Session]:
 def get_settings(request: Request) -> Settings:
     """Return the `Settings` instance `create_app` stored on `app.state`."""
     return cast(Settings, request.app.state.settings)
+
+
+def get_oauth_client(request: Request) -> GoogleOAuthClient:
+    """Return the `GoogleOAuthClient` `create_app` stored on `app.state` (PRD §5.1).
+
+    `None` (a `create_app()` built without an `oauth_client`, e.g. the
+    OpenAPI baseline export) is never dereferenced here — only routes that
+    actually call a method on the returned client would fail, and no
+    DB-less/schema-only caller does that.
+    """
+    return cast(GoogleOAuthClient, request.app.state.oauth_client)
+
+
+def get_chunk_pipeline(request: Request) -> ChunkPipeline:
+    """Return the `ChunkPipeline` `create_app` stored on `app.state` (PRD §4 lifecycle seam).
+
+    `create_app` always resolves this to a concrete `ChunkPipeline`
+    (`NoopChunkPipeline` by default, task-03's `RecordingChunkPipeline` fake
+    in tests, the real phase-3 pipeline later) — never `None` — so, unlike
+    `get_oauth_client`/`get_session`, there is no DB-less/unset case to
+    document here.
+    """
+    return cast(ChunkPipeline, request.app.state.chunk_pipeline)

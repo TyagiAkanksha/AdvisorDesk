@@ -11,5 +11,9 @@ export default defineConfig({
     environment: 'node',
     globals: false,
     exclude: ['**/node_modules/**', '**/.next/**'],
+    // task-04: registers RTL's `cleanup()` in `afterEach` for jsdom test
+    // files — see vitest.setup.ts for why this can't rely on RTL's own
+    // auto-cleanup under `globals: false`.
+    setupFiles: ['./vitest.setup.ts'],
   },
 });

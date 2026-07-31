@@ -150,7 +150,10 @@ no contract forbids the import.
 
 Package manager: **uv**; single project at `apps/api` (`requires-python = ">=3.11"`). Runtime
 dependencies = exactly what shipped code imports; dev tools (`pytest`, `ruff`, `mypy`,
-`import-linter`, `httpx`) live in the dev dependency group, never in runtime deps.
+`import-linter`) live in the dev dependency group, never in runtime deps. `httpx` moved to a
+runtime dependency in phase-2 task-01 (`app.auth.oauth.HttpxGoogleOAuthClient` talks to Google's
+real OAuth2 endpoints over it) — it is also `starlette.testclient.TestClient`'s driver, but that
+is no longer why it ships; removing it would break login, not just tests.
 
 Ruff: `line-length = 100`, `select = ["E", "F", "I", "UP", "B"]`, plus the FastAPI DI exemption
 (the configuration FastAPI's own docs recommend):

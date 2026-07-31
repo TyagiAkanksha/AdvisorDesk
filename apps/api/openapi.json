@@ -1,10 +1,935 @@
 {
+  "components": {
+    "schemas": {
+      "ContentCreate": {
+        "description": "`POST /content`'s request body: a new draft (PRD \u00a75.2, \u00a74 slug rules).\n\n`title` is `min_length=1` (review round 1, finding F4): an empty title\nnow 422s instead of creating a degenerate row. Final review, finding F6\n(t03 whitespace titles): `min_length=1` alone still passed a\nwhitespace-only title (`\"   \"`) \u2014 `_title_not_whitespace_only` closes\nthat gap by rejecting a title that is empty *after* `.strip()`, so a\nhuman-blank title 422s the same way a byte-empty one already did.",
+        "properties": {
+          "body_md": {
+            "default": "",
+            "title": "Body Md",
+            "type": "string"
+          },
+          "tags": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Tags",
+            "type": "array"
+          },
+          "title": {
+            "minLength": 1,
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "title"
+        ],
+        "title": "ContentCreate",
+        "type": "object"
+      },
+      "ContentListResponse": {
+        "description": "`GET /content`'s list envelope: one page of `ContentResponse` items (PRD \u00a75.2).",
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/ContentResponse"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "page": {
+            "title": "Page",
+            "type": "integer"
+          },
+          "page_size": {
+            "title": "Page Size",
+            "type": "integer"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "total",
+          "page",
+          "page_size"
+        ],
+        "title": "ContentListResponse",
+        "type": "object"
+      },
+      "ContentResponse": {
+        "description": "`Content` as returned by every by-id and list route (PRD \u00a75.2).\n\n`tags` is populated by the route layer via\n`app.services.tags.tags_for_contents` \u2014 this schema carries no ORM\nknowledge of its own (CONVENTIONS.md \u00a72: `app.models` is a pure leaf).",
+        "properties": {
+          "author_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Author Id"
+          },
+          "body_md": {
+            "title": "Body Md",
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "published_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Published At"
+          },
+          "slug": {
+            "title": "Slug",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "draft",
+              "published",
+              "archived"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "tags": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Tags",
+            "type": "array"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          },
+          "updated_by": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Updated By"
+          }
+        },
+        "required": [
+          "id",
+          "title",
+          "slug",
+          "body_md",
+          "status",
+          "tags",
+          "author_id",
+          "updated_by",
+          "published_at",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "ContentResponse",
+        "type": "object"
+      },
+      "ContentUpdate": {
+        "description": "`PATCH /content/{id}`'s request body: partial update, slug never included (PRD \u00a74.1).\n\nEvery field is optional so a caller can send only what changed; `None`\nmeans \"leave untouched\" for `title`/`body_md`, and for `tags` means\n\"leave the existing tag associations untouched\" (mirrors\n`app.services.content.update_content`'s own `None`-means-unchanged\ncontract for `tags`).\n\n`title`, if given, is `min_length=1` (review round 1, finding F4, same\nscope note as `ContentCreate.title`) plus the same whitespace-only\nrejection as `ContentCreate.title` (final review, finding F6) \u2014 `None`\n(omitted) still means \"leave untouched\" and is unaffected by either\ncheck.",
+        "properties": {
+          "body_md": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Body Md"
+          },
+          "tags": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tags"
+          },
+          "title": {
+            "anyOf": [
+              {
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title"
+          }
+        },
+        "title": "ContentUpdate",
+        "type": "object"
+      },
+      "ErrorDetail": {
+        "description": "The `{\"code\", \"message\"}` object nested under `\"error\"` in the PRD \u00a79 envelope.",
+        "properties": {
+          "code": {
+            "title": "Code",
+            "type": "string"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "message"
+        ],
+        "title": "ErrorDetail",
+        "type": "object"
+      },
+      "ErrorEnvelope": {
+        "description": "The PRD \u00a79 error envelope: `{\"error\": {\"code\", \"message\"}}`.\n\nReview round 1, finding F2: `app.routes.errors::register_error_handlers`\nhas always *rendered* this shape at runtime, but no route declared it in\nOpenAPI \u2014 every operation's committed `openapi.json` baseline instead\ncarried FastAPI's own default `{detail}` validation-error schema for\n422, and no 401/404 appeared anywhere. Declaring `responses={...:\n{\"model\": ErrorEnvelope}}` on routes (`app.routes.content_routes`,\n`app.routes.auth_routes`) makes the baseline \u2014 and both frontends'\n`openapi-typescript` codegen consuming it \u2014 match what the server\nactually answers, and replaces that default schema outright (verified\nby `tests/test_routes_errors.py`'s baseline-schema test: it is absent\nfrom the generated `openapi.json` component list). Modeled as nested\nmodels (not a bare `dict[str, Any]`) so codegen emits real, navigable\ntypes for `error.code`/`error.message` rather than an opaque blob.",
+        "properties": {
+          "error": {
+            "$ref": "#/components/schemas/ErrorDetail"
+          }
+        },
+        "required": [
+          "error"
+        ],
+        "title": "ErrorEnvelope",
+        "type": "object"
+      },
+      "MeResponse": {
+        "description": "`GET /auth/me`'s success body (PRD \u00a75.1): the current admin's identity.",
+        "properties": {
+          "avatar_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Avatar Url"
+          },
+          "email": {
+            "title": "Email",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          }
+        },
+        "required": [
+          "id",
+          "email",
+          "name",
+          "avatar_url"
+        ],
+        "title": "MeResponse",
+        "type": "object"
+      },
+      "StatsResponse": {
+        "description": "Content counts by status and by tag, excluding soft-deleted content (PRD \u00a75.2).",
+        "properties": {
+          "by_status": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "By Status",
+            "type": "object"
+          },
+          "by_tag": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "By Tag",
+            "type": "object"
+          }
+        },
+        "required": [
+          "by_status",
+          "by_tag"
+        ],
+        "title": "StatsResponse",
+        "type": "object"
+      },
+      "TagWithCount": {
+        "description": "One non-deleted tag plus its usage count over non-deleted content (PRD \u00a75.2).",
+        "properties": {
+          "count": {
+            "title": "Count",
+            "type": "integer"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "count"
+        ],
+        "title": "TagWithCount",
+        "type": "object"
+      }
+    }
+  },
   "info": {
     "title": "AdvisorDesk API",
     "version": "0.1.0"
   },
   "openapi": "3.1.0",
   "paths": {
+    "/api/v1/auth/callback": {
+      "get": {
+        "description": "PRD \u00a75.1: exchange `code`, reject non-allowlisted emails, upsert, set the session cookie.\n\n`state` is accepted (Google always sends back what `/auth/login`\ngenerated) but not cryptographically verified against a stored value \u2014\nPRD \u00a79 pins the allowlist/session-cookie/soft-delete behaviors, not a\nCSRF `state` round-trip, so this stays minimal.\n\nEmail normalization (phase-2 task-01 review round 1, finding I3):\n`identity[\"email\"]` is normalized (`strip().lower()`) exactly once, here,\nand the SAME normalized value is used both for the allowlist check and\nfor persistence \u2014 passing a raw, differently-cased email through to\n`upsert_from_google` would let e.g. `'Admin@Example.com'` and\n`'admin@example.com'` create two distinct `User` rows, splitting the\nadmin's identity and breaking the PRD \u00a74.1 same-row reactivation\nguarantee. `upsert_from_google` also normalizes defensively (belt and\nsuspenders for any future caller), but this route is the canonical place\nthe normalization is decided, since it is also what the allowlist check\nmust agree with. `name`/`avatar_url` are passed through unchanged.\n\nReview round 1, finding F2: `responses=` declares the 403 `ForbiddenError`\nraises below plus the 422 a missing/malformed `code`/`state` query param\nproduces (both rendered as `ErrorEnvelope` by `register_error_handlers`,\nnever FastAPI's own default validation-error schema) \u2014 this route has\nno `require_admin` dependency, so, unlike the admin routes in\n`app.routes.content_routes`, no 401 applies here. Final review, finding\nC-3 / t01 M14: 502 added for `oauth_client.exchange_code`'s\n`OAuthExchangeError` (a reused/expired `code`, or a Google-side\nfailure) \u2014 previously an unhandled 500 with a plain-text body.\n\nCallback landing (task-01 review M8 resolution, amended before task-04):\nsuccess now 303-redirects to `settings.admin_app_url` with the session\ncookie set on that SAME `RedirectResponse` \u2014 a bodyless 200 dead-ended\nthe browser on the API's own origin after Google sign-in, since nothing\nin the admin SPA runs there to pick the flow back up.\n`status_code=303`/`response_class=RedirectResponse` on the decorator\n(rather than leaving FastAPI's implicit 200 default) makes the OpenAPI\nbaseline's success entry both the true status code and correctly\nbody-less (`RedirectResponse.media_type` is `None`, unlike the default\n`JSONResponse`) \u2014 `responses=`'s `403`/`422` arms are untouched by this\nand still render as `ErrorEnvelope`. Error paths never construct a\nresponse at all (they raise), so they are unaffected by this route\nalways building a `RedirectResponse` on the success path.\n\nRaises:\n    ForbiddenError: the normalized email is not in `ADMIN_EMAILS` \u2014 the\n        check runs before any row write (PRD \u00a75.1/\u00a79).",
+        "operationId": "auth_callback",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "code",
+            "required": true,
+            "schema": {
+              "title": "Code",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "state",
+            "required": true,
+            "schema": {
+              "title": "State",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "303": {
+            "description": "Session cookie set; redirects to the admin app (settings.admin_app_url)."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "502": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Bad Gateway"
+          }
+        },
+        "summary": "Auth Callback"
+      }
+    },
+    "/api/v1/auth/login": {
+      "get": {
+        "description": "PRD \u00a75.1: redirect (307) to Google's OAuth consent screen.",
+        "operationId": "auth_login",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Auth Login"
+      }
+    },
+    "/api/v1/auth/logout": {
+      "post": {
+        "description": "PRD \u00a75.1: clear the session cookie.\n\nNo error responses are declared: this route has no `require_admin`\ndependency and no request fields \u2014 logout intentionally clears the\ncookie regardless of whether the caller has a valid session, returning\n200 idempotently (re-review ruling on the task-03 round-1 baseline).",
+        "operationId": "auth_logout",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Auth Logout"
+      }
+    },
+    "/api/v1/auth/me": {
+      "get": {
+        "description": "PRD \u00a75.1: the current admin's identity (`require_admin` raises 401 otherwise).\n\nLooks up `avatar_url` via a fresh `get_active_user` read (phase-2\ntask-01 review round 1, finding I4: routes never touch the ORM\ndirectly) rather than carrying it on `AdminPrincipal` \u2014 the task-01\nbrief pins `AdminPrincipal` to exactly `user_id, email, name` (later\ntasks match that shape), so the one field `/auth/me` alone needs is\nfetched here.\n\nThis is a second point read of the same row `require_admin` just\nvalidated moments ago, on a second, independent `Session`\n(`require_admin` cannot share `app.routes.deps.get_session`'s per the\nlayering rule in its own module docstring). Avoiding it cheaply would\nmean growing `AdminPrincipal`'s pinned shape or smuggling the row\nthrough `Request.state` behind an undocumented, untyped side channel \u2014\nboth worse than one extra indexed point lookup, so it is left as is.\n\nRaises:\n    AuthRequiredError: the row `require_admin` just validated is gone\n        or was soft-deleted in the (vanishingly small) window between\n        that check and this one \u2014 treated identically to \"no session\"\n        rather than surfacing as an unhandled 500.",
+        "operationId": "auth_me",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MeResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          }
+        },
+        "summary": "Auth Me"
+      }
+    },
+    "/api/v1/content": {
+      "get": {
+        "description": "PRD \u00a75.2: list content, filtered by `status`/`tag`/`q`, paginated.\n\n`q=\"\"` (present but empty) is treated identically to `q` omitted \u2014 no\ntitle filter \u2014 per the task-03 brief's explicit pin.",
+        "operationId": "content_list",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "status",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "draft",
+                    "published",
+                    "archived"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Status"
+            }
+          },
+          {
+            "in": "query",
+            "name": "tag",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Tag"
+            }
+          },
+          {
+            "in": "query",
+            "name": "q",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Q"
+            }
+          },
+          {
+            "in": "query",
+            "name": "page",
+            "required": false,
+            "schema": {
+              "default": 1,
+              "minimum": 1,
+              "title": "Page",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "page_size",
+            "required": false,
+            "schema": {
+              "default": 20,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Page Size",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ContentListResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          }
+        },
+        "summary": "Content List"
+      },
+      "post": {
+        "description": "PRD \u00a75.2: create a draft `Content` row (slug generated per \u00a74 rules).",
+        "operationId": "content_create",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ContentCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ContentResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          }
+        },
+        "summary": "Content Create"
+      }
+    },
+    "/api/v1/content/{content_id}": {
+      "delete": {
+        "description": "PRD \u00a75.2: soft-delete (tombstone + chunk removal in one transaction); no restore.",
+        "operationId": "content_delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "content_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Content Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          }
+        },
+        "summary": "Content Delete"
+      },
+      "get": {
+        "description": "PRD \u00a75.2: fetch one active `Content` row by id (soft-deleted/unknown -> 404, \u00a75).",
+        "operationId": "content_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "content_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Content Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ContentResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          }
+        },
+        "summary": "Content Get"
+      },
+      "patch": {
+        "description": "PRD \u00a75.2: update title/body/tags (slug unchanged); re-chunks iff already published.",
+        "operationId": "content_update",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "content_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Content Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ContentUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ContentResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          }
+        },
+        "summary": "Content Update"
+      }
+    },
+    "/api/v1/content/{content_id}/archive": {
+      "post": {
+        "description": "PRD \u00a75.2: archive \u2014 status -> archived, chunks removed.",
+        "operationId": "content_archive",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "content_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Content Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ContentResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          }
+        },
+        "summary": "Content Archive"
+      }
+    },
+    "/api/v1/content/{content_id}/publish": {
+      "post": {
+        "description": "PRD \u00a75.2/\u00a74: publish transaction \u2014 status, `published_at`, then (re)chunk.",
+        "operationId": "content_publish",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "content_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Content Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ContentResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          }
+        },
+        "summary": "Content Publish"
+      }
+    },
     "/api/v1/healthz": {
       "get": {
         "description": "Liveness probe: `{\"status\": \"ok\"}`, always \u2014 no auth, no DB touch (PRD \u00a79).",
@@ -26,6 +951,88 @@
           }
         },
         "summary": "Healthz"
+      }
+    },
+    "/api/v1/stats": {
+      "get": {
+        "description": "PRD \u00a75.2: content counts by status and by tag, excluding soft-deleted content.",
+        "operationId": "stats_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StatsResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          }
+        },
+        "summary": "Stats Get"
+      }
+    },
+    "/api/v1/tags": {
+      "get": {
+        "description": "PRD \u00a75.2: non-deleted tags with usage counts over non-deleted content only.",
+        "operationId": "tags_list",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/TagWithCount"
+                  },
+                  "title": "Response Tags List",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          }
+        },
+        "summary": "Tags List"
       }
     }
   }

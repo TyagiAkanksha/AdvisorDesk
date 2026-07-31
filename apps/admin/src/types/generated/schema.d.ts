@@ -4,6 +4,252 @@
  */
 
 export interface paths {
+    "/api/v1/auth/callback": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Auth Callback
+         * @description PRD §5.1: exchange `code`, reject non-allowlisted emails, upsert, set the session cookie.
+         *
+         *     `state` is accepted (Google always sends back what `/auth/login`
+         *     generated) but not cryptographically verified against a stored value —
+         *     PRD §9 pins the allowlist/session-cookie/soft-delete behaviors, not a
+         *     CSRF `state` round-trip, so this stays minimal.
+         *
+         *     Email normalization (phase-2 task-01 review round 1, finding I3):
+         *     `identity["email"]` is normalized (`strip().lower()`) exactly once, here,
+         *     and the SAME normalized value is used both for the allowlist check and
+         *     for persistence — passing a raw, differently-cased email through to
+         *     `upsert_from_google` would let e.g. `'Admin@Example.com'` and
+         *     `'admin@example.com'` create two distinct `User` rows, splitting the
+         *     admin's identity and breaking the PRD §4.1 same-row reactivation
+         *     guarantee. `upsert_from_google` also normalizes defensively (belt and
+         *     suspenders for any future caller), but this route is the canonical place
+         *     the normalization is decided, since it is also what the allowlist check
+         *     must agree with. `name`/`avatar_url` are passed through unchanged.
+         *
+         *     Review round 1, finding F2: `responses=` declares the 403 `ForbiddenError`
+         *     raises below plus the 422 a missing/malformed `code`/`state` query param
+         *     produces (both rendered as `ErrorEnvelope` by `register_error_handlers`,
+         *     never FastAPI's own default validation-error schema) — this route has
+         *     no `require_admin` dependency, so, unlike the admin routes in
+         *     `app.routes.content_routes`, no 401 applies here. Final review, finding
+         *     C-3 / t01 M14: 502 added for `oauth_client.exchange_code`'s
+         *     `OAuthExchangeError` (a reused/expired `code`, or a Google-side
+         *     failure) — previously an unhandled 500 with a plain-text body.
+         *
+         *     Callback landing (task-01 review M8 resolution, amended before task-04):
+         *     success now 303-redirects to `settings.admin_app_url` with the session
+         *     cookie set on that SAME `RedirectResponse` — a bodyless 200 dead-ended
+         *     the browser on the API's own origin after Google sign-in, since nothing
+         *     in the admin SPA runs there to pick the flow back up.
+         *     `status_code=303`/`response_class=RedirectResponse` on the decorator
+         *     (rather than leaving FastAPI's implicit 200 default) makes the OpenAPI
+         *     baseline's success entry both the true status code and correctly
+         *     body-less (`RedirectResponse.media_type` is `None`, unlike the default
+         *     `JSONResponse`) — `responses=`'s `403`/`422` arms are untouched by this
+         *     and still render as `ErrorEnvelope`. Error paths never construct a
+         *     response at all (they raise), so they are unaffected by this route
+         *     always building a `RedirectResponse` on the success path.
+         *
+         *     Raises:
+         *         ForbiddenError: the normalized email is not in `ADMIN_EMAILS` — the
+         *             check runs before any row write (PRD §5.1/§9).
+         */
+        get: operations["auth_callback"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/auth/login": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Auth Login
+         * @description PRD §5.1: redirect (307) to Google's OAuth consent screen.
+         */
+        get: operations["auth_login"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/auth/logout": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Auth Logout
+         * @description PRD §5.1: clear the session cookie.
+         *
+         *     No error responses are declared: this route has no `require_admin`
+         *     dependency and no request fields — logout intentionally clears the
+         *     cookie regardless of whether the caller has a valid session, returning
+         *     200 idempotently (re-review ruling on the task-03 round-1 baseline).
+         */
+        post: operations["auth_logout"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/auth/me": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Auth Me
+         * @description PRD §5.1: the current admin's identity (`require_admin` raises 401 otherwise).
+         *
+         *     Looks up `avatar_url` via a fresh `get_active_user` read (phase-2
+         *     task-01 review round 1, finding I4: routes never touch the ORM
+         *     directly) rather than carrying it on `AdminPrincipal` — the task-01
+         *     brief pins `AdminPrincipal` to exactly `user_id, email, name` (later
+         *     tasks match that shape), so the one field `/auth/me` alone needs is
+         *     fetched here.
+         *
+         *     This is a second point read of the same row `require_admin` just
+         *     validated moments ago, on a second, independent `Session`
+         *     (`require_admin` cannot share `app.routes.deps.get_session`'s per the
+         *     layering rule in its own module docstring). Avoiding it cheaply would
+         *     mean growing `AdminPrincipal`'s pinned shape or smuggling the row
+         *     through `Request.state` behind an undocumented, untyped side channel —
+         *     both worse than one extra indexed point lookup, so it is left as is.
+         *
+         *     Raises:
+         *         AuthRequiredError: the row `require_admin` just validated is gone
+         *             or was soft-deleted in the (vanishingly small) window between
+         *             that check and this one — treated identically to "no session"
+         *             rather than surfacing as an unhandled 500.
+         */
+        get: operations["auth_me"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/content": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Content List
+         * @description PRD §5.2: list content, filtered by `status`/`tag`/`q`, paginated.
+         *
+         *     `q=""` (present but empty) is treated identically to `q` omitted — no
+         *     title filter — per the task-03 brief's explicit pin.
+         */
+        get: operations["content_list"];
+        put?: never;
+        /**
+         * Content Create
+         * @description PRD §5.2: create a draft `Content` row (slug generated per §4 rules).
+         */
+        post: operations["content_create"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/content/{content_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Content Get
+         * @description PRD §5.2: fetch one active `Content` row by id (soft-deleted/unknown -> 404, §5).
+         */
+        get: operations["content_get"];
+        put?: never;
+        post?: never;
+        /**
+         * Content Delete
+         * @description PRD §5.2: soft-delete (tombstone + chunk removal in one transaction); no restore.
+         */
+        delete: operations["content_delete"];
+        options?: never;
+        head?: never;
+        /**
+         * Content Update
+         * @description PRD §5.2: update title/body/tags (slug unchanged); re-chunks iff already published.
+         */
+        patch: operations["content_update"];
+        trace?: never;
+    };
+    "/api/v1/content/{content_id}/archive": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Content Archive
+         * @description PRD §5.2: archive — status -> archived, chunks removed.
+         */
+        post: operations["content_archive"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/content/{content_id}/publish": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Content Publish
+         * @description PRD §5.2/§4: publish transaction — status, `published_at`, then (re)chunk.
+         */
+        post: operations["content_publish"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/healthz": {
         parameters: {
             query?: never;
@@ -24,10 +270,232 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/stats": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Stats Get
+         * @description PRD §5.2: content counts by status and by tag, excluding soft-deleted content.
+         */
+        get: operations["stats_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/tags": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Tags List
+         * @description PRD §5.2: non-deleted tags with usage counts over non-deleted content only.
+         */
+        get: operations["tags_list"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
-    schemas: never;
+    schemas: {
+        /**
+         * ContentCreate
+         * @description `POST /content`'s request body: a new draft (PRD §5.2, §4 slug rules).
+         *
+         *     `title` is `min_length=1` (review round 1, finding F4): an empty title
+         *     now 422s instead of creating a degenerate row. Final review, finding F6
+         *     (t03 whitespace titles): `min_length=1` alone still passed a
+         *     whitespace-only title (`"   "`) — `_title_not_whitespace_only` closes
+         *     that gap by rejecting a title that is empty *after* `.strip()`, so a
+         *     human-blank title 422s the same way a byte-empty one already did.
+         */
+        ContentCreate: {
+            /**
+             * Body Md
+             * @default
+             */
+            body_md: string;
+            /** Tags */
+            tags?: string[];
+            /** Title */
+            title: string;
+        };
+        /**
+         * ContentListResponse
+         * @description `GET /content`'s list envelope: one page of `ContentResponse` items (PRD §5.2).
+         */
+        ContentListResponse: {
+            /** Items */
+            items: components["schemas"]["ContentResponse"][];
+            /** Page */
+            page: number;
+            /** Page Size */
+            page_size: number;
+            /** Total */
+            total: number;
+        };
+        /**
+         * ContentResponse
+         * @description `Content` as returned by every by-id and list route (PRD §5.2).
+         *
+         *     `tags` is populated by the route layer via
+         *     `app.services.tags.tags_for_contents` — this schema carries no ORM
+         *     knowledge of its own (CONVENTIONS.md §2: `app.models` is a pure leaf).
+         */
+        ContentResponse: {
+            /** Author Id */
+            author_id: string | null;
+            /** Body Md */
+            body_md: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Published At */
+            published_at: string | null;
+            /** Slug */
+            slug: string;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "draft" | "published" | "archived";
+            /** Tags */
+            tags: string[];
+            /** Title */
+            title: string;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
+            /** Updated By */
+            updated_by: string | null;
+        };
+        /**
+         * ContentUpdate
+         * @description `PATCH /content/{id}`'s request body: partial update, slug never included (PRD §4.1).
+         *
+         *     Every field is optional so a caller can send only what changed; `None`
+         *     means "leave untouched" for `title`/`body_md`, and for `tags` means
+         *     "leave the existing tag associations untouched" (mirrors
+         *     `app.services.content.update_content`'s own `None`-means-unchanged
+         *     contract for `tags`).
+         *
+         *     `title`, if given, is `min_length=1` (review round 1, finding F4, same
+         *     scope note as `ContentCreate.title`) plus the same whitespace-only
+         *     rejection as `ContentCreate.title` (final review, finding F6) — `None`
+         *     (omitted) still means "leave untouched" and is unaffected by either
+         *     check.
+         */
+        ContentUpdate: {
+            /** Body Md */
+            body_md?: string | null;
+            /** Tags */
+            tags?: string[] | null;
+            /** Title */
+            title?: string | null;
+        };
+        /**
+         * ErrorDetail
+         * @description The `{"code", "message"}` object nested under `"error"` in the PRD §9 envelope.
+         */
+        ErrorDetail: {
+            /** Code */
+            code: string;
+            /** Message */
+            message: string;
+        };
+        /**
+         * ErrorEnvelope
+         * @description The PRD §9 error envelope: `{"error": {"code", "message"}}`.
+         *
+         *     Review round 1, finding F2: `app.routes.errors::register_error_handlers`
+         *     has always *rendered* this shape at runtime, but no route declared it in
+         *     OpenAPI — every operation's committed `openapi.json` baseline instead
+         *     carried FastAPI's own default `{detail}` validation-error schema for
+         *     422, and no 401/404 appeared anywhere. Declaring `responses={...:
+         *     {"model": ErrorEnvelope}}` on routes (`app.routes.content_routes`,
+         *     `app.routes.auth_routes`) makes the baseline — and both frontends'
+         *     `openapi-typescript` codegen consuming it — match what the server
+         *     actually answers, and replaces that default schema outright (verified
+         *     by `tests/test_routes_errors.py`'s baseline-schema test: it is absent
+         *     from the generated `openapi.json` component list). Modeled as nested
+         *     models (not a bare `dict[str, Any]`) so codegen emits real, navigable
+         *     types for `error.code`/`error.message` rather than an opaque blob.
+         */
+        ErrorEnvelope: {
+            error: components["schemas"]["ErrorDetail"];
+        };
+        /**
+         * MeResponse
+         * @description `GET /auth/me`'s success body (PRD §5.1): the current admin's identity.
+         */
+        MeResponse: {
+            /** Avatar Url */
+            avatar_url: string | null;
+            /** Email */
+            email: string;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Name */
+            name: string | null;
+        };
+        /**
+         * StatsResponse
+         * @description Content counts by status and by tag, excluding soft-deleted content (PRD §5.2).
+         */
+        StatsResponse: {
+            /** By Status */
+            by_status: {
+                [key: string]: number;
+            };
+            /** By Tag */
+            by_tag: {
+                [key: string]: number;
+            };
+        };
+        /**
+         * TagWithCount
+         * @description One non-deleted tag plus its usage count over non-deleted content (PRD §5.2).
+         */
+        TagWithCount: {
+            /** Count */
+            count: number;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Name */
+            name: string;
+        };
+    };
     responses: never;
     parameters: never;
     requestBodies: never;
@@ -36,6 +504,456 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    auth_callback: {
+        parameters: {
+            query: {
+                code: string;
+                state: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Session cookie set; redirects to the admin app (settings.admin_app_url). */
+            303: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Bad Gateway */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    auth_login: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+        };
+    };
+    auth_logout: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+        };
+    };
+    auth_me: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MeResponse"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    content_list: {
+        parameters: {
+            query?: {
+                status?: ("draft" | "published" | "archived") | null;
+                tag?: string | null;
+                q?: string | null;
+                page?: number;
+                page_size?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ContentListResponse"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    content_create: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ContentCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ContentResponse"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    content_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                content_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ContentResponse"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    content_delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                content_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    content_update: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                content_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ContentUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ContentResponse"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    content_archive: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                content_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ContentResponse"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    content_publish: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                content_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ContentResponse"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
     healthz: {
         parameters: {
             query?: never;
@@ -54,6 +972,82 @@ export interface operations {
                     "application/json": {
                         [key: string]: string;
                     };
+                };
+            };
+        };
+    };
+    stats_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StatsResponse"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    tags_list: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TagWithCount"][];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
         };

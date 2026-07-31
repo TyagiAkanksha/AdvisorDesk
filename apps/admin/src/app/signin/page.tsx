@@ -1,9 +1,10 @@
+import { SignInScreen } from '@/components/auth/SignInScreen';
 import { PageContainer } from '@/components/common';
 
 export default function Page() {
   return (
     <PageContainer>
-      <h1>AdvisorDesk Admin</h1>
+      <SignInScreen />
     </PageContainer>
   );
 }

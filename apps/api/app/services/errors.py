@@ -41,6 +41,18 @@ class AuthRequiredError(AppError):
     code = "auth_required"
 
 
+class ForbiddenError(AppError):
+    """A valid identity is not authorized for the requested action — maps to 403.
+
+    PRD §5.1/§9: a Google login outside `ADMIN_EMAILS` is a real Google
+    identity (authentication succeeded) but is forbidden from AdvisorDesk
+    admin access — distinct from `AuthRequiredError`'s "no/invalid session"
+    (401).
+    """
+
+    code = "forbidden"
+
+
 class RateLimitedError(AppError):
     """A public-chat request exceeded a §9 rate limit — maps to 429."""
 
@@ -51,3 +63,19 @@ class EmbeddingFailedError(AppError):
     """The embedding provider call failed during publish/re-embed (PRD §4) — maps to 502."""
 
     code = "embedding_failed"
+
+
+class OAuthExchangeError(AppError):
+    """Google's OAuth token/userinfo exchange failed (PRD §5.1) — maps to 502.
+
+    Final review, finding C-3 / t01 M14: `app.auth.oauth.HttpxGoogleOAuthClient.exchange_code`
+    previously let a non-2xx Google response (`httpx.Response.raise_for_status()`) or a
+    userinfo payload missing `"email"` (`payload["email"]` `KeyError`) escape as an unhandled
+    500 with a plain-text/traceback body — reachable from `/auth/callback` on a reused or
+    expired authorization `code`, or any transient Google-side failure. Grouped with
+    `EmbeddingFailedError` under 502 (Bad Gateway): both are "an external dependency this
+    request needed failed", the closest existing fit in this family rather than inventing a
+    dedicated status for one more upstream-failure case.
+    """
+
+    code = "oauth_exchange_failed"

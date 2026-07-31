@@ -23,6 +23,21 @@ cp .env.example .env
 Fill in `.env` — see PRD §9 for what each variable does. `DATABASE_URL` has two valid values,
 described next. **Never commit `.env`** (it's gitignored; only `.env.example` is tracked).
 
+Generate a `SESSION_SECRET` (required in every environment, including local/offline dev —
+`app.main` fails fast at boot if it's empty):
+
+```sh
+python3 -c "import secrets; print(secrets.token_urlsafe(48))"
+```
+
+Admin login additionally needs real Google OAuth credentials (`GOOGLE_CLIENT_ID`/
+`GOOGLE_CLIENT_SECRET`); without them the app still boots in dev, but logging into the admin
+app won't work until they're set.
+
+`CORS_ORIGINS` ships pre-filled with the two local dev origins (`http://localhost:3000,
+http://localhost:3001`) so cross-origin requests from `apps/client`/`apps/admin` work
+out of the box; update it to your deployed frontend origins outside local dev.
+
 ### 2. Choose a database path (PRD §9)
 
 **Supabase (default, and the deployed target):** set `DATABASE_URL` in `.env` to your Supabase
@@ -183,3 +198,10 @@ pnpm -C apps/client test
   the builder stage (`ghcr.io/astral-sh/uv:python3.12-bookworm-slim`) and local dev already use, so
   the runtime image stays version-matched to dev rather than drifting to whatever "latest 3.11+"
   a generic base image resolves to later.
+- **Pagination envelope field names (phase-2 task-03).** Every paginated list response uses the
+  same four field names — `items`, `total`, `page`, `page_size` — via a generic
+  `app.models.schemas.common.PaginatedResponse[T]` that per-resource DTOs (e.g.
+  `ContentListResponse`) specialize rather than reinventing. `total` is the full filtered count,
+  independent of `page`/`page_size`. Any later paginated endpoint (e.g. PRD §5.3's
+  `GET /public/content`) should specialize the same generic instead of introducing new field
+  names, so the admin/client codegen consumers only ever deal with one page shape.

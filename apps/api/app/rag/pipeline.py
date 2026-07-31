@@ -16,40 +16,28 @@ import uuid
 from collections.abc import Sequence
 from typing import Any, cast
 
-from pgvector.sqlalchemy import Vector
 from sqlalchemy import CursorResult, delete
 from sqlalchemy.orm import Session
 
-from app.models import Chunk, Content
+from app.models import Chunk, Content, embedding_column_dims
 from app.rag.chunking import chunk_markdown
 from app.rag.embeddings import Embedder, EmbeddingFailedError
 from app.services.lifecycle import ChunkPipeline
 
-
-def _expected_dims() -> int:
-    """The embedding-vector width `Chunk.embedding`'s column actually enforces.
-
-    Dims-validation mechanism (controller decision: pipeline validates
-    dims as defense-in-depth beyond `Embedder`'s own check; mechanism is the
-    implementer's choice) — read off `Chunk.__table__`'s mapped column type
-    rather than duplicating the number from `Settings.embedding_dimensions`.
-    This is the same value either way *by construction* (migration 0002 and
-    `Settings.embedding_dimensions`'s default are both 1024), but deriving
-    it from the column keeps the pipeline's guard tied to the actual
-    database constraint that would otherwise reject a mismatched vector at
-    INSERT time — the real backstop this check exists to pre-empt — instead
-    of a config value that could in principle drift from it.
-    """
-    column_type = Chunk.__table__.c.embedding.type
-    if not isinstance(column_type, Vector) or column_type.dim is None:
-        raise RuntimeError(
-            "Chunk.embedding must be a dimensioned pgvector Vector column "
-            "for EmbeddingChunkPipeline's dims guard to read its width."
-        )
-    return column_type.dim
-
-
-_EXPECTED_DIMS: int = _expected_dims()
+# Dims-validation mechanism (controller decision: pipeline validates dims as
+# defense-in-depth beyond `Embedder`'s own check; mechanism is the
+# implementer's choice) — `embedding_column_dims()` reads the width off
+# `Chunk.__table__`'s mapped column type rather than duplicating the number
+# from `Settings.embedding_dimensions`. This is the same value either way
+# *by construction* (migration 0002 and `Settings.embedding_dimensions`'s
+# default are both 1024), but deriving it from the column keeps this guard
+# tied to the actual database constraint that would otherwise reject a
+# mismatched vector at INSERT time — the real backstop this check exists to
+# pre-empt — instead of a config value that could in principle drift from
+# it. Final review: promoted from a private `_expected_dims()` copy here
+# (near-duplicate of `app.main`'s own boot-time assertion) to the shared
+# `app.models.chunks.embedding_column_dims()` helper both now call.
+_EXPECTED_DIMS: int = embedding_column_dims()
 
 
 def _validate_dims(vectors: Sequence[Sequence[float]]) -> None:

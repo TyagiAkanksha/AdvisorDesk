@@ -35,7 +35,6 @@ from __future__ import annotations
 import logging
 
 from fastapi import FastAPI
-from pgvector.sqlalchemy import Vector
 from sqlalchemy import Engine
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -43,7 +42,7 @@ from app.auth.oauth import GoogleOAuthClient, HttpxGoogleOAuthClient
 from app.config import Settings
 from app.db import make_engine, make_session_factory
 from app.factory import create_app
-from app.models import Chunk
+from app.models import embedding_column_dims
 from app.rag.embeddings import OpenAICompatibleEmbedder
 from app.rag.pipeline import EmbeddingChunkPipeline
 
@@ -123,16 +122,15 @@ if not settings.is_dev:
 # dimension-mismatch `EmbeddingFailedError` from `app.rag.pipeline`'s own
 # defense-in-depth guard, which is a request-time surprise for what is
 # really a deployment configuration error. Asserted here, at boot, instead.
-_chunk_embedding_type = Chunk.__table__.c.embedding.type
-if not isinstance(_chunk_embedding_type, Vector) or _chunk_embedding_type.dim is None:
-    raise RuntimeError(
-        "Chunk.embedding must be a dimensioned pgvector Vector column for the "
-        "embedding_dimensions boot assertion below to read its width."
-    )
-if settings.embedding_dimensions != _chunk_embedding_type.dim:
+# `embedding_column_dims()` (final review: promoted from a private copy of
+# this same read that used to live here, near-identical to
+# `app.rag.pipeline`'s own) raises `RuntimeError` itself if the column isn't
+# a dimensioned `Vector`, so no separate guard is needed before comparing.
+_chunk_embedding_dim = embedding_column_dims()
+if settings.embedding_dimensions != _chunk_embedding_dim:
     raise RuntimeError(
         f"settings.embedding_dimensions is {settings.embedding_dimensions} but "
-        f"Chunk.embedding is a {_chunk_embedding_type.dim}-dim pgvector column "
+        f"Chunk.embedding is a {_chunk_embedding_dim}-dim pgvector column "
         "(migration 0002) — these must match. Set EMBEDDING_DIMENSIONS to the "
         "column's width, or write/run a migration that resizes the column to "
         "match EMBEDDING_DIMENSIONS."

@@ -119,9 +119,20 @@ def test_inspector_sees_hnsw_and_fk_indexes(tmp_engine: Engine) -> None:
     chat_messages_index_names = {ix["name"] for ix in inspector.get_indexes("chat_messages")}
     assert "ix_chat_messages_session_created" in chat_messages_index_names
 
+    # Final review (p3 t03 reviewer incident): `pg_indexes` is a whole-database view, not
+    # scoped to `tmp_engine`'s throwaway schema — an unscoped `indexname` match can hit a
+    # same-named leftover index in the `public` schema (e.g. dev migrations run there
+    # directly) or, under parallel test runs, another schema entirely, either of which turns
+    # `.scalar_one()` into `MultipleResultsFound`. `tmp_engine` is connected with
+    # `search_path=<schema>,public` (`app.db.make_engine`'s `schema` kwarg), so
+    # `current_schema()` on this same connection resolves to exactly this test's own
+    # throwaway schema — scope the query to it instead of a bare `indexname` match.
     with tmp_engine.connect() as conn:
         index_def = conn.execute(
-            sa.text("SELECT indexdef FROM pg_indexes WHERE indexname = 'ix_chunks_embedding_hnsw'")
+            sa.text(
+                "SELECT indexdef FROM pg_indexes "
+                "WHERE schemaname = current_schema() AND indexname = 'ix_chunks_embedding_hnsw'"
+            )
         ).scalar_one()
     assert "USING hnsw" in index_def
     assert "vector_cosine_ops" in index_def

@@ -175,11 +175,23 @@ def _split_long_section(section: str, target_tokens: int, overlap_tokens: int) -
     A paragraph that alone exceeds `target_tokens` (F1b's hard fallback -- an
     80-row table, a 50-item tight list, one 2000-token line with no newlines
     at all) is pre-split via `_split_oversized_unit` into smaller pieces
-    *before* packing, so every unit the packing loop below actually sees is
-    individually `<= target_tokens`. Because this pre-split happens as a
-    single flat pass over the whole section, a heading (the section's leading
-    unit) is usually packed together with however many units of its section's
-    first chunk fit, rather than being flushed alone -- *except* when that
+    *before* packing. Most units the packing loop below sees are then
+    individually `<= target_tokens`, but this is not an exact bound: a unit
+    that went through `_split_oversized_unit`'s final `_token_windows` step
+    (single unbroken line/table cell/CJK run) can come back up to ~2 tokens
+    *over* `target_tokens` -- `_token_windows` pushes a boundary that would
+    otherwise land mid-character forward to the next real character instead
+    of ever deleting one (see that function's docstring), which can carry a
+    window a couple of tokens past its exact `target_tokens` cut. This is
+    harmless in practice (F1c's real ceiling is `target_tokens +
+    overlap_tokens`, comfortably above the overshoot for any non-degenerate
+    `overlap_tokens`) but it does mean "every unit `<= target_tokens`" is a
+    close approximation here, not a hard postcondition.
+
+    Because this pre-split happens as a single flat pass over the whole
+    section, a heading (the section's leading unit) is usually packed
+    together with however many units of its section's first chunk fit,
+    rather than being flushed alone -- *except* when that
     first unit is itself a `_token_windows` atom already sized at ~
     `target_tokens` (the "one long unbroken line/table cell/CJK run" case):
     there is then no room left for even a two-token heading, so the heading
@@ -322,9 +334,17 @@ def _token_windows(text: str, target_tokens: int) -> list[str]:
     `overlap_tokens` worth of tokens for any non-degenerate config) past its
     exact token cut; F1c's `target_tokens + overlap_tokens` ceiling still
     holds in practice (verified empirically against every fixture in
-    `tests/test_chunking_bounds.py`, including the straddle sweep), and the
-    existing prefix-drop fallback in `_split_long_section`'s packing loop is
-    the backstop if a pathological config ever pushed one over.
+    `tests/test_chunking_bounds.py`, including the straddle sweep). Note this
+    is *not* backstopped by `_split_long_section`'s `elif prefix and ...`
+    prefix-drop guard: that guard only fires when `prefix` is non-empty (a
+    chunk seeded from the previous chunk's overlap), so it never runs for the
+    first chunk of a section, which always starts with an empty prefix. What
+    actually bounds a single over-large atom there is that every atom
+    produced by this function is already pre-bounded to within ~2 tokens of
+    `target_tokens` (see the overshoot described above) before
+    `_split_long_section`'s packing loop ever sees it -- comfortably under
+    the `target_tokens + overlap_tokens` ceiling for any non-degenerate
+    `overlap_tokens`, with no guard needed.
     """
     encoding = _encoding()
     ids = encoding.encode(text)

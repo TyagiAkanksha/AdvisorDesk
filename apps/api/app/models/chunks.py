@@ -90,6 +90,34 @@ def _normalize_embedding_on_load(chunk: Chunk, _context: Any) -> None:
     _normalize_embedding(chunk)
 
 
+def embedding_column_dims() -> int:
+    """Return the vector width `Chunk.embedding`'s pgvector column actually enforces.
+
+    Reads the dimension off `Chunk.__table__`'s mapped column type rather
+    than a duplicated literal or `Settings.embedding_dimensions`, so callers
+    stay tied to the real database constraint (migration 0002's DDL) instead
+    of a config value that could in principle drift from it. Promoted here
+    (final review, phase-3 t02 minor: dim-introspection duplication) from
+    what used to be two near-identical private copies -- `app.rag.pipeline`'s
+    defense-in-depth vector-width guard and `app.main`'s boot-time
+    `embedding_dimensions` assertion both call this instead of re-deriving
+    the same thing.
+
+    Raises:
+        RuntimeError: if `Chunk.embedding` is ever mapped to something other
+            than a dimensioned `pgvector.sqlalchemy.Vector` column (would
+            only happen from a model-definition bug -- migration 0002
+            already sizes the real column).
+    """
+    column_type = Chunk.__table__.c.embedding.type
+    if not isinstance(column_type, Vector) or column_type.dim is None:
+        raise RuntimeError(
+            "Chunk.embedding must be a dimensioned pgvector Vector column for "
+            "embedding_column_dims() to read its width."
+        )
+    return column_type.dim
+
+
 @event.listens_for(Chunk, "refresh")
 def _normalize_embedding_on_refresh(chunk: Chunk, _context: Any, _attrs: Any) -> None:
     """Coerce `chunk.embedding` to a plain `list[float]` on a `"refresh"` reload.

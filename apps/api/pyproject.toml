@@ -47,18 +47,6 @@ extend-immutable-calls = [
     "fastapi.Body",
 ]
 
-[tool.ruff.lint.per-file-ignores]
-# tests/test_retrieval.py is authored-and-pinned (phase-4 task-01, sha256 in
-# the task brief) and may not be edited by the implementer. Its
-# `from app.rag.retrieval import ...` was written — correctly, at RED time —
-# grouped with third-party imports, because ruff's isort classifier only
-# resolves an `app.*` import as first-party once that module actually
-# exists on disk; before `app/rag/retrieval.py` existed the file was
-# lint-clean, and it can only be re-sorted into the later first-party block
-# by editing the pinned file. Scoped to this one file and this one rule
-# (I001) only.
-"tests/test_retrieval.py" = ["I001"]
-
 [tool.mypy]
 strict = true
 files = ["app"]

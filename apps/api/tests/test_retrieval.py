@@ -58,11 +58,11 @@ from datetime import UTC, datetime
 from typing import Literal
 
 import pytest
-from app.rag.retrieval import RetrievalResult, RetrievedChunk, retrieve, similarity_from_distance
 from sqlalchemy.orm import Session
 
 from app.models import Content
 from app.models.chunks import Chunk
+from app.rag.retrieval import RetrievalResult, RetrievedChunk, retrieve, similarity_from_distance
 
 # `nvidia/nv-embedqa-e5-v5` (PRD §7.2 v1.5) — matches `Chunk.embedding`'s `Vector(1024)` column
 # (app/models/chunks.py) and `Settings.embedding_dimensions`'s default.

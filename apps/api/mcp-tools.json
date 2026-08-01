@@ -89,5 +89,191 @@
       "type": "object"
     },
     "name": "count_content"
+  },
+  {
+    "description": "Create a draft CMS content item. Creates missing tags (reactivating soft-deleted names). Always returns status 'draft' \u2014 never auto-published.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "description": "`create_draft`'s arguments (PRD \u00a76): `title`, `body_md`, `tags`.\n\n`title`'s validation mirrors `app.models.schemas.content.ContentCreate.title` exactly\n(`min_length=1` plus the same whitespace-only rejection) \u2014 the Goal's \"same behavior as\nthe REST routes by construction\" extends to input validation, not just the service calls.",
+      "properties": {
+        "body_md": {
+          "default": "",
+          "title": "Body Md",
+          "type": "string"
+        },
+        "tags": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Tags",
+          "type": "array"
+        },
+        "title": {
+          "minLength": 1,
+          "title": "Title",
+          "type": "string"
+        }
+      },
+      "required": [
+        "title"
+      ],
+      "title": "CreateDraftArgs",
+      "type": "object"
+    },
+    "name": "create_draft"
+  },
+  {
+    "description": "Partially update a content item's title/body/tags. Re-embeds if the item is already published. The slug never changes.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "description": "`edit_content`'s arguments (PRD \u00a76): partial update \u2014 every field but `content_id`\noptional, mirroring `app.models.schemas.content.ContentUpdate`'s own `None`-means-\nunchanged contract and title validation.",
+      "properties": {
+        "body_md": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Body Md"
+        },
+        "content_id": {
+          "format": "uuid",
+          "title": "Content Id",
+          "type": "string"
+        },
+        "tags": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Tags"
+        },
+        "title": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Title"
+        }
+      },
+      "required": [
+        "content_id"
+      ],
+      "title": "EditContentArgs",
+      "type": "object"
+    },
+    "name": "edit_content"
+  },
+  {
+    "description": "Soft-delete a content item (tombstone, not restorable) and remove its chunks in one transaction.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "description": "Shared arguments for `delete_content`/`publish`/`archive` (PRD \u00a76): just `content_id`.",
+      "properties": {
+        "content_id": {
+          "format": "uuid",
+          "title": "Content Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "content_id"
+      ],
+      "title": "ContentIdArgs",
+      "type": "object"
+    },
+    "name": "delete_content"
+  },
+  {
+    "description": "Add and/or remove tags on a content item in one call. Tags in `add` are created if missing (reactivating soft-deleted names).",
+    "inputSchema": {
+      "additionalProperties": false,
+      "description": "`tag_content`'s arguments (PRD \u00a76): `content_id`, plus `add`/`remove` name lists.",
+      "properties": {
+        "add": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Add",
+          "type": "array"
+        },
+        "content_id": {
+          "format": "uuid",
+          "title": "Content Id",
+          "type": "string"
+        },
+        "remove": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Remove",
+          "type": "array"
+        }
+      },
+      "required": [
+        "content_id"
+      ],
+      "title": "TagContentArgs",
+      "type": "object"
+    },
+    "name": "tag_content"
+  },
+  {
+    "description": "Publish a content item: runs the full publish transaction (\u00a74).",
+    "inputSchema": {
+      "additionalProperties": false,
+      "description": "Shared arguments for `delete_content`/`publish`/`archive` (PRD \u00a76): just `content_id`.",
+      "properties": {
+        "content_id": {
+          "format": "uuid",
+          "title": "Content Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "content_id"
+      ],
+      "title": "ContentIdArgs",
+      "type": "object"
+    },
+    "name": "publish"
+  },
+  {
+    "description": "Archive a content item: status -> archived, removes its chunks.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "description": "Shared arguments for `delete_content`/`publish`/`archive` (PRD \u00a76): just `content_id`.",
+      "properties": {
+        "content_id": {
+          "format": "uuid",
+          "title": "Content Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "content_id"
+      ],
+      "title": "ContentIdArgs",
+      "type": "object"
+    },
+    "name": "archive"
   }
 ]

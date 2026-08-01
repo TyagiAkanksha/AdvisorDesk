@@ -16,6 +16,18 @@ into `app.services.*` — and this module's `_ALL_TOOLS` assembles every
 module's tuple into the one registry `call_tool`/`list_tool_schemas` read.
 Adding a tool module means adding one entry to `_ALL_TOOLS` here; nothing
 else in this file changes.
+
+Phase-5 task-02: `call_tool` gained a keyword-only `pipeline` parameter — the
+`ChunkPipeline` seam `app.mcp.tools_write`'s write tools embed chunks
+through (publish/archive/delete/edit-of-published-item, PRD §4). It is
+optional, defaulting to `NoopChunkPipeline()` when omitted (mirroring
+`app.factory.create_app`'s own `chunk_pipeline: ChunkPipeline | None = None`
+default), and reaches write-tool handlers via `session.info` rather than a
+new handler argument — see `app.services.lifecycle.SESSION_INFO_PIPELINE_KEY`
+and `app.mcp.tools_write`'s module docstring for why: the handler-call shape
+right below (`spec.handler(args, session=session, actor_id=actor_id)`) is
+pinned by `tests/test_mcp_runtime_guards.py`/`tests/test_mcp_read_tools.py`
+and must not change.
 """
 
 from __future__ import annotations
@@ -28,13 +40,14 @@ from sqlalchemy.orm import Session
 
 from app.mcp.tool_spec import ToolSpec
 from app.mcp.tools_read import READ_TOOLS
+from app.mcp.tools_write import WRITE_TOOLS
 from app.services.errors import ToolInputError, ToolNotFoundError
+from app.services.lifecycle import SESSION_INFO_PIPELINE_KEY, ChunkPipeline, NoopChunkPipeline
 
 __all__ = ["ToolSpec", "call_tool", "list_tool_schemas"]
 
-# Every registered tool, module-by-module (module docstring: task-02 adds
-# `*WRITE_TOOLS` here, following this same shape).
-_ALL_TOOLS: tuple[ToolSpec, ...] = (*READ_TOOLS,)
+# Every registered tool, module-by-module.
+_ALL_TOOLS: tuple[ToolSpec, ...] = (*READ_TOOLS, *WRITE_TOOLS)
 
 _REGISTRY: dict[str, ToolSpec] = {tool.name: tool for tool in _ALL_TOOLS}
 
@@ -55,7 +68,12 @@ def _format_validation_error(exc: ValidationError) -> str:
 
 
 def call_tool(
-    name: str, arguments: dict[str, Any], *, session: Session, actor_id: uuid.UUID
+    name: str,
+    arguments: dict[str, Any],
+    *,
+    session: Session,
+    actor_id: uuid.UUID,
+    pipeline: ChunkPipeline | None = None,
 ) -> dict[str, Any]:
     """Validate `arguments` via `name`'s args model, run its handler, return the JSON payload.
 
@@ -67,6 +85,13 @@ def call_tool(
             over HTTP: one opened for this request by `app.mcp.server`).
         actor_id: the authenticated admin driving this call (PRD §4.1
             actor-column stamping on any write tool).
+        pipeline: the `ChunkPipeline` a write tool (`app.mcp.tools_write`)
+            embeds chunks through. `None` (the default — every read-tool
+            call, and any write-tool call that doesn't supply one) resolves
+            to `NoopChunkPipeline()`. Stashed on `session.info` (not passed
+            to `spec.handler` directly) so this stays a purely additive
+            change to this function's own signature — see the module
+            docstring.
 
     Returns:
         The tool's structured JSON-able payload.
@@ -83,6 +108,9 @@ def call_tool(
         args = spec.args_model.model_validate(arguments)
     except ValidationError as exc:
         raise ToolInputError(_format_validation_error(exc)) from exc
+    session.info[SESSION_INFO_PIPELINE_KEY] = (
+        pipeline if pipeline is not None else NoopChunkPipeline()
+    )
     return spec.handler(args, session=session, actor_id=actor_id)
 
 

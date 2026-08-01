@@ -1,0 +1,254 @@
+"""Write tools: `create_draft`/`edit_content`/`delete_content`/`tag_content`/`publish`/
+`archive` — wrap the content/tag services (PRD §6, phase-5 task-02).
+
+Every handler is a thin wrapper — parse (the Pydantic args model) -> call one
+`app.services.content`/`app.services.tags` function -> build the returned dict — exactly
+`tools_read.py`'s own registration pattern (one `ToolSpec` per tool, a Pydantic args model
+paired with a `(args, *, session, actor_id) -> dict` handler). No business logic lives here;
+lifecycle rules (re-chunk-iff-published, the publish/archive transition matrix, soft-delete
+tombstoning, tag reactivation) all live in the wrapped service functions, most of them
+task-00-hardened already.
+
+PIPELINE THREADING (this task's judgment call, disclosed in the implementer report): five of
+these six tools wrap a service function that takes a REQUIRED `pipeline: ChunkPipeline`
+keyword argument (`update_content`, `delete_content`, `publish_content`, `archive_content`;
+`create_draft`/`update_content_tags` need none). `app.mcp.runtime.call_tool` grew a new
+optional `pipeline` keyword-only parameter for exactly this (see that module's docstring),
+but the handler-call shape `spec.handler(args, session=session, actor_id=actor_id)` is pinned
+by `tests/test_mcp_runtime_guards.py`/`tests/test_mcp_read_tools.py` and could not grow a
+fourth argument. `call_tool` instead stashes the resolved pipeline on
+`session.info[SESSION_INFO_PIPELINE_KEY]` right before calling any handler (every tool call,
+not just a write one — harmless for the two read tools, which never look at it); handlers
+below that need it read it back via `_pipeline_from_session`.
+"""
+
+from __future__ import annotations
+
+import uuid
+from typing import Any, cast
+
+from pydantic import BaseModel, ConfigDict, Field, field_validator
+from sqlalchemy.orm import Session
+
+from app.mcp.tool_spec import ToolSpec
+from app.services import content as content_service
+from app.services.lifecycle import SESSION_INFO_PIPELINE_KEY, ChunkPipeline, NoopChunkPipeline
+from app.services.tags import tags_for_contents
+
+
+def _pipeline_from_session(session: Session) -> ChunkPipeline:
+    """Read back the `ChunkPipeline` `call_tool` stashed on `session.info` for this call.
+
+    `call_tool` always sets `SESSION_INFO_PIPELINE_KEY` (defaulting to `NoopChunkPipeline()`)
+    immediately before invoking any tool's handler (`app.mcp.runtime.call_tool`), so the
+    `.get(..., NoopChunkPipeline())` fallback here is only a defensive belt-and-braces for a
+    handler somehow invoked outside that seam — never expected to fire in practice.
+    """
+    return cast(ChunkPipeline, session.info.get(SESSION_INFO_PIPELINE_KEY, NoopChunkPipeline()))
+
+
+# ---------------------------------------------------------------------------
+# create_draft
+# ---------------------------------------------------------------------------
+
+
+class CreateDraftArgs(BaseModel):
+    """`create_draft`'s arguments (PRD §6): `title`, `body_md`, `tags`.
+
+    `title`'s validation mirrors `app.models.schemas.content.ContentCreate.title` exactly
+    (`min_length=1` plus the same whitespace-only rejection) — the Goal's "same behavior as
+    the REST routes by construction" extends to input validation, not just the service calls.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    title: str = Field(min_length=1)
+    body_md: str = ""
+    tags: list[str] = Field(default_factory=list)
+
+    @field_validator("title")
+    @classmethod
+    def _title_not_whitespace_only(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("title must not be empty or whitespace-only")
+        return value
+
+
+def _create_draft(
+    args: CreateDraftArgs, *, session: Session, actor_id: uuid.UUID
+) -> dict[str, Any]:
+    """`{id, slug}` (PRD §6): always `status='draft'`; actor stamped as `author_id`/`updated_by`."""
+    content = content_service.create_draft(
+        session, title=args.title, body_md=args.body_md, tags=args.tags, actor_id=actor_id
+    )
+    return {"id": str(content.id), "slug": content.slug}
+
+
+# ---------------------------------------------------------------------------
+# edit_content
+# ---------------------------------------------------------------------------
+
+
+class EditContentArgs(BaseModel):
+    """`edit_content`'s arguments (PRD §6): partial update — every field but `content_id`
+    optional, mirroring `app.models.schemas.content.ContentUpdate`'s own `None`-means-
+    unchanged contract and title validation."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    content_id: uuid.UUID
+    title: str | None = Field(default=None, min_length=1)
+    body_md: str | None = None
+    tags: list[str] | None = None
+
+    @field_validator("title")
+    @classmethod
+    def _title_not_whitespace_only(cls, value: str | None) -> str | None:
+        if value is not None and not value.strip():
+            raise ValueError("title must not be empty or whitespace-only")
+        return value
+
+
+def _edit_content(
+    args: EditContentArgs, *, session: Session, actor_id: uuid.UUID
+) -> dict[str, Any]:
+    """`{id, slug, status}` (PRD §6): re-embeds iff published; slug never changes."""
+    content = content_service.update_content(
+        session,
+        args.content_id,
+        title=args.title,
+        body_md=args.body_md,
+        tags=args.tags,
+        actor_id=actor_id,
+        pipeline=_pipeline_from_session(session),
+    )
+    return {"id": str(content.id), "slug": content.slug, "status": content.status}
+
+
+# ---------------------------------------------------------------------------
+# delete_content / publish / archive share one `content_id`-only args model
+# ---------------------------------------------------------------------------
+
+
+class ContentIdArgs(BaseModel):
+    """Shared arguments for `delete_content`/`publish`/`archive` (PRD §6): just `content_id`."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    content_id: uuid.UUID
+
+
+def _delete_content(
+    args: ContentIdArgs, *, session: Session, actor_id: uuid.UUID
+) -> dict[str, Any]:
+    """`{deleted: true}` (PRD §6): soft-delete tombstone + chunk removal in one transaction."""
+    content_service.delete_content(
+        session, args.content_id, actor_id=actor_id, pipeline=_pipeline_from_session(session)
+    )
+    return {"deleted": True}
+
+
+def _publish(args: ContentIdArgs, *, session: Session, actor_id: uuid.UUID) -> dict[str, Any]:
+    """`{id, status, published_at}` (PRD §6): the full §4 publish transaction.
+
+    `published_at` is returned as an ISO-8601 string, not a raw `datetime` — the HTTP
+    transport (`app.mcp.server._execute_tool_call`) `json.dumps`s this dict directly, which
+    cannot serialize a `datetime` on its own.
+    """
+    content = content_service.publish_content(
+        session, args.content_id, actor_id=actor_id, pipeline=_pipeline_from_session(session)
+    )
+    return {
+        "id": str(content.id),
+        "status": content.status,
+        "published_at": content.published_at.isoformat() if content.published_at else None,
+    }
+
+
+def _archive(args: ContentIdArgs, *, session: Session, actor_id: uuid.UUID) -> dict[str, Any]:
+    """`{id, status}` (PRD §6): status -> archived, chunks removed."""
+    content = content_service.archive_content(
+        session, args.content_id, actor_id=actor_id, pipeline=_pipeline_from_session(session)
+    )
+    return {"id": str(content.id), "status": content.status}
+
+
+# ---------------------------------------------------------------------------
+# tag_content
+# ---------------------------------------------------------------------------
+
+
+class TagContentArgs(BaseModel):
+    """`tag_content`'s arguments (PRD §6): `content_id`, plus `add`/`remove` name lists."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    content_id: uuid.UUID
+    add: list[str] = Field(default_factory=list)
+    remove: list[str] = Field(default_factory=list)
+
+
+def _tag_content(args: TagContentArgs, *, session: Session, actor_id: uuid.UUID) -> dict[str, Any]:
+    """`{id, tags}` (PRD §6): `add`/`remove` applied together via `update_content_tags`.
+
+    `tags` is read back through `tags_for_contents` (the same batch tag-lookup the read tools
+    and REST routes use) rather than re-deriving it from `update_content_tags`'s return value
+    — one canonical way to turn a `Content.id` into its current tag names.
+    """
+    content = content_service.update_content_tags(
+        session, args.content_id, add=args.add, remove=args.remove, actor_id=actor_id
+    )
+    tags = tags_for_contents(session, [content.id])[content.id]
+    return {"id": str(content.id), "tags": tags}
+
+
+WRITE_TOOLS: tuple[ToolSpec, ...] = (
+    ToolSpec(
+        name="create_draft",
+        description=(
+            "Create a draft CMS content item. Creates missing tags (reactivating "
+            "soft-deleted names). Always returns status 'draft' — never auto-published."
+        ),
+        args_model=CreateDraftArgs,
+        handler=_create_draft,
+    ),
+    ToolSpec(
+        name="edit_content",
+        description=(
+            "Partially update a content item's title/body/tags. Re-embeds if the item is "
+            "already published. The slug never changes."
+        ),
+        args_model=EditContentArgs,
+        handler=_edit_content,
+    ),
+    ToolSpec(
+        name="delete_content",
+        description=(
+            "Soft-delete a content item (tombstone, not restorable) and remove its chunks "
+            "in one transaction."
+        ),
+        args_model=ContentIdArgs,
+        handler=_delete_content,
+    ),
+    ToolSpec(
+        name="tag_content",
+        description=(
+            "Add and/or remove tags on a content item in one call. Tags in `add` are "
+            "created if missing (reactivating soft-deleted names)."
+        ),
+        args_model=TagContentArgs,
+        handler=_tag_content,
+    ),
+    ToolSpec(
+        name="publish",
+        description="Publish a content item: runs the full publish transaction (§4).",
+        args_model=ContentIdArgs,
+        handler=_publish,
+    ),
+    ToolSpec(
+        name="archive",
+        description="Archive a content item: status -> archived, removes its chunks.",
+        args_model=ContentIdArgs,
+        handler=_archive,
+    ),
+)

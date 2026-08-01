@@ -21,7 +21,7 @@ from app.models import Content, ContentTag, Tag
 from app.services.errors import ConflictError, NotFoundError
 from app.services.lifecycle import ChunkPipeline
 from app.services.queries import active_select
-from app.services.tags import get_or_create_tags
+from app.services.tags import get_or_create_tags, normalize_tag_name
 
 _SLUG_INVALID_RE = re.compile(r"[^a-z0-9]+")
 _LIKE_SPECIAL_RE = re.compile(r"[\\%_]")
@@ -372,6 +372,74 @@ def update_content(
     if content.status == "published":
         pipeline.rebuild_chunks(session, content)
 
+    return content
+
+
+def update_content_tags(
+    session: Session,
+    content_id: uuid.UUID,
+    *,
+    add: Sequence[str] = (),
+    remove: Sequence[str] = (),
+    actor_id: uuid.UUID | None,
+) -> Content:
+    """Add/remove `content_id`'s tag associations in one call (PRD §6 `tag_content`).
+
+    Unlike `update_content`'s `tags` parameter (a full replacement set), this is a
+    differential edit: `add` resolves each name through `get_or_create_tags` (creating a
+    missing tag, or reactivating a soft-deleted one, PRD §4.1) and associates it if not
+    already linked; `remove` disassociates any currently-linked tag whose normalized name
+    matches one in `remove` — a name that resolves to no existing tag, or one already
+    unassociated, is a no-op for that name (this never creates a tag just to remove it,
+    unlike `add`'s own `get_or_create_tags` call).
+
+    `remove` is applied before `add`, so a name present in both lists ends up associated
+    (`add` wins) — the only ordering that makes "swap tag X for tag Y in one call" behave
+    sanely when X and Y happen to collide.
+
+    Deliberately does not call `pipeline.rebuild_chunks`: PRD §4's re-chunk/re-embed trigger
+    is `body_md` content changing on a published item (`update_content`'s own rule); tags are
+    metadata, not chunked/embedded content, so a tag-only edit has nothing to re-embed.
+
+    Args:
+        session: the caller's `Session`.
+        content_id: the `Content.id` to modify.
+        add: raw tag names to associate.
+        remove: raw tag names to disassociate, if currently associated.
+        actor_id: the authenticated admin performing this write.
+
+    Returns:
+        The updated `Content` row.
+
+    Raises:
+        NotFoundError: no active row exists for `content_id`.
+    """
+    content = get_content(session, content_id)
+
+    if remove:
+        normalized_remove = {normalize_tag_name(name) for name in remove}
+        normalized_remove.discard("")
+        if normalized_remove:
+            session.execute(
+                delete(ContentTag).where(
+                    ContentTag.content_id == content.id,
+                    ContentTag.tag_id.in_(select(Tag.id).where(Tag.name.in_(normalized_remove))),
+                )
+            )
+
+    if add:
+        linked_tag_ids = set(
+            session.execute(
+                select(ContentTag.tag_id).where(ContentTag.content_id == content.id)
+            ).scalars()
+        )
+        for tag in get_or_create_tags(session, add):
+            if tag.id not in linked_tag_ids:
+                session.add(ContentTag(content_id=content.id, tag_id=tag.id))
+                linked_tag_ids.add(tag.id)
+
+    _touch(content, actor_id)
+    session.flush()
     return content
 
 

@@ -39,6 +39,7 @@ from starlette.types import Receive, Scope, Send
 from app.auth.deps import require_admin
 from app.mcp.runtime import call_tool, list_tool_schemas
 from app.services.errors import AppError
+from app.services.lifecycle import ChunkPipeline
 
 _SERVER_NAME = "advisordesk-mcp"
 
@@ -56,8 +57,13 @@ logger = logging.getLogger(__name__)
 # opens one session and holds it across the whole HTTP request/`await` boundary. Each tool call
 # opens (and closes) its own session, scoped to exactly the synchronous span that needs it, inside
 # a worker thread (`_execute_tool_call`).
-_request_context: ContextVar[tuple[sessionmaker[Session], uuid.UUID] | None] = ContextVar(
-    "app_mcp_server_request_context", default=None
+#
+# Phase-5 task-02: also carries the real `ChunkPipeline` (`request.app.state.chunk_pipeline`,
+# resolved once by `create_app` — see `app.routes.deps.get_chunk_pipeline`'s identical read) so
+# an HTTP-invoked write tool (`app.mcp.tools_write`) embeds through the same pipeline a REST
+# `PATCH`/`publish`/`archive`/`DELETE` call would, not a `NoopChunkPipeline` default.
+_request_context: ContextVar[tuple[sessionmaker[Session], uuid.UUID, ChunkPipeline] | None] = (
+    ContextVar("app_mcp_server_request_context", default=None)
 )
 
 
@@ -109,6 +115,7 @@ def _execute_tool_call(
     name: str,
     arguments: dict[str, Any],
     actor_id: uuid.UUID,
+    pipeline: ChunkPipeline | None = None,
 ) -> types.CallToolResult:
     """Run one tool call to completion — session open, `call_tool`, commit/rollback, close.
 
@@ -129,10 +136,21 @@ def _execute_tool_call(
     `app/routes/errors.py::_unhandled_exception_handler`'s "never `str(exc)` to the caller"
     invariant — an uncaught driver/DB error must not hand SQL text or bind parameters to an MCP
     client the way `str(exc)` would.
+
+    Args:
+        session_factory: opens this call's own `Session`.
+        name: the tool name (PRD §6 tool table).
+        arguments: the tool's raw, caller-supplied arguments.
+        actor_id: the authenticated admin driving this call.
+        pipeline: phase-5 task-02 — the `ChunkPipeline` threaded through to `call_tool` for a
+            write tool to embed chunks through. `None` (the default — every caller that
+            existed before task-02, including `tests/test_mcp_runtime_guards.py`'s pinned
+            4-positional-argument calls) lets `call_tool` fall back to its own
+            `NoopChunkPipeline()` default, so this parameter is purely additive.
     """
     session = session_factory()
     try:
-        result = call_tool(name, arguments, session=session, actor_id=actor_id)
+        result = call_tool(name, arguments, session=session, actor_id=actor_id, pipeline=pipeline)
     except AppError as exc:
         session.rollback()
         return _tool_error_result(exc.code, str(exc))
@@ -167,9 +185,14 @@ async def _handle_call_tool(
     bound = _request_context.get()
     if bound is None:  # pragma: no cover - defensive; `_AdminGatedMcpApp` always binds first
         raise RuntimeError("MCP call_tool invoked with no bound request context.")
-    session_factory, actor_id = bound
+    session_factory, actor_id, pipeline = bound
     return await anyio.to_thread.run_sync(
-        _execute_tool_call, session_factory, params.name, dict(params.arguments or {}), actor_id
+        _execute_tool_call,
+        session_factory,
+        params.name,
+        dict(params.arguments or {}),
+        actor_id,
+        pipeline,
     )
 
 
@@ -214,12 +237,19 @@ class _AdminGatedMcpApp:
         HTTP requests (which touch no database) now never open a connection; a `tools/call`
         request opens one only for the duration of `_execute_tool_call`'s worker-thread span,
         never held across an `await`.
+
+        Phase-5 task-02: also binds `request.app.state.chunk_pipeline` — the same resolved
+        `ChunkPipeline` `app.routes.deps.get_chunk_pipeline` hands every REST route (`create_app`
+        always resolves this to a concrete pipeline, `NoopChunkPipeline` by default — never
+        `None`, so no fail-loud branch is needed here) — so an HTTP-invoked write tool embeds
+        chunks for real, not through a request-local `NoopChunkPipeline`.
         """
         request = Request(scope, receive=receive)
         principal = await anyio.to_thread.run_sync(require_admin, request)
 
         session_factory = cast(sessionmaker[Session], request.app.state.session_factory)
-        token = _request_context.set((session_factory, principal.user_id))
+        pipeline = cast(ChunkPipeline, request.app.state.chunk_pipeline)
+        token = _request_context.set((session_factory, principal.user_id, pipeline))
         try:
             manager = StreamableHTTPSessionManager(
                 app=self._server, stateless=True, json_response=True

@@ -23,19 +23,43 @@ a single integer and a fixed window only needs a count, not individual timestamp
 stores are pure in-memory, per-process state — PRD §9 explicitly allows this for a single
 container ("in-memory store is acceptable").
 
-Pruning: stale day-bucket entries (any `day_bucket` strictly less than the current one) are
-dropped opportunistically, at most once per observed day-bucket advance, so the two day-keyed
-dicts stay bounded to "today's" distinct sessions/IPs rather than growing for the process's
-entire lifetime. The per-minute `deque`s are pruned on every `check_message` call (the sliding
-window itself requires this), but an IP's now-empty deque is left in the dict rather than
-removed — one empty `deque` per distinct IP ever seen is a few dozen bytes, not worth the extra
-bookkeeping to reclaim.
+Pruning (review round 1, finding M-3 — revised from round 0's docstring, whose "a few dozen
+bytes per IP forever" cost claim a reviewer probe measured as wrong: an IP that stops calling
+keeps its stale deque entry indefinitely, ~814 bytes/IP, ~776 MiB per 1M distinct IPs ever seen).
+`_prune_stale_entries` runs at most once per *observed* day-bucket advance (an amortized,
+roughly-once-daily linear pass, not a per-request cost) and now does three things in that one
+pass: drops day-bucket dict entries strictly older than the current bucket (safe unconditionally
+— a key's day-bucket component never becomes relevant again once a strictly larger bucket has
+been observed); prunes every IP's per-minute `deque` down to entries within the trailing 60s of
+"now"; and evicts any IP whose deque is left empty. This bounds `_minute_windows` to "IPs active
+within roughly the last day", not the process's entire lifetime — an idle IP is reclaimed within
+one day-bucket advance of going quiet, not never.
 
-Thread-safety: `starlette.testclient.TestClient` (this repo's test surface) drives requests
-single-threaded, but a real `uvicorn` deployment may not (multiple worker threads sharing one
-process's `app.state.rate_limiter`). A single `threading.Lock` guards every read-modify-write
-across all three stores — check-then-record is a few dict/deque operations, microseconds under
-the lock, so one coarse lock is simpler and cheap enough rather than three finer-grained ones.
+Thread-safety (review round 1, finding I-1): a single `threading.Lock` guards every
+read-modify-write across all three stores — `starlette.testclient.TestClient` (this repo's test
+surface) drives requests single-threaded, but a real `uvicorn` deployment runs `public_chat` (a
+sync `def` route) in FastAPI's threadpool, concurrently by default. `check_message` was always
+correctly atomic (its check-then-record for a message happens inside one lock acquisition,
+`:210-227` below). The session-create cap's two-step public API
+(`check_session_create`/`note_session_created`, pinned by the brief's Interfaces block and by
+`tests/test_ratelimit.py`'s unit tests) is NOT atomic on its own — a caller doing
+"check, do other work, note" across two separate lock acquisitions leaves a TOCTOU window a
+reviewer probe measured concretely: 32 concurrent requests against a cap of 5 minted 32 sessions.
+`reserve_session_create` closes that window: check-and-increment in ONE lock acquisition, used by
+the route instead of the two-step pair. `check_session_create`/`note_session_created` remain,
+unchanged in their own individual atomicity (each still one lock acquisition), for the pinned
+unit tests and any future caller that genuinely needs the two-step "may I?" / "I did" split; all
+three methods now share the same two lock-held private helpers
+(`_session_create_full_locked`/`_increment_session_create_locked`) so there is exactly one
+implementation of "is the cap full" and one of "record one more", never two copies to drift.
+
+Accepted trade-off (controller-ruled, round 1): if `reserve_session_create` succeeds (the slot is
+charged) but the session mint that follows it fails for an unrelated reason (e.g. a DB error
+inside `get_or_create_session`), that slot is still burned — the caller already committed to
+minting when it reserved, and un-reserving on a downstream failure would need a third call this
+route never makes (mirrors `check_message`'s existing per-minute/per-day slots, which are burned
+by admission, not by successful persistence — `app/routes/public_routes.py`'s own docstring, probe
+P-K in the review report).
 """
 
 from __future__ import annotations
@@ -88,7 +112,8 @@ class RateLimiter:
         self._lock = threading.Lock()
 
         # Sliding one-minute window, per IP: admission timestamps, oldest first. Pruned from the
-        # left in `check_message` — only entries within the trailing 60s of `clock()` ever count.
+        # left in `check_message` (every call) and swept for full eviction of empty entries in
+        # `_prune_stale_entries` (once per observed day-bucket advance — module docstring, M-3).
         self._minute_windows: dict[str, deque[float]] = {}
 
         # Fixed UTC-midnight-bucketed counters. Keys are (identity, day_bucket); a day bucket only
@@ -96,7 +121,7 @@ class RateLimiter:
         self._session_day_counts: dict[tuple[str, int], int] = {}
         self._session_create_counts: dict[tuple[str, int], int] = {}
 
-        # The most recent day bucket `_prune_stale_days` has already cleaned up through — lets
+        # The most recent day bucket `_prune_stale_entries` has already cleaned up through — lets
         # pruning run at most once per observed day-bucket advance instead of on every call.
         self._last_pruned_day_bucket: int | None = None
 
@@ -104,15 +129,25 @@ class RateLimiter:
         """The UTC-midnight bucket `now` (POSIX epoch seconds) falls into."""
         return int(now // _DAY_SECONDS)
 
-    def _prune_stale_days(self, current_day_bucket: int) -> None:
-        """Drop counter entries from strictly earlier day buckets (caller holds `self._lock`).
+    def _prune_stale_entries(self, now: float, current_day_bucket: int) -> None:
+        """Drop everything stale, at most once per observed day-bucket advance (caller holds
+        `self._lock`).
 
-        Safe unconditionally: a key's `day_bucket` component never becomes relevant again once a
-        strictly larger day bucket has been observed (buckets only ever increase as `clock()`
-        advances in every test and in real wall-clock time), so evicting anything older than
-        `current_day_bucket` can never affect a future check. A no-op once already caught up to
-        `current_day_bucket`, so normal request traffic within the same day pays this cost at
-        most once.
+        Three sweeps in one pass (module docstring, review round 1 finding M-3):
+
+        1. Day-bucket dict entries strictly older than `current_day_bucket` — safe
+           unconditionally, since a key's day-bucket component never becomes relevant again once
+           a strictly larger bucket has been observed (buckets only ever increase as `clock()`
+           advances in every test and in real wall-clock time).
+        2. Every IP's per-minute `deque`, pruned down to entries within the trailing 60s of `now`
+           — the same left-prune `check_message` already does per-call, run here too so an IP
+           that has gone quiet is not left with a growing shadow deque nobody else prunes for it.
+        3. Any IP whose deque is left empty after (2) is evicted from `_minute_windows` entirely —
+           the fix for the docstring's previously-wrong "a few dozen bytes forever" claim (a
+           reviewer probe measured 776 MiB/1M distinct IPs under the old never-evict behavior).
+
+        A no-op once already caught up to `current_day_bucket`, so normal request traffic within
+        the same day pays this cost at most once.
         """
         if self._last_pruned_day_bucket == current_day_bucket:
             return
@@ -126,7 +161,35 @@ class RateLimiter:
             for key, count in self._session_create_counts.items()
             if key[1] >= current_day_bucket
         }
+        stale_ips: list[str] = []
+        for ip, window in self._minute_windows.items():
+            while window and now - window[0] >= _MINUTE_SECONDS:
+                window.popleft()
+            if not window:
+                stale_ips.append(ip)
+        for ip in stale_ips:
+            del self._minute_windows[ip]
         self._last_pruned_day_bucket = current_day_bucket
+
+    def _session_create_full_locked(self, ip: str, day_bucket: int) -> bool:
+        """Whether `ip` has already used its `SESSION_CREATE_PER_DAY` budget for `day_bucket`.
+
+        Caller must hold `self._lock`. Shared by `check_session_create`, `reserve_session_create`,
+        and nothing else — the single place "is the create cap full" is decided, so
+        `check_session_create` (pure check) and `reserve_session_create` (check + record) can
+        never disagree about what "full" means.
+        """
+        count = self._session_create_counts.get((ip, day_bucket), 0)
+        return count >= self._settings.session_create_per_day
+
+    def _increment_session_create_locked(self, ip: str, day_bucket: int) -> None:
+        """Record one more session create for `ip` in `day_bucket`. Caller must hold `self._lock`.
+
+        Shared by `note_session_created` and `reserve_session_create` — the single place a create
+        is actually recorded.
+        """
+        key = (ip, day_bucket)
+        self._session_create_counts[key] = self._session_create_counts.get(key, 0) + 1
 
     def check_message(self, ip: str, session_id: str | None) -> None:
         """Admit or reject one `/public/chat` message (PRD §9's first two caps).
@@ -135,10 +198,14 @@ class RateLimiter:
         enforces `RATE_LIMIT_PER_DAY` (fixed UTC-midnight window, keyed by `session_id`) — but
         ONLY when `session_id` is not `None`. Controller-approved semantics (test-author report
         `p4-t03-test-author.md`, judgment call #2): the wiring-order pin (limits are checked
-        BEFORE `get_or_create_session` ever mints an id) means a brand-new session's very first
-        message necessarily carries `session_id=None` — there is no id yet to key a per-session
-        bucket on, so that one message is unavoidably exempt from the per-day cap. It is never
-        exempt from the per-minute cap, which is keyed by IP, not session.
+        BEFORE a session is actually minted) means a brand-new session's very first message
+        necessarily carries `session_id=None` — there is no id yet to key a per-session bucket on,
+        so that one message is unavoidably exempt from the per-day cap. It is never exempt from
+        the per-minute cap, which is keyed by IP, not session. (Review round 1, finding C-1: the
+        route now resolves a real, already-known `session_id` via a read-only PK lookup before
+        calling this method whenever the client supplied one that turns out to exist — so `None`
+        reaching here means "genuinely about to mint", never "client sent an id but we didn't
+        bother checking it".)
 
         Both admitted-state updates (the minute-window append, the day-bucket increment) happen
         only once the message is confirmed admitted — a rejected call records nothing, so retrying
@@ -156,7 +223,7 @@ class RateLimiter:
         now = self._clock()
         day_bucket = self._day_bucket(now)
         with self._lock:
-            self._prune_stale_days(day_bucket)
+            self._prune_stale_entries(now, day_bucket)
 
             window = self._minute_windows.setdefault(ip, deque())
             while window and now - window[0] >= _MINUTE_SECONDS:
@@ -165,6 +232,7 @@ class RateLimiter:
                 raise RateLimitedError(_PER_MIN_MESSAGE)
 
             day_key = (session_id, day_bucket) if session_id is not None else None
+            day_count = 0
             if day_key is not None:
                 day_count = self._session_day_counts.get(day_key, 0)
                 if day_count >= self._settings.rate_limit_per_day:
@@ -179,9 +247,12 @@ class RateLimiter:
     def check_session_create(self, ip: str) -> None:
         """Check (without recording) whether `ip` may mint one more session today (PRD §9/§5.3).
 
-        Pure check — pairs with `note_session_created`, called by the caller only once a session
-        is actually about to be minted (the two-step API the unit tests pin: a rejected attempt
-        must not itself consume a slot, so checking never has a side effect).
+        Pure check — pairs with `note_session_created`, called by a caller only once a session is
+        actually about to be minted (the two-step API the unit tests pin: a rejected attempt must
+        not itself consume a slot, so checking never has a side effect). Individually atomic (one
+        lock acquisition), but the check-then-note PAIR is NOT atomic across two separate calls —
+        `app/routes/public_routes.py` uses `reserve_session_create` instead, precisely to avoid
+        that gap (review round 1, finding I-1; module docstring).
 
         Args:
             ip: the caller's IP address — `SESSION_CREATE_PER_DAY` is a per-IP cap.
@@ -190,11 +261,11 @@ class RateLimiter:
             RateLimitedError: `SESSION_CREATE_PER_DAY` sessions have already been created from
                 `ip` in the current UTC day.
         """
-        day_bucket = self._day_bucket(self._clock())
+        now = self._clock()
+        day_bucket = self._day_bucket(now)
         with self._lock:
-            self._prune_stale_days(day_bucket)
-            count = self._session_create_counts.get((ip, day_bucket), 0)
-            if count >= self._settings.session_create_per_day:
+            self._prune_stale_entries(now, day_bucket)
+            if self._session_create_full_locked(ip, day_bucket):
                 raise RateLimitedError(_SESSION_CREATE_MESSAGE)
 
     def note_session_created(self, ip: str) -> None:
@@ -203,13 +274,45 @@ class RateLimiter:
 
         Callers must only call this after `check_session_create` has passed AND a session mint is
         actually going to happen for this request — never speculatively, and never for a request
-        that turned out to reuse an existing session.
+        that turned out to reuse an existing session. Same non-atomic-as-a-pair caveat as
+        `check_session_create` above — prefer `reserve_session_create` for a single request that
+        needs check-and-record together.
 
         Args:
             ip: the caller's IP address, same key `check_session_create` reads.
         """
-        day_bucket = self._day_bucket(self._clock())
+        now = self._clock()
+        day_bucket = self._day_bucket(now)
         with self._lock:
-            self._prune_stale_days(day_bucket)
-            key = (ip, day_bucket)
-            self._session_create_counts[key] = self._session_create_counts.get(key, 0) + 1
+            self._prune_stale_entries(now, day_bucket)
+            self._increment_session_create_locked(ip, day_bucket)
+
+    def reserve_session_create(self, ip: str) -> None:
+        """Atomically check-and-record one `SESSION_CREATE_PER_DAY` slot for `ip`.
+
+        Review round 1, finding I-1: `check_session_create` then `note_session_created` as two
+        separate calls leaves a check-then-act race — under concurrency (`public_chat` is a sync
+        route, run in FastAPI's threadpool), multiple requests can all pass the check before any
+        of them records, over-admitting past the cap (a reviewer probe: cap 5, 32 concurrent
+        minters -> 32 admitted). This method does both under ONE `self._lock` acquisition, so no
+        other call can observe or mutate the create-cap state in between — the fix
+        `app/routes/public_routes.py` actually calls for the "is this request about to mint a
+        session" gate. `check_session_create`/`note_session_created` remain as the separately
+        pinned two-step public methods (delegating to the same
+        `_session_create_full_locked`/`_increment_session_create_locked` helpers this method
+        uses), unchanged, for the unit tests and any caller that genuinely needs the split.
+
+        Args:
+            ip: the caller's IP address — `SESSION_CREATE_PER_DAY` is a per-IP cap.
+
+        Raises:
+            RateLimitedError: `SESSION_CREATE_PER_DAY` sessions have already been created from
+                `ip` in the current UTC day. Nothing is recorded when this raises.
+        """
+        now = self._clock()
+        day_bucket = self._day_bucket(now)
+        with self._lock:
+            self._prune_stale_entries(now, day_bucket)
+            if self._session_create_full_locked(ip, day_bucket):
+                raise RateLimitedError(_SESSION_CREATE_MESSAGE)
+            self._increment_session_create_locked(ip, day_bucket)

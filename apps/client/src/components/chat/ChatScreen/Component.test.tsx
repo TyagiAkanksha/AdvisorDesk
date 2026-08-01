@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
 import '@testing-library/jest-dom/vitest';
+import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { ChatScreen } from '.';
@@ -12,6 +13,13 @@ import { ChatScreen } from '.';
 // FRONTEND-CONVENTIONS.md §7: "never mock the hook" — this file drives the REAL `useChatStream`
 // hook end-to-end by mocking only `fetch` (the network edge), exactly like a user would: type a
 // question, click Send, read the rendered conversation.
+//
+// Controller-approved revision: converted from `fireEvent` to `@testing-library/user-event`
+// (FRONTEND-CONVENTIONS.md §7's pinned idiom, matching apps/admin's existing usage style —
+// e.g. `content/ContentListScreen/deleteError.test.tsx`'s `userEvent.setup()` +
+// `await user.click(...)`) now that `@testing-library/user-event` is installed for apps/client
+// (controller commit 332764c). The original RED draft used `fireEvent` only because the package
+// was not yet resolvable from this workspace — assertions and test list are unchanged.
 //
 // Judgment calls (test-author, flagged for controller review — mirrored in useChatStream.test.ts
 // and MessageBubble/Component.test.tsx for consistency across the three files):
@@ -56,10 +64,13 @@ function streamResponse(frames: SseFrame[]): Response {
   });
 }
 
-function askQuestion(question: string): void {
+async function askQuestion(
+  user: ReturnType<typeof userEvent.setup>,
+  question: string,
+): Promise<void> {
   const input = screen.getByRole('textbox', { name: 'Message' });
-  fireEvent.change(input, { target: { value: question } });
-  fireEvent.click(screen.getByRole('button', { name: 'Send' }));
+  await user.type(input, question);
+  await user.click(screen.getByRole('button', { name: 'Send' }));
 }
 
 beforeEach(() => {
@@ -89,9 +100,10 @@ describe('ChatScreen', () => {
         ]),
       ),
     );
+    const user = userEvent.setup();
 
     render(<ChatScreen />);
-    askQuestion('What is a Roth IRA?');
+    await askQuestion(user, 'What is a Roth IRA?');
 
     expect(await screen.findByRole('article', { name: 'You' })).toHaveTextContent(
       'What is a Roth IRA?',
@@ -117,9 +129,10 @@ describe('ChatScreen', () => {
         ]),
       ),
     );
+    const user = userEvent.setup();
 
     const { container } = render(<ChatScreen />);
-    askQuestion('What is a Roth IRA?');
+    await askQuestion(user, 'What is a Roth IRA?');
 
     await waitFor(() => expect(container.querySelector('strong')).not.toBeNull());
     expect(container.querySelector('strong')?.textContent).toBe('tax-free');
@@ -148,9 +161,10 @@ describe('ChatScreen', () => {
         ]),
       ),
     );
+    const user = userEvent.setup();
 
     render(<ChatScreen />);
-    askQuestion('Compare Roth and traditional IRAs.');
+    await askQuestion(user, 'Compare Roth and traditional IRAs.');
 
     const firstLink = await screen.findByRole('link', { name: '[1]' });
     const secondLink = screen.getByRole('link', { name: '[2]' });
@@ -169,9 +183,10 @@ describe('ChatScreen', () => {
         ]),
       ),
     );
+    const user = userEvent.setup();
 
     render(<ChatScreen />);
-    askQuestion('An uncovered question.');
+    await askQuestion(user, 'An uncovered question.');
 
     const refusal = await screen.findByRole('status');
     expect(refusal).toHaveTextContent('No published guidance covers this.');
@@ -188,12 +203,13 @@ describe('ChatScreen', () => {
         ]),
       ),
     );
+    const user = userEvent.setup();
 
     render(<ChatScreen />);
     const input = screen.getByRole('textbox', { name: 'Message' });
     expect(input).toBeEnabled();
 
-    askQuestion('A question.');
+    await askQuestion(user, 'A question.');
 
     expect(input).toBeDisabled();
 

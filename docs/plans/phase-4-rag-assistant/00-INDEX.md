@@ -20,13 +20,19 @@ behind an injectable LLM seam; one SSE utility module shared with `/agent/chat`;
 route dependencies with an in-memory store; chat UI as a client-side island over a hand-rolled
 SSE reader.
 
-**Tech Stack:** pgvector HNSW `<=>` · OpenAI `gpt-4o-mini` (streaming) + `text-embedding-3-small`
-· SSE over fetch/ReadableStream · localStorage sessions.
+**Tech Stack:** pgvector HNSW `<=>` · NVIDIA OpenAI-compatible API (v1.5, `LLM_BASE_URL`):
+**`CHAT_MODEL` = `meta/llama-3.1-8b-instruct`** (the PRD §7 "pinned in the phase-4 plan" pin —
+probe-verified 2026-07-31: 0.36s e2e / 28ms first token on the free tier, correct
+context-only + refusal behavior, SSE streaming confirmed; the 70B variant queued 49–73s and is
+disqualified for the public path) + query embeddings through the existing phase-3 `Embedder`
+(`nvidia/nv-embedqa-e5-v5`, `input_type="query"` — the asymmetric twin of publish-time
+`"passage"`) · SSE over fetch/ReadableStream · localStorage sessions.
 
 ## Global Constraints
 
 Phase-1/2/3 Global Constraints apply verbatim (gates, commits, wire-surface same-commit gate,
-soft-delete visibility, PRD defaults philosophy, no real OpenAI calls in tests).
+soft-delete visibility, PRD defaults philosophy, no real LLM-provider calls in tests — the
+`Embedder`/`ChatLLM` seams take fakes, exactly as phase 3 did).
 
 - **§7.3 similarity trap:** pgvector `<=>` returns cosine *distance*; `similarity = 1 - distance`
   is defined once in `app/rag/retrieval.py` and the pin test locks it. Nothing else computes it.

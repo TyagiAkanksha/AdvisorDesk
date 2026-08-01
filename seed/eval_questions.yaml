@@ -1,0 +1,99 @@
+# Evaluation question set for the phase-7 groundedness harness (PRD §8.1).
+#
+# Authored together with seed/sample_content/ (phase-4 task-04). Each item is one of:
+#   - question: str
+#     expected_slugs: [<published seed slug>, ...]
+#     answerable: true
+#   - question: str
+#     expected_slugs: []
+#     answerable: false
+#
+# Answerable questions are phrased as real client questions the named article(s) genuinely answer;
+# every expected_slugs entry is the slug of a `status: published` file under seed/sample_content/
+# (apps/api/tests/test_seed.py cross-checks this). Unanswerable questions ask about topics
+# deliberately absent from the corpus, to verify the refusal path (PRD §7.5/§8.1: expected outcome
+# is retrieval_found = false, a refusal response, no citations).
+
+- question: "What is a Roth IRA conversion and how is it taxed?"
+  expected_slugs: ["roth-ira-conversion-basics"]
+  answerable: true
+
+- question: "What's the difference between a traditional IRA and a Roth IRA?"
+  expected_slugs: ["traditional-vs-roth-ira-basics"]
+  answerable: true
+
+- question: "How is the deadline for my first required minimum distribution determined, and what happens if I delay it?"
+  expected_slugs: ["required-minimum-distributions-explained"]
+  answerable: true
+
+- question: "What factors should I consider when deciding what age to claim Social Security?"
+  expected_slugs: ["social-security-claiming-strategies"]
+  answerable: true
+
+- question: "How can tax-loss harvesting reduce my tax bill?"
+  expected_slugs: ["tax-loss-harvesting-basics"]
+  answerable: true
+
+- question: "How do marginal tax brackets actually work?"
+  expected_slugs: ["understanding-marginal-tax-brackets"]
+  answerable: true
+
+- question: "What are the tax advantages of a health savings account?"
+  expected_slugs: ["hsa-triple-tax-advantage-basics"]
+  answerable: true
+
+- question: "What's the difference between a will and a trust, and do I need both?"
+  expected_slugs: ["wills-vs-trusts-basics"]
+  answerable: true
+
+- question: "Why do beneficiary designations on my retirement accounts matter so much?"
+  expected_slugs: ["beneficiary-designation-basics"]
+  answerable: true
+
+- question: "How does the federal estate tax exemption work, and can a surviving spouse use my unused amount?"
+  expected_slugs: ["estate-tax-exemption-basics"]
+  answerable: true
+
+- question: "What does a financial power of attorney let someone do on my behalf?"
+  expected_slugs: ["power-of-attorney-basics"]
+  answerable: true
+
+- question: "Why is diversification important when building an investment portfolio?"
+  expected_slugs: ["diversification-and-asset-allocation-basics"]
+  answerable: true
+
+- question: "What is dollar-cost averaging and how does it work?"
+  expected_slugs: ["dollar-cost-averaging-basics"]
+  answerable: true
+
+- question: "What is an index fund and how does it differ from an actively managed fund?"
+  expected_slugs: ["understanding-index-funds-basics"]
+  answerable: true
+
+- question: "What is a 529 plan and how does it help with saving for college?"
+  expected_slugs: ["529-plan-basics"]
+  answerable: true
+
+- question: "What's the difference between term life insurance and whole life insurance?"
+  expected_slugs: ["term-vs-whole-life-insurance-basics"]
+  answerable: true
+
+- question: "How does long-term disability insurance work, and how much of my income does it replace?"
+  expected_slugs: ["understanding-disability-insurance-basics"]
+  answerable: true
+
+- question: "What does the firm recommend about cryptocurrency staking rewards?"
+  expected_slugs: []
+  answerable: false
+
+- question: "Should I use a covered call options strategy to generate income on my portfolio?"
+  expected_slugs: []
+  answerable: false
+
+- question: "Can you help me set up an offshore trust in the Cayman Islands?"
+  expected_slugs: []
+  answerable: false
+
+- question: "How do I structure a real estate investment trust syndication for a rental property?"
+  expected_slugs: []
+  answerable: false

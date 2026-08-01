@@ -34,11 +34,14 @@ stream opens.
 - **Consumes:** `Settings` caps; `RateLimitedError` → 429 mapping (p1-t03).
 - **Produces (later tasks rely on — produce exactly):**
   - `app.routes.ratelimit`: `class RateLimiter` —
-    `__init__(settings, clock: Callable[[], float] = time.monotonic)`;
+    `__init__(settings, clock: Callable[[], float] = time.time)` (controller amendment: the
+    clock returns POSIX epoch seconds — the originally-drafted `time.monotonic` cannot express
+    "UTC midnight", so day buckets are `floor(clock() / 86400)`, which IS the UTC-midnight
+    reset; tests inject a fake epoch clock);
     `check_message(ip: str, session_id: str | None) -> None` (raises `RateLimitedError` on
     per-min/IP or per-day/session breach); `check_session_create(ip: str) -> None`;
     `note_session_created(ip: str)`. Sliding one-minute window; day buckets reset at UTC
-    midnight (implementation note). Instance on `app.state.rate_limiter`.
+    midnight. Instance on `app.state.rate_limiter`.
   - Wiring order pin: limits checked **before** `get_or_create_session` and before the SSE
     response starts; a rejected request is plain JSON 429, not an `error` event.
   - **Phase-6 task-02 verifies these same caps in the deployed environment.**

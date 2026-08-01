@@ -219,3 +219,29 @@ pnpm -C apps/client test
   independent of `page`/`page_size`. Any later paginated endpoint (e.g. PRD §5.3's
   `GET /public/content`) should specialize the same generic instead of introducing new field
   names, so the admin/client codegen consumers only ever deal with one page shape.
+- **`app/seed.py`'s `content_dir` resolution vs. its own pinned Real Run command (phase-4
+  task-04).** The task brief's Real Run command (`cd apps/api && ... && uv run python -m app.seed`)
+  runs with `apps/api` as the process's working directory — `seed_all`'s Interfaces-pinned default
+  (`content_dir=Path("seed/sample_content")`) resolves relative to *that* cwd, where the directory
+  does not exist (only `<repo-root>/seed/sample_content` does). Rather than change the tested
+  default, `python -m app.seed`'s `__main__` entry point (`_run_from_cli`) computes the real
+  `content_dir` off `Path(__file__).resolve().parents[3]` (mirroring `tests/test_seed.py`'s own
+  `_REPO_ROOT` computation, since both files sit at the same `apps/api/<dir>/<file>.py` depth) —
+  `seed_all`'s signature and default are untouched; only this one call site resolves the path
+  robustly regardless of invocation cwd. Caught by actually running the Real Run command as
+  written (first attempt silently produced `SeedReport(created=0, published=0, skipped=0,
+  chunk_count=0)` — no error, just an empty glob).
+- **Seeded documents and chunks (PRD §9.1 metric input; phase-4 task-04).** 21 original sample
+  advisory articles (`seed/sample_content/`, spread across the six PRD §8 tags, every tag used ≥2
+  times): 17 `status: published`, 4 `status: draft` (left for the phase-5 agent demo). Real run
+  against the local `advisordesk-test-db` container (`127.0.0.1:5433`, migrated to head,
+  real NVIDIA `nv-embedqa-e5-v5` embedding calls, no fakes): first run —
+  `SeedReport(created=21, published=17, skipped=0, chunk_count=100)`; an immediate re-run —
+  `SeedReport(created=0, published=0, skipped=21, chunk_count=0)` — confirms idempotency against a
+  real database, not just the fake-embedder test suite. (The database's raw `content`/`chunks`
+  table totals are 2 rows and 1 chunk higher than these numbers: two pre-existing rows from earlier
+  phase-3/phase-4 task verification smoke tests against this same shared dev database, unrelated to
+  the seed corpus.) `seed/eval_questions.yaml` — the phase-7 groundedness harness's input (PRD
+  §8.1) — has 17 answerable questions (each `expected_slugs` a real published seed slug) and 4
+  deliberately-unanswerable questions on topics absent from the corpus (crypto staking, options
+  strategies, offshore trusts, REIT syndication).

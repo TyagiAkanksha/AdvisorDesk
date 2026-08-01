@@ -270,6 +270,88 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/public/chat": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Public Chat
+         * @description PRD §5.3: retrieval -> grounded synthesis -> typed SSE stream -> persistence.
+         *
+         *     Rate limiting (task-03, PRD §9) is checked right here, first, before `chat_llm`/`embedder` are
+         *     ever touched and before `_generate_chat_stream` builds any part of the SSE body — the task
+         *     brief's wiring-order pin. A breach raises `RateLimitedError` (no `try/except` here, per
+         *     CONVENTIONS.md §4: it propagates straight to `register_error_handlers`'s 429 mapping), so a
+         *     rejected request never reaches retrieval or the LLM, and the client sees a plain
+         *     `application/json` 429 envelope — never a started SSE stream.
+         *
+         *     `429: {"model": ErrorEnvelope}` is declared honestly in this route's own `responses=` above
+         *     (task-03 brief) rather than left undeclared, since a rate-limit rejection is now a real,
+         *     expected outcome of calling this endpoint, not an edge case worth hiding from the OpenAPI
+         *     export both frontend codegens read.
+         *
+         *     Review round 1, finding C-1: PRD §5.3 says a `session_id` that is absent **or unknown** both
+         *     mint a session "subject to the per-IP creation cap" — gating the create cap purely on
+         *     `body.session_id is None` (round 0) let a client bypass `SESSION_CREATE_PER_DAY` (and, since
+         *     `check_message`'s per-day cap was keyed on the client-supplied string, `RATE_LIMIT_PER_DAY`
+         *     too) by sending any syntactically-valid-but-never-issued UUID. `session.get(ChatSession, ...)`
+         *     below is a single indexed **read-only** primary-key lookup — it mints nothing and starts no
+         *     stream, so it does not violate the wiring-order pin (whose purpose is "nothing minted, no
+         *     stream started before the checks pass" — the pin's own wording, task brief lines 45-46); it
+         *     only tells this route what `get_or_create_session` (called later, inside the generator) is
+         *     about to do. `will_mint` is then the single source of truth PRD §5.3 actually specifies:
+         *     "absent or unknown", not "absent".
+         *
+         *     The §9 caps: `RATE_LIMIT_PER_MIN` (sliding one-minute window, per IP, always checked) and
+         *     `RATE_LIMIT_PER_DAY` (per session, checked only once a real, KNOWN session exists) both live
+         *     behind `rate_limiter.check_message` — keyed on `existing_session.id` (the resolved row), never
+         *     on the raw, unverified `body.session_id`, so an unknown id can no longer smuggle itself into a
+         *     per-day bucket nobody will ever charge again either. `SESSION_CREATE_PER_DAY` (per IP) is a
+         *     separate gate, `rate_limiter.reserve_session_create` (review round 1, finding I-1: an atomic
+         *     check-and-record in one lock acquisition — the two-step `check_session_create`/
+         *     `note_session_created` pair the brief's Interfaces block names is still `RateLimiter`'s public
+         *     surface for the pinned unit tests, but calling it as two separate steps here left a
+         *     check-then-act race a concurrency probe measured concretely: 32 concurrent minters against a
+         *     cap of 5 all admitted. `reserve_session_create` closes that window), called only when
+         *     `will_mint` is true — and, deliberately, called AFTER `check_message`, not before (review
+         *     round 1, finding M-4's own counter-example: mutating the route to record a create BEFORE
+         *     `check_message` lets a per-minute-rejected request still burn a create slot for a request that
+         *     was never going to be admitted at all; ordering `reserve_session_create` last means a
+         *     create-cap charge only ever happens for a request `check_message` has already accepted). The
+         *     one accepted asymmetry from that ordering: if the create cap turns out to be the thing that
+         *     rejects, the per-minute (and, for a resumed-but-unknown-turned-known-nonexistent case, per-day)
+         *     slot `check_message` already recorded for this same request is not refunded — the same
+         *     "admission burns budget, not eventual success" trade-off `check_message`'s own admit-then-fail
+         *     path already accepts (`app.routes.ratelimit`'s module docstring; probe P-K in the review
+         *     report measured the analogous case for a mid-stream failure after admission).
+         *
+         *     See `_generate_chat_stream` for the full event-order/persistence contract once a request is
+         *     admitted; it repeats the identical `get_or_create_session(session, body.session_id)` PK lookup
+         *     this route just did — accepted duplication (one cheap, indexed read) rather than threading the
+         *     already-resolved `ChatSession` through the generator's signature for what is otherwise a
+         *     single extra `SELECT`.
+         *
+         *     Review round 1, finding M-2: without `response_class=StreamingResponse` +
+         *     the explicit `200` `responses=` content override above, FastAPI's OpenAPI export defaults to
+         *     an empty-schema `application/json` entry for this status (its generic default-`response_class`
+         *     behavior, since this route sets no `response_model`) — wrong for an endpoint that only ever
+         *     returns `text/event-stream`. `response_class=StreamingResponse` alone suppresses that default
+         *     (`StreamingResponse.media_type` is `None` at the class level, so FastAPI's auto-schema branch
+         *     never fires); the `responses=` override then supplies the real media type both frontend
+         *     codegens read.
+         */
+        post: operations["public_chat"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/public/content": {
         parameters: {
             query?: never;
@@ -362,6 +444,27 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /**
+         * ChatRequest
+         * @description `POST /public/chat`'s request body (PRD §5.3, exact field set).
+         *
+         *     `session_id` absent or referencing an unknown session both mean "start a new session" (§5.3)
+         *     — `app.services.chat.get_or_create_session` handles both cases identically once this schema
+         *     has parsed a syntactically valid UUID (or `None`) out of the request body.
+         *
+         *     `message` is `min_length=1` plus a whitespace-only rejection (review round 1, finding M-5) —
+         *     mirrors `app.models.schemas.content.ContentCreate.title`'s established two-guard pattern
+         *     exactly: `min_length=1` alone still lets a whitespace-only string (`"   "`) through, since
+         *     Pydantic's length check counts characters, not content. An empty/blank message would otherwise
+         *     still burn an LLM call and a §9 rate-limit slot, and poison phase-7's `report_content_gaps`
+         *     with empty "questions" (probe P7).
+         */
+        ChatRequest: {
+            /** Message */
+            message: string;
+            /** Session Id */
+            session_id?: string | null;
+        };
         /**
          * ContentCreate
          * @description `POST /content`'s request body: a new draft (PRD §5.2, §4 slug rules).
@@ -1059,6 +1162,48 @@ export interface operations {
                     "application/json": {
                         [key: string]: string;
                     };
+                };
+            };
+        };
+    };
+    public_chat: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ChatRequest"];
+            };
+        };
+        responses: {
+            /** @description SSE stream (PRD §5.3): `token` (repeated), `citations`, `done` on success, or `error` on failure. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/event-stream": string;
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too Many Requests */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
         };

@@ -32,7 +32,10 @@ events from a stateless `POST /agent/chat`. The server persists nothing for agen
 ## Interfaces
 
 - **Consumes:** `call_tool`/`list_tool_schemas` (t01–t02); `require_admin` → `AdminPrincipal`
-  (actor for tools); `sse_event`/`sse_response` (p4-t02).
+  (actor for tools); `sse_event`/`sse_response` (p4-t02). **t02 amendment: `call_tool` takes a
+  keyword-only `pipeline: ChunkPipeline | None = None` (defaults to `NoopChunkPipeline`) — the
+  loop/route MUST thread the real pipeline from `app.state.chunk_pipeline` or agent-driven
+  publish/edit/archive/delete would silently skip embedding work.**
 - **Produces (later tasks rely on — produce exactly):**
   - `app.agent.loop`: `class AgentLLM(Protocol): def next_step(self, messages, tool_schemas)
     -> LlmStep` where `LlmStep = TextDelta(text) | ToolCallStep(name, arguments) | Done()` —

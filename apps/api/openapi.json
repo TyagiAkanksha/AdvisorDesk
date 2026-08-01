@@ -1,6 +1,32 @@
 {
   "components": {
     "schemas": {
+      "ChatRequest": {
+        "description": "`POST /public/chat`'s request body (PRD \u00a75.3, exact field set).\n\n`session_id` absent or referencing an unknown session both mean \"start a new session\" (\u00a75.3)\n\u2014 `app.services.chat.get_or_create_session` handles both cases identically once this schema\nhas parsed a syntactically valid UUID (or `None`) out of the request body.",
+        "properties": {
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "session_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Session Id"
+          }
+        },
+        "required": [
+          "message"
+        ],
+        "title": "ChatRequest",
+        "type": "object"
+      },
       "ContentCreate": {
         "description": "`POST /content`'s request body: a new draft (PRD \u00a75.2, \u00a74 slug rules).\n\n`title` is `min_length=1` (review round 1, finding F4): an empty title\nnow 422s instead of creating a degenerate row. Final review, finding F6\n(t03 whitespace titles): `min_length=1` alone still passed a\nwhitespace-only title (`\"   \"`) \u2014 `_title_not_whitespace_only` closes\nthat gap by rejecting a title that is empty *after* `.strip()`, so a\nhuman-blank title 422s the same way a byte-empty one already did.",
         "properties": {
@@ -1022,6 +1048,43 @@
           }
         },
         "summary": "Healthz"
+      }
+    },
+    "/api/v1/public/chat": {
+      "post": {
+        "description": "PRD \u00a75.3: retrieval -> grounded synthesis -> typed SSE stream -> persistence.\n\nRate-limit rejection (task-03) happens before this route ever runs (task brief's\nimplementation note) \u2014 this route assumes every request that reaches it is allowed to\nproceed. See `_generate_chat_stream` for the full event-order/persistence contract.",
+        "operationId": "public_chat",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ChatRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          }
+        },
+        "summary": "Public Chat"
       }
     },
     "/api/v1/public/content": {

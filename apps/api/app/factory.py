@@ -13,6 +13,8 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from app.auth.oauth import GoogleOAuthClient
 from app.config import Settings
+from app.rag.embeddings import Embedder
+from app.rag.synthesis import ChatLLM
 from app.routes.auth_routes import router as auth_router
 from app.routes.content_routes import router as content_router
 from app.routes.errors import register_error_handlers
@@ -28,6 +30,8 @@ def create_app(
     settings: Settings | None = None,
     oauth_client: GoogleOAuthClient | None = None,
     chunk_pipeline: ChunkPipeline | None = None,
+    chat_llm: ChatLLM | None = None,
+    embedder: Embedder | None = None,
 ) -> FastAPI:
     """Build the AdvisorDesk FastAPI application.
 
@@ -60,6 +64,18 @@ def create_app(
             task-02) passes `EmbeddingChunkPipeline` instead — the
             parameter existed from phase-2 onward so that swap needed no
             signature change here.
+        chat_llm: an optional `app.rag.synthesis.ChatLLM` (the real
+            `OpenAICompatibleChatLLM` or a test fake, phase-4 task-02).
+            `None` leaves `app.state.chat_llm` unset — DB-less/OpenAPI-
+            export builds never dereference it; `app.routes.deps.
+            get_chat_llm` raises `RuntimeError` if a real request ever
+            tries. `app/main.py` is the only caller that wires a real one.
+        embedder: an optional `app.rag.embeddings.Embedder` for
+            `app.rag.retrieval.retrieve()`'s request-time query embedding
+            (phase-4 task-02; test-author judgment call, controller-
+            approved — mirrors `chat_llm`'s shape since nothing else on
+            `app.state` supplies one testably). Same `None`/fail-loud
+            contract as `chat_llm` above.
 
     Returns:
         A configured `FastAPI` app instance.
@@ -79,6 +95,8 @@ def create_app(
         chunk_pipeline if chunk_pipeline is not None else NoopChunkPipeline()
     )
     app.state.chunk_pipeline = resolved_pipeline
+    app.state.chat_llm = chat_llm
+    app.state.embedder = embedder
 
     app.add_middleware(
         CORSMiddleware,

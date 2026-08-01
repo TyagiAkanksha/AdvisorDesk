@@ -270,6 +270,30 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/public/chat": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Public Chat
+         * @description PRD §5.3: retrieval -> grounded synthesis -> typed SSE stream -> persistence.
+         *
+         *     Rate-limit rejection (task-03) happens before this route ever runs (task brief's
+         *     implementation note) — this route assumes every request that reaches it is allowed to
+         *     proceed. See `_generate_chat_stream` for the full event-order/persistence contract.
+         */
+        post: operations["public_chat"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/public/content": {
         parameters: {
             query?: never;
@@ -362,6 +386,20 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /**
+         * ChatRequest
+         * @description `POST /public/chat`'s request body (PRD §5.3, exact field set).
+         *
+         *     `session_id` absent or referencing an unknown session both mean "start a new session" (§5.3)
+         *     — `app.services.chat.get_or_create_session` handles both cases identically once this schema
+         *     has parsed a syntactically valid UUID (or `None`) out of the request body.
+         */
+        ChatRequest: {
+            /** Message */
+            message: string;
+            /** Session Id */
+            session_id?: string | null;
+        };
         /**
          * ContentCreate
          * @description `POST /content`'s request body: a new draft (PRD §5.2, §4 slug rules).
@@ -1059,6 +1097,39 @@ export interface operations {
                     "application/json": {
                         [key: string]: string;
                     };
+                };
+            };
+        };
+    };
+    public_chat: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ChatRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
         };

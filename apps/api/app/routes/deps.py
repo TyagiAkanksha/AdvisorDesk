@@ -14,6 +14,8 @@ from sqlalchemy.orm import Session
 
 from app.auth.oauth import GoogleOAuthClient
 from app.config import Settings
+from app.rag.embeddings import Embedder
+from app.rag.synthesis import ChatLLM
 from app.services.lifecycle import ChunkPipeline
 
 
@@ -76,3 +78,40 @@ def get_chunk_pipeline(request: Request) -> ChunkPipeline:
     document here.
     """
     return cast(ChunkPipeline, request.app.state.chunk_pipeline)
+
+
+def get_chat_llm(request: Request) -> ChatLLM:
+    """Return the `ChatLLM` `create_app` stored on `app.state` (PRD §7.5 synthesis seam).
+
+    Raises:
+        RuntimeError: the app was built by `create_app()` without a `chat_llm` (a DB-less/
+            schema-only app, e.g. the OpenAPI baseline export) — mirrors `get_session`'s
+            fail-loud guard rather than silently dereferencing `None` at the first real call.
+    """
+    chat_llm = getattr(request.app.state, "chat_llm", None)
+    if chat_llm is None:
+        raise RuntimeError(
+            "get_chat_llm() requires app.state.chat_llm, but none was configured — this app "
+            "was built by create_app() without a chat_llm. Only app/main.py wires a real one."
+        )
+    return cast(ChatLLM, chat_llm)
+
+
+def get_embedder(request: Request) -> Embedder:
+    """Return the `Embedder` `create_app` stored on `app.state` (phase-4 task-02).
+
+    `app.rag.retrieval.retrieve()` needs a request-time `Embedder` to embed the user's question
+    — `create_app`'s `embedder` parameter is the injectable seam for it, mirroring `chat_llm`'s
+    own shape (test-author judgment call, controller-approved; `p4-t02-test-author.md`).
+
+    Raises:
+        RuntimeError: no `embedder` was configured — same fail-loud guard as `get_chat_llm`/
+            `get_session`.
+    """
+    embedder = getattr(request.app.state, "embedder", None)
+    if embedder is None:
+        raise RuntimeError(
+            "get_embedder() requires app.state.embedder, but none was configured — this app "
+            "was built by create_app() without an embedder. Only app/main.py wires a real one."
+        )
+    return cast(Embedder, embedder)

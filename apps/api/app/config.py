@@ -65,6 +65,13 @@ class Settings(BaseSettings):
     # its matching Alembic migration together.
     embedding_dimensions: int = 1024
 
+    # Chat-completion model for the client assistant's answer synthesis (PRD
+    # §7.5) and, later, the admin agent loop (§5.4) — both talk to the same
+    # NVIDIA NIM OpenAI-compatible endpoint (`llm_base_url` above). Pinned in
+    # the phase-4 plan (`docs/plans/phase-4-rag-assistant/`); `CHAT_MODEL`
+    # env-overridable per PRD §9 so a provider swap never touches code.
+    chat_model: str = "meta/llama-3.1-8b-instruct"
+
     # Not part of the PRD §9 env roster (phase-3 task-02 review round 1,
     # finding I1): the `openai` SDK's own defaults for an unconfigured
     # client are `read=600s` with `max_retries=2` (3 attempts total) — since

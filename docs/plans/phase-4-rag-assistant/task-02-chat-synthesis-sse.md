@@ -28,7 +28,10 @@ reuses and the event contract the chat UI (task-05) parses.
   `apps/api/app/services/chat.py`, `apps/api/app/models/schemas/chat.py`
 - Create: `apps/api/tests/test_public_chat.py`
 - Modify: `apps/api/app/routes/public_routes.py` (add the route), `apps/api/app/factory.py`
-  (LLM seam wiring), `apps/api/openapi.json` + both codegens
+  (LLM seam wiring), `apps/api/app/config.py` (add
+  `chat_model: str = "meta/llama-3.1-8b-instruct"` — the phase-4 pin, `CHAT_MODEL`
+  env-overridable per PRD §9), `.env.example` (document `CHAT_MODEL`),
+  `apps/api/openapi.json` + both codegens
 
 ## Interfaces
 
@@ -42,8 +45,13 @@ reuses and the event contract the chat UI (task-05) parses.
     covers this, suggest asking the advisory team, never answer from general knowledge; no
     personalized advice — "the firm's published guidance says…") ·
     `class ChatLLM(Protocol): def stream_answer(self, system: str, question: str,
-    sources: Sequence[RetrievedChunk]) -> Iterator[str]` · `OpenAIChatLLM` (gpt-4o-mini,
-    streaming). Factory param `chat_llm=None`; `app.state.chat_llm`.
+    sources: Sequence[RetrievedChunk]) -> Iterator[str]` · `OpenAICompatibleChatLLM` (v1.5 —
+    mirror `OpenAICompatibleEmbedder` exactly: `from_settings` classmethod building an `openai`
+    SDK client from `llm_base_url` + `nvidia_api_key` (same empty-key-boot-safe `"unset"`
+    fallback), `model=settings.chat_model`, streaming via standard
+    `chat.completions.create(stream=True)` — the chat path needs NO NVIDIA-specific
+    `extra_body`; provider errors logged, never enveloped, same as phase 3). Factory param
+    `chat_llm=None`; `app.state.chat_llm`.
   - `app.services.chat`: `get_or_create_session(session, session_id | None) -> ChatSession` ·
     `record_user_message(session, chat_session_id, text) -> ChatMessage` ·
     `record_assistant_message(session, chat_session_id, text, retrieval: RetrievalResult)

@@ -19,7 +19,9 @@ consumer.
 
 - `advisordesk-prd.md` §7.3 (read the "implementation trap" paragraph twice — `<=>` is
   DISTANCE), §7.4 (what must be recorded), §9 (the pin test is an explicit requirement).
-- `app/rag/embeddings.py` (phase-3) — the `Embedder` protocol for query embedding.
+- `app/rag/embeddings.py` (phase-3) — the `Embedder` protocol for query embedding. **v1.5: the
+  model is asymmetric; `retrieve()` MUST call `embedder.embed_texts([query],
+  input_type="query")` — never the `"passage"` default (that side is publish-time only).**
 - `CONVENTIONS.md` §3 (session-first), §10 (seams).
 
 ## Files
@@ -39,7 +41,9 @@ consumer.
     iff the index returned nothing (§7.4 semantics).
   - `retrieve(session, embedder, query: str, *, k: int = 6, threshold: float)
     -> RetrievalResult` — joins `chunks → content` (published, non-deleted — belt-and-braces on
-    top of the lifecycle guarantee).
+    top of the lifecycle guarantee). `threshold` is passed explicitly by the caller; the runtime
+    value is `Settings.similarity_threshold` (already exists, default 0.35 per §7.3 — task-02
+    wires it; this module never reads `Settings` itself).
   - `def similarity_from_distance(distance: float) -> float: return 1.0 - distance` — **the one
     place the conversion exists.**
 
@@ -60,7 +64,8 @@ consumer.
   so cosine distances are known): top-k ordering by similarity desc; threshold drops chunks below
   `threshold` but `top_similarity` still reports the best raw value; empty index →
   `RetrievalResult([], None)`; a chunk whose content was archived after embedding is excluded by
-  the join (belt-and-braces); k defaults to 6.
+  the join (belt-and-braces); k defaults to 6; **v1.5 query-side pin: the fake embedder records
+  its `input_type` kwarg and the test asserts `retrieve()` called it with `"query"`.**
 - [ ] **Step 3:** `uv run pytest tests/test_retrieval.py -q` → FAIL.
 - [ ] **Step 4: Implement** `retrieval.py` — the SQL orders by `embedding <=> :qvec` and converts
   via `similarity_from_distance` only; carries the §7.3 comment.

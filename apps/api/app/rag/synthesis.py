@@ -13,11 +13,13 @@ seams are injectable, never reached in tests). The real client is wired exactly 
 
 from __future__ import annotations
 
+import json
 import logging
 import uuid
 from collections.abc import Iterator, Sequence
 from typing import Protocol
 
+import httpx
 from openai import OpenAI, OpenAIError
 
 from app.config import Settings
@@ -46,12 +48,12 @@ __all__ = [
 SYSTEM_PROMPT = (
     "You are AdvisorDesk's client-facing assistant. Answer ONLY from the provided context "
     "chunks — never from general knowledge, even if you happen to know the answer. Cite every "
-    "claim with bracketed numbers like [1] and [2] that map to the numbered sources you were "
-    "given below the question. If the provided context does not contain the answer, say plainly "
-    "that no published guidance covers this, suggest the reader ask the advisory team, and do "
-    "not attempt to answer from general knowledge. Never give personalized financial advice — "
-    'frame every answer as "the firm\'s published guidance says...", not as advice tailored to '
-    "the reader."
+    "claim with bracketed numbers like [1] and [2] that map to the numbered sources listed in "
+    "the Context section above the question. If the provided context does not contain the "
+    "answer, say plainly that no published guidance covers this, suggest the reader ask the "
+    "advisory team, and do not attempt to answer from general knowledge. Never give "
+    "personalized financial advice — frame every answer as \"the firm's published guidance "
+    'says...", not as advice tailored to the reader.'
 )
 
 
@@ -174,9 +176,17 @@ class OpenAICompatibleChatLLM:
         via the standard `chat.completions.create(stream=True)`.
 
         Raises:
-            ChatCompletionFailedError: the provider call failed (any `openai.OpenAIError` — auth,
-                rate limit, connection, non-2xx, a mid-stream disconnect, ...). The raw provider
-                detail is logged for operators, never placed on the exception message (mirrors
+            ChatCompletionFailedError: the provider call failed, either at request time or
+                mid-stream (review round 1, finding I-2 — the previous `except OpenAIError` only
+                ever caught the former): any `openai.OpenAIError` (auth, rate limit, non-2xx, ...),
+                any `httpx.HTTPError` (a connection reset/timeout partway through an already-open
+                stream — `httpx.ReadError` is a subclass, probe P15), or a `json.JSONDecodeError`
+                from the SDK's own SSE decoder choking on a truncated/malformed chunk (probe P14).
+                Deliberately NOT a bare `except Exception` (CONVENTIONS.md §1: "no bare except
+                Exception — use the typed family"): these three named types are exactly the
+                provider-communication failure family this call can raise; anything else is a real
+                bug and should propagate unconverted. The raw provider detail is logged for
+                operators, never placed on the exception message (mirrors
                 `OpenAICompatibleEmbedder.embed_texts`'s same rule) — `from exc` still chains it
                 into the traceback for local debugging.
         """
@@ -197,7 +207,7 @@ class OpenAICompatibleChatLLM:
                 delta = chunk.choices[0].delta.content
                 if delta:
                     yield delta
-        except OpenAIError as exc:
+        except (OpenAIError, httpx.HTTPError, json.JSONDecodeError) as exc:
             # Mirrors `OpenAICompatibleEmbedder.embed_texts`'s M6 rule: the provider's raw
             # exception text (which can carry request/response detail not meant for an end user)
             # is logged for operators, never placed in `ChatCompletionFailedError.message` — the

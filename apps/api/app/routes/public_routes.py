@@ -23,16 +23,22 @@ treat them the same way.
 
 `public_chat` (phase-4 task-02, PRD §5.3, §7.5-§7.7) is the one exception to
 "routes contain no try/except": `_generate_chat_stream` (its SSE body
-generator) DOES catch — CONVENTIONS.md §4's "SSE errors use the same
-envelope" only makes sense as a manually-built `error` event inside the
-already-streaming body, since by the time `ChatLLM.stream_answer` can fail
-a 200 has already been sent and `register_error_handlers` never runs again
-for this request.
+generator) DOES catch, under CONVENTIONS.md §4's explicit outermost-SSE-
+generator carve-out (review round 1, finding C-1) — a manually-built
+`error` event is the only way to report a failure once the 200 has already
+been sent, since `register_error_handlers` never runs again for this
+request. Review round 1, finding I-1: the WHOLE exchange (session lookup,
+user-message write, retrieval, synthesis, assistant-message write) lives
+inside that one `try`, not just the LLM call — a pre-token failure (e.g. the
+embedding provider call inside `retrieve()`) must also produce an `error`
+event, not an unhandled `RuntimeError` from FastAPI ("response already
+started") and a dead connection.
 """
 
 from __future__ import annotations
 
 import logging
+import uuid
 from collections.abc import Iterator
 from datetime import datetime
 from typing import cast
@@ -53,6 +59,7 @@ from app.routes.deps import get_chat_llm, get_embedder, get_session, get_setting
 from app.routes.sse import sse_event, sse_response
 from app.services import content as content_service
 from app.services.chat import get_or_create_session, record_assistant_message, record_user_message
+from app.services.errors import AppError
 from app.services.tags import tags_for_contents
 
 logger = logging.getLogger(__name__)
@@ -144,62 +151,100 @@ def _generate_chat_stream(
     """Yield the §5.3 SSE body for one `/public/chat` exchange (PRD §7.6-§7.7, §4).
 
     Success order: one or more `token` events, then exactly one `citations` event, then exactly
-    one `done` event. On an LLM failure mid-stream: whatever `token` events already went out,
-    then exactly one `error` event and nothing further (CONVENTIONS.md §4: SSE errors use the §9
-    envelope, built by hand here since a 200 has already been sent by the time this can fail).
+    one `done` event. On ANY failure anywhere in the exchange — a DB error creating the session,
+    the embedding provider call inside `retrieve()`, or the chat-completion call itself, at
+    request time or mid-stream — whatever `token` events already went out, then exactly one
+    `error` event and nothing further (CONVENTIONS.md §4's outermost-SSE-generator carve-out:
+    a manually-built §9 envelope, since a 200 has already been sent by the time any of this can
+    fail and `register_error_handlers` can no longer run). Review round 1, finding I-1: the ENTIRE
+    body below — not just the `chat_llm.stream_answer` loop — lives inside the one `try`, so a
+    pre-token failure (the single most likely real-world case: the embedding provider rejecting a
+    rotated/expired `NVIDIA_API_KEY`) also produces this `error` event instead of an unhandled
+    `RuntimeError: Caught handled exception, but response already started.` and a dead connection.
 
-    The user's message is persisted and COMMITTED before retrieval/synthesis ever runs — not just
-    flushed. Two independent reasons: (1) PRD §9 error handling — the user's message must survive
-    an LLM failure that happens after this point, and (2) `created_at`'s server default is
-    Postgres' TRANSACTION timestamp (`now()` == `transaction_timestamp()`, constant for the whole
-    transaction — see `app.services.content.list_content`'s own `created_at`-tie comment for the
-    same fact in a different context). Without committing here, the user row and the assistant
-    row written after streaming completes would land in the SAME transaction and get the exact
-    same `created_at`, leaving `tests/test_public_chat.py`'s plain `ORDER BY created_at` (the
-    column carries no tiebreaker on its own, unlike `list_content`'s `.id.desc()` fallback)
-    genuinely nondeterministic between the two rows. This does not violate CONVENTIONS.md §3
-    ("services never commit") — `app.services.chat`'s functions still only `flush()`; this commit
-    lives in the route layer, which already owns the transaction boundary for this request
-    (`app.routes.deps.get_session` normally owns it alone, but a route is free to commit early
-    when it has a documented reason to, same as it would be free to for any other request).
+    The user's message is persisted and COMMITTED right after it's written — not just flushed —
+    before retrieval/synthesis ever runs. Two independent reasons: (1) PRD §9 error handling — the
+    user's message must survive any failure that happens after this point, and (2) `created_at`'s
+    server default is Postgres' TRANSACTION timestamp (`now()` == `transaction_timestamp()`,
+    constant for the whole transaction — see `app.services.content.list_content`'s own
+    `created_at`-tie comment for the same fact in a different context). Without committing here,
+    the user row and the assistant row written after streaming completes would land in the SAME
+    transaction and get the exact same `created_at`, leaving `tests/test_public_chat.py`'s plain
+    `ORDER BY created_at` (the column carries no tiebreaker on its own, unlike `list_content`'s
+    `.id.desc()` fallback) genuinely nondeterministic between the two rows. The assistant row is
+    committed the same way, immediately after it's written (review round 1, finding M-6) — so a
+    `done` event is never sent for a row that turned out not to survive a commit failure, and
+    `record_assistant_message`'s own `flush()` is never redundantly repeated here. Neither commit
+    violates CONVENTIONS.md §3 ("services never commit") — `app.services.chat`'s functions still
+    only `flush()`; both commits live in the route layer, which already owns the transaction
+    boundary for this request (`app.routes.deps.get_session` normally owns it alone, but a route
+    is free to commit early when it has a documented reason to, same as it would be free to for
+    any other request). On the error path, `session.rollback()` clears any partial state left by
+    the failure before this generator returns — otherwise `get_session`'s own end-of-request
+    `commit()` (which still runs: the exception is caught here, never re-raised) could itself
+    raise on an already-poisoned transaction.
     """
-    chat_session = get_or_create_session(session, body.session_id)
-    record_user_message(session, chat_session.id, body.message)
-    session.commit()
-
-    retrieval = retrieve(session, embedder, body.message, threshold=settings.similarity_threshold)
-
+    chat_session_id: uuid.UUID | None = None
     tokens: list[str] = []
     try:
+        chat_session = get_or_create_session(session, body.session_id)
+        chat_session_id = chat_session.id
+        record_user_message(session, chat_session.id, body.message)
+        session.commit()
+
+        retrieval = retrieve(
+            session, embedder, body.message, threshold=settings.similarity_threshold
+        )
+
         for token in chat_llm.stream_answer(SYSTEM_PROMPT, body.message, retrieval.chunks):
             tokens.append(token)
             yield sse_event("token", {"text": token})
-    except Exception as exc:
-        # Broad by design: this must catch anything `ChatLLM.stream_answer` can raise, real
-        # (`app.rag.synthesis.ChatCompletionFailedError`) or fake (a test double's own exception
-        # type) — the fixed, generic envelope below never depends on which.
-        logger.warning("chat synthesis failed mid-stream for session %s: %s", chat_session.id, exc)
-        yield sse_event(
-            "error",
-            {"error": {"code": _CHAT_STREAM_ERROR_CODE, "message": _CHAT_STREAM_ERROR_MESSAGE}},
+
+        answer_text = "".join(tokens)
+        assistant_message = record_assistant_message(
+            session, chat_session.id, answer_text, retrieval
         )
+        session.commit()
+
+        # PRD §4 citation asymmetry, wire half: deduped to content level (§5.3) right here, right
+        # before it goes over the wire — the DB row just written above kept the chunk-level shape
+        # (`app.services.chat.record_assistant_message`'s own comment is the other half).
+        citations = dedupe_citations(retrieval.chunks)
+        yield sse_event("citations", {"citations": citations})
+        yield sse_event(
+            "done", {"session_id": str(chat_session.id), "message_id": str(assistant_message.id)}
+        )
+    except Exception as exc:
+        # Broad by design (CONVENTIONS.md §4 carve-out): this must catch anything raised anywhere
+        # in the exchange above — a DB error, `EmbeddingFailedError` from `retrieve()`, the real
+        # `ChatCompletionFailedError`, or (in tests) a fake's own exception type. Review round 1,
+        # finding M-7: when the exception is a typed `AppError` (real production failures always
+        # are — `EmbeddingFailedError`/`ChatCompletionFailedError` both carry a `.code`), that code
+        # reaches the wire instead of being silently discarded; anything else (e.g. a test
+        # double's plain `RuntimeError`) falls back to the generic code below. The MESSAGE is
+        # always the fixed, generic string, regardless — raw provider/DB detail is logged for
+        # operators, never enveloped.
+        logger.warning("chat stream failed for session %s: %s", chat_session_id, exc)
+        session.rollback()
+        code = exc.code if isinstance(exc, AppError) else _CHAT_STREAM_ERROR_CODE
+        yield sse_event("error", {"error": {"code": code, "message": _CHAT_STREAM_ERROR_MESSAGE}})
         return
 
-    answer_text = "".join(tokens)
-    assistant_message = record_assistant_message(session, chat_session.id, answer_text, retrieval)
-    session.flush()
 
-    # PRD §4 citation asymmetry, wire half: deduped to content level (§5.3) right here, right
-    # before it goes over the wire — the DB row just written above kept the chunk-level shape
-    # (`app.services.chat.record_assistant_message`'s own comment is the other half).
-    citations = dedupe_citations(retrieval.chunks)
-    yield sse_event("citations", {"citations": citations})
-    yield sse_event(
-        "done", {"session_id": str(chat_session.id), "message_id": str(assistant_message.id)}
-    )
-
-
-@router.post("/public/chat", operation_id="public_chat")
+@router.post(
+    "/public/chat",
+    operation_id="public_chat",
+    response_class=StreamingResponse,
+    responses={
+        200: {
+            "description": (
+                "SSE stream (PRD §5.3): `token` (repeated), `citations`, `done` on success, or "
+                "`error` on failure."
+            ),
+            "content": {"text/event-stream": {"schema": {"type": "string"}}},
+        },
+    },
+)
 def public_chat(
     body: ChatRequest,
     session: Session = Depends(get_session),
@@ -212,5 +257,14 @@ def public_chat(
     Rate-limit rejection (task-03) happens before this route ever runs (task brief's
     implementation note) — this route assumes every request that reaches it is allowed to
     proceed. See `_generate_chat_stream` for the full event-order/persistence contract.
+
+    Review round 1, finding M-2: without `response_class=StreamingResponse` +
+    the explicit `200` `responses=` content override above, FastAPI's OpenAPI export defaults to
+    an empty-schema `application/json` entry for this status (its generic default-`response_class`
+    behavior, since this route sets no `response_model`) — wrong for an endpoint that only ever
+    returns `text/event-stream`. `response_class=StreamingResponse` alone suppresses that default
+    (`StreamingResponse.media_type` is `None` at the class level, so FastAPI's auto-schema branch
+    never fires); the `responses=` override then supplies the real media type both frontend
+    codegens read.
     """
     return sse_response(_generate_chat_stream(session, chat_llm, embedder, settings, body))

@@ -97,7 +97,12 @@ no contract forbids the import.
   and the PRD §9 envelope `{"error": {"code", "message"}}` exactly once. The same envelope is used
   inside SSE `error` events.
 - **Routes contain no `try/except`.** Rollback happens in the session dependency; mapping happens
-  in the registered handlers.
+  in the registered handlers. Carve-out: the outermost SSE stream generator (e.g.
+  `app.routes.public_routes._generate_chat_stream`) MAY catch `Exception` solely to convert an
+  in-stream failure into the §9 `error` event — raw detail logged, never enveloped — because by
+  the time it can fail a 200 has already been sent and the registered handlers can no longer run;
+  nothing broader than that one generator-body catch is exempted by this carve-out (phase-4
+  task-02 review round 1, finding C-1; phase-5's `/agent/chat` reuses the identical shape).
 
 ## 5. App construction
 

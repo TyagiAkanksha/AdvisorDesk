@@ -286,6 +286,15 @@ export interface paths {
          *     Rate-limit rejection (task-03) happens before this route ever runs (task brief's
          *     implementation note) — this route assumes every request that reaches it is allowed to
          *     proceed. See `_generate_chat_stream` for the full event-order/persistence contract.
+         *
+         *     Review round 1, finding M-2: without `response_class=StreamingResponse` +
+         *     the explicit `200` `responses=` content override above, FastAPI's OpenAPI export defaults to
+         *     an empty-schema `application/json` entry for this status (its generic default-`response_class`
+         *     behavior, since this route sets no `response_model`) — wrong for an endpoint that only ever
+         *     returns `text/event-stream`. `response_class=StreamingResponse` alone suppresses that default
+         *     (`StreamingResponse.media_type` is `None` at the class level, so FastAPI's auto-schema branch
+         *     never fires); the `responses=` override then supplies the real media type both frontend
+         *     codegens read.
          */
         post: operations["public_chat"];
         delete?: never;
@@ -393,6 +402,13 @@ export interface components {
          *     `session_id` absent or referencing an unknown session both mean "start a new session" (§5.3)
          *     — `app.services.chat.get_or_create_session` handles both cases identically once this schema
          *     has parsed a syntactically valid UUID (or `None`) out of the request body.
+         *
+         *     `message` is `min_length=1` plus a whitespace-only rejection (review round 1, finding M-5) —
+         *     mirrors `app.models.schemas.content.ContentCreate.title`'s established two-guard pattern
+         *     exactly: `min_length=1` alone still lets a whitespace-only string (`"   "`) through, since
+         *     Pydantic's length check counts characters, not content. An empty/blank message would otherwise
+         *     still burn an LLM call and a §9 rate-limit slot, and poison phase-7's `report_content_gaps`
+         *     with empty "questions" (probe P7).
          */
         ChatRequest: {
             /** Message */
@@ -1114,13 +1130,13 @@ export interface operations {
             };
         };
         responses: {
-            /** @description Successful Response */
+            /** @description SSE stream (PRD §5.3): `token` (repeated), `citations`, `done` on success, or `error` on failure. */
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "text/event-stream": string;
                 };
             };
             /** @description Unprocessable Entity */

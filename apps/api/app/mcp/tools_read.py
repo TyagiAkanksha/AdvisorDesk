@@ -18,7 +18,7 @@ from __future__ import annotations
 import uuid
 from typing import Any
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.orm import Session
 
 from app.mcp.tool_spec import ToolSpec
@@ -27,15 +27,31 @@ from app.services.tags import tags_for_contents
 
 # PRD §6: `search_content(q?, status?, tag?, limit=10)`.
 _DEFAULT_SEARCH_LIMIT = 10
+# Fix round 1, finding I4: `limit` had no domain bounds — `limit=-1` escaped Pydantic validation
+# and crashed as an unhandled `sqlalchemy.exc.DataError` (`LIMIT must not be negative`) rather
+# than a `ToolInputError`; `limit=0` silently returned an empty page; an unbounded upper value let
+# a caller request an unbounded result set into its own (or the model's) context window. 100 is a
+# disclosed, deliberately generous cap — ten times the default — chosen to comfortably cover any
+# legitimate `search_content` call while still bounding worst-case response size; a caller that
+# needs more should paginate via repeated calls rather than one unbounded one.
+_MAX_SEARCH_LIMIT = 100
 
 
 class SearchContentArgs(BaseModel):
     """`search_content`'s arguments (PRD §6): metadata search — title/tag/status, not vector."""
 
+    # Fix round 1, finding I5: `extra="forbid"` so a misspelled/unknown argument (e.g. `limitt`,
+    # `query`) raises `ToolInputError` naming the field, instead of Pydantic v2's default
+    # `extra="ignore"` silently dropping it — for a human REST caller that's a shrug, but for an
+    # LLM caller (the entire point of this tool) a silently-ignored filter is a wrong-answer
+    # generator with no signal to self-correct on. Also emits `additionalProperties: false` into
+    # the exported `mcp-tools.json` schema, so the model's own tool definition tells it the truth.
+    model_config = ConfigDict(extra="forbid")
+
     q: str | None = None
     status: str | None = None
     tag: str | None = None
-    limit: int = _DEFAULT_SEARCH_LIMIT
+    limit: int = Field(default=_DEFAULT_SEARCH_LIMIT, ge=1, le=_MAX_SEARCH_LIMIT)
 
 
 def _search_content(
@@ -75,6 +91,9 @@ def _search_content(
 
 class CountContentArgs(BaseModel):
     """`count_content`'s arguments (PRD §6): `status`/`tag`, both optional."""
+
+    # Fix round 1, finding I5 (see `SearchContentArgs.model_config` for the full reasoning).
+    model_config = ConfigDict(extra="forbid")
 
     status: str | None = None
     tag: str | None = None

@@ -11,15 +11,21 @@ behind the same `require_admin` dependency every REST admin route uses
 (PRD §3 exposure rule — "the MCP route requires the same admin session auth
 as §5.2"), mounting the official `mcp` SDK's streamable-HTTP transport, not
 a stub.
+
+Fix round 1 (Opus review of commit 08dd82a, findings C1/C2/I1/I2/I3): see
+`_execute_tool_call`, `_AdminGatedMcpApp.__call__`, and `mount_mcp_http` for
+the specifics of each fix.
 """
 
 from __future__ import annotations
 
 import json
+import logging
 import uuid
 from contextvars import ContextVar
-from typing import cast
+from typing import Any, cast
 
+import anyio.to_thread
 import mcp_types as types
 from fastapi import FastAPI
 from mcp.server.context import ServerRequestContext
@@ -27,23 +33,30 @@ from mcp.server.lowlevel import Server
 from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
 from sqlalchemy.orm import Session, sessionmaker
 from starlette.requests import Request
+from starlette.routing import Route
 from starlette.types import Receive, Scope, Send
 
 from app.auth.deps import require_admin
 from app.mcp.runtime import call_tool, list_tool_schemas
-from app.services.errors import ToolInputError, ToolNotFoundError
+from app.services.errors import AppError
 
 _SERVER_NAME = "advisordesk-mcp"
+
+logger = logging.getLogger(__name__)
 
 # Set by `_AdminGatedMcpApp.__call__` for the duration of exactly one HTTP request, read by
 # `_handle_call_tool` below. Judgment call (task-01 implementer report): the low-level `Server`'s
 # `on_call_tool` hook is registered once at server-build time and has no other route to the
-# request-scoped `Session`/admin identity `require_admin` resolves per call — a `ContextVar`
-# bound right before delegating into the SDK's request handling, and reset in the same
-# request's `finally`, is the narrowest seam that doesn't thread a session through the SDK's own
-# handler-signature contract (`Callable[[ServerRequestContext, ...], Awaitable[...]]`, which this
-# codebase doesn't own).
-_request_context: ContextVar[tuple[Session, uuid.UUID] | None] = ContextVar(
+# request-scoped identity `require_admin` resolves per call — a `ContextVar` bound right before
+# delegating into the SDK's request handling, and reset in the same request's `finally`, is the
+# narrowest seam that doesn't thread state through the SDK's own handler-signature contract
+# (`Callable[[ServerRequestContext, ...], Awaitable[...]]`, which this codebase doesn't own).
+#
+# Fix round 1, finding C1: holds a `sessionmaker`, not an open `Session` — the request no longer
+# opens one session and holds it across the whole HTTP request/`await` boundary. Each tool call
+# opens (and closes) its own session, scoped to exactly the synchronous span that needs it, inside
+# a worker thread (`_execute_tool_call`).
+_request_context: ContextVar[tuple[sessionmaker[Session], uuid.UUID] | None] = ContextVar(
     "app_mcp_server_request_context", default=None
 )
 
@@ -75,34 +88,89 @@ async def _handle_list_tools(
     return types.ListToolsResult(tools=tools)
 
 
+def _tool_error_result(code: str, message: str) -> types.CallToolResult:
+    """Build an in-band `CallToolResult(is_error=True)` carrying a structured `{code, message}`.
+
+    Fix round 1, finding I3: PRD §6 "surface the error to the model once for self-correction"
+    means every business error (`NotFoundError`, `ConflictError`, ... — the full `AppError`
+    family, not just `ToolNotFoundError`/`ToolInputError`) must reach the model in-band, not as a
+    transport-level exception. `{code, message}` (JSON-encoded into the `TextContent`) mirrors the
+    PRD §9 REST envelope shape (`app/routes/errors.py`'s `{"error": {"code", "message"}}`) so a
+    model that has already learned to read one error shape recognizes the other.
+    """
+    payload = json.dumps({"code": code, "message": message})
+    return types.CallToolResult(
+        content=[types.TextContent(type="text", text=payload)], is_error=True
+    )
+
+
+def _execute_tool_call(
+    session_factory: sessionmaker[Session],
+    name: str,
+    arguments: dict[str, Any],
+    actor_id: uuid.UUID,
+) -> types.CallToolResult:
+    """Run one tool call to completion — session open, `call_tool`, commit/rollback, close.
+
+    Fix round 1: this whole function is the synchronous span `_handle_call_tool` offloads to a
+    worker thread (finding C1) — the seam is a plain sync function precisely so it has a single,
+    obvious boundary to hand to `anyio.to_thread.run_sync`.
+
+    The commit/rollback decision is made HERE, in-band with whether `call_tool` actually raised —
+    never by relying on an exception escaping `manager.handle_request()` (finding C2: the SDK's
+    JSON-RPC dispatcher catches a handler exception, converts it to a JSON-RPC error, and returns
+    `handle_request` normally, so a `try/except` wrapped around that await never observes a failed
+    tool call; `session.commit()` fired even after a failing handler under the previous design).
+
+    `AppError` (finding I3) — `ToolNotFoundError`/`ToolInputError` from `call_tool` itself, and any
+    business error a tool's service call raises (`NotFoundError`, `ConflictError`, ...) — becomes a
+    structured in-band tool error. Any other exception (finding I2) is logged with full detail
+    server-side only and answered with a generic message, matching
+    `app/routes/errors.py::_unhandled_exception_handler`'s "never `str(exc)` to the caller"
+    invariant — an uncaught driver/DB error must not hand SQL text or bind parameters to an MCP
+    client the way `str(exc)` would.
+    """
+    session = session_factory()
+    try:
+        result = call_tool(name, arguments, session=session, actor_id=actor_id)
+    except AppError as exc:
+        session.rollback()
+        return _tool_error_result(exc.code, str(exc))
+    except Exception:
+        session.rollback()
+        logger.exception("Unhandled exception executing MCP tool %r", name)
+        return _tool_error_result("internal_error", "Internal server error.")
+    else:
+        session.commit()
+        return types.CallToolResult(
+            content=[types.TextContent(type="text", text=json.dumps(result))]
+        )
+    finally:
+        session.close()
+
+
 async def _handle_call_tool(
     ctx: ServerRequestContext[dict[str, object]],
     params: types.CallToolRequestParams,
 ) -> types.CallToolResult:
-    """MCP `tools/call`: dispatches through `app.mcp.runtime.call_tool` using the bound request
-    context (`_request_context`, set by `_AdminGatedMcpApp` before the SDK ever reaches this
-    handler).
+    """MCP `tools/call`: dispatch to `_execute_tool_call` on a worker thread.
 
-    PRD §6: "on a tool error, surface the error to the model once for self-correction" — a
-    `ToolNotFoundError`/`ToolInputError` is reported as an `is_error=True` `CallToolResult`
-    (an in-band MCP tool error the calling model/client sees), not raised as a transport-level
-    exception, which the MCP spec reserves for "the tool itself couldn't be dispatched at all"
-    (module `CallToolResult` docstring: "errors that originate from the tool SHOULD be reported
-    inside the result... so the LLM can see and self-correct").
+    Fix round 1, finding C1: the previous body called `app.mcp.runtime.call_tool` (synchronous
+    SQLAlchemy work) directly inline on this coroutine, which runs on the uvicorn event loop —
+    one slow tool call froze every other request the process was serving (measured: a 3s tool call
+    stalled `/health` for 2.2s; 20 concurrent MCP calls against a 15-connection pool left 19 stuck
+    on a synchronous pool checkout that only the blocked event-loop thread could ever resolve).
+    `anyio.to_thread.run_sync` moves the whole span — session open, `call_tool`, commit/rollback,
+    close — onto a worker thread, mirroring how FastAPI itself runs `def` (non-`async def`) route
+    handlers off the loop for exactly this reason.
     """
     bound = _request_context.get()
     if bound is None:  # pragma: no cover - defensive; `_AdminGatedMcpApp` always binds first
         raise RuntimeError("MCP call_tool invoked with no bound request context.")
-    session, actor_id = bound
-    try:
-        result = call_tool(
-            params.name, dict(params.arguments or {}), session=session, actor_id=actor_id
-        )
-    except (ToolNotFoundError, ToolInputError) as exc:
-        return types.CallToolResult(
-            content=[types.TextContent(type="text", text=str(exc))], is_error=True
-        )
-    return types.CallToolResult(content=[types.TextContent(type="text", text=json.dumps(result))])
+    session_factory, actor_id = bound
+    return await anyio.to_thread.run_sync(
+        _execute_tool_call, session_factory, params.name, dict(params.arguments or {}), actor_id
+    )
 
 
 class _AdminGatedMcpApp:
@@ -127,35 +195,39 @@ class _AdminGatedMcpApp:
         self._server = server
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
-        """Gate on `require_admin`, bind a request-scoped `Session`+actor, then dispatch.
+        """Gate on `require_admin`, bind a request-scoped session factory + actor, then dispatch.
 
-        `require_admin` runs first and un-wrapped, so an unauthenticated call never opens a
-        session or starts the transport (§3 pin: state 2 stays DB-less, mirroring every REST
-        admin route). A raised `AuthRequiredError` propagates out of this ASGI callable
-        uncaught, through the app's normal exception-handling middleware
-        (`app.routes.errors.register_error_handlers`), the same path any `Depends(require_admin)`
-        route failure takes — CONVENTIONS.md §4's "routes contain no try/except" extends here:
-        this mount has no try/except around the auth check either.
+        `require_admin` runs first, so an unauthenticated call never binds a session factory or
+        starts the transport (§3 pin: state 2 stays DB-less, mirroring every REST admin route). A
+        raised `AuthRequiredError` propagates out of this ASGI callable uncaught, through the app's
+        normal exception-handling middleware (`app.routes.errors.register_error_handlers`), the
+        same path any `Depends(require_admin)` route failure takes — CONVENTIONS.md §4's "routes
+        contain no try/except" extends here: this mount has no try/except around the auth check
+        either.
+
+        Fix round 1, finding C1: `require_admin` itself runs a synchronous DB query
+        (`app/auth/deps.py`) — offloaded to a worker thread the same way tool execution is
+        (`_handle_call_tool`), so this coroutine never blocks the event loop either.
+
+        Fix round 1, finding C1 (session scoping): no `Session` is opened here at all — only a
+        `sessionmaker` reference is bound to `_request_context`. `tools/list`/`initialize`
+        HTTP requests (which touch no database) now never open a connection; a `tools/call`
+        request opens one only for the duration of `_execute_tool_call`'s worker-thread span,
+        never held across an `await`.
         """
         request = Request(scope, receive=receive)
-        principal = require_admin(request)
+        principal = await anyio.to_thread.run_sync(require_admin, request)
 
         session_factory = cast(sessionmaker[Session], request.app.state.session_factory)
-        session = session_factory()
-        token = _request_context.set((session, principal.user_id))
+        token = _request_context.set((session_factory, principal.user_id))
         try:
             manager = StreamableHTTPSessionManager(
                 app=self._server, stateless=True, json_response=True
             )
             async with manager.run():
                 await manager.handle_request(scope, receive, send)
-            session.commit()
-        except Exception:
-            session.rollback()
-            raise
         finally:
             _request_context.reset(token)
-            session.close()
 
 
 def mount_mcp_http(app: FastAPI, *, path: str) -> None:
@@ -165,8 +237,23 @@ def mount_mcp_http(app: FastAPI, *, path: str) -> None:
     (the default), this is never called and `path` simply doesn't exist (§3 exposure rule,
     state 1: a plain 404, not a deliberate guard here).
 
+    Fix round 1, finding I1: Starlette's `Mount` compiles its match regex as
+    `path + "/{path:path}"` (`starlette.routing.Mount.__init__`), which requires a literal `/`
+    immediately after `path` — a bare request to `path` itself (no trailing segment) never matches
+    `Mount`, so Starlette's router 307-redirects it to `path + "/"` before `require_admin` ever
+    runs. An external client that doesn't auto-follow redirects (plain `httpx`/`requests`
+    defaults, `curl` without `-L`, a browser `fetch`) gets a bodyless 307 instead of the MCP
+    endpoint the controller pinned at exactly `path`. Registering an exact-match `Route` at `path`
+    too closes the gap: Starlette treats a non-function/-method `endpoint` as already ASGI-shaped
+    (`Route.__init__`: `self.app = endpoint` when `endpoint` isn't `inspect.isfunction`/
+    `inspect.ismethod`), so the same `_AdminGatedMcpApp` instance is called the same way, with no
+    method restriction (`methods=None`, matching `Mount`'s own no-method-restriction behavior) —
+    `path` now answers directly, and `path + "/..."` still goes through `Mount` exactly as before.
+
     Args:
         app: the `FastAPI` app under construction.
         path: the full path to mount at (`factory.py` passes `/api/v1/mcp`).
     """
-    app.mount(path, _AdminGatedMcpApp(build_mcp_server()))
+    gated_app = _AdminGatedMcpApp(build_mcp_server())
+    app.router.routes.append(Route(path, endpoint=gated_app, name="mcp_http_bare_path"))
+    app.mount(path, gated_app)

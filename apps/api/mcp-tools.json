@@ -2,10 +2,13 @@
   {
     "description": "Metadata search over CMS content (title/tag/status \u2014 not vector search). Returns matching items and the total match count.",
     "inputSchema": {
+      "additionalProperties": false,
       "description": "`search_content`'s arguments (PRD \u00a76): metadata search \u2014 title/tag/status, not vector.",
       "properties": {
         "limit": {
           "default": 10,
+          "maximum": 100,
+          "minimum": 1,
           "title": "Limit",
           "type": "integer"
         },
@@ -54,6 +57,7 @@
   {
     "description": "Count non-deleted content, optionally filtered by status and/or tag.",
     "inputSchema": {
+      "additionalProperties": false,
       "description": "`count_content`'s arguments (PRD \u00a76): `status`/`tag`, both optional.",
       "properties": {
         "status": {

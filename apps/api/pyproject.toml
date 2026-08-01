@@ -15,6 +15,7 @@ dependencies = [
     "httpx>=0.28.1",
     "tiktoken>=0.13.0",
     "openai>=2.51.0",
+    "pyyaml>=6.0.3",
 ]
 
 [dependency-groups]
@@ -23,6 +24,7 @@ dev = [
     "ruff",
     "mypy",
     "import-linter",
+    "types-pyyaml>=6.0.12.20260724",
 ]
 
 [build-system]
@@ -132,6 +134,7 @@ source_modules = [
     "app.models",
     "app.config",
     "app.db",
+    "app.seed",
 ]
 forbidden_modules = ["app.main", "app.factory"]
 

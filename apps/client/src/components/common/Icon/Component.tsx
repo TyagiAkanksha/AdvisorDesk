@@ -5,6 +5,7 @@ import CloseIcon from '@mui/icons-material/Close';
 import DashboardIcon from '@mui/icons-material/Dashboard';
 import DeleteIcon from '@mui/icons-material/Delete';
 import EditIcon from '@mui/icons-material/Edit';
+import InfoOutlinedIcon from '@mui/icons-material/InfoOutlined';
 import LogoutIcon from '@mui/icons-material/Logout';
 import MenuIcon from '@mui/icons-material/Menu';
 import SearchIcon from '@mui/icons-material/Search';
@@ -14,6 +15,7 @@ import type { IconProps } from './interface';
 // Explicit registry, NOT `import * as icons from '@mui/icons-material'` (see interface.ts
 // for why). Add a named import above + an entry here when a screen needs an icon that
 // isn't listed yet — `IconProps['name']` tracks this object automatically via `keyof typeof`.
+// `Info` added task-05 review round 1 (I-1): the refusal bubble's visual marker.
 export const ICONS = {
   Add: AddIcon,
   Article: ArticleIcon,
@@ -22,6 +24,7 @@ export const ICONS = {
   Dashboard: DashboardIcon,
   Delete: DeleteIcon,
   Edit: EditIcon,
+  Info: InfoOutlinedIcon,
   Logout: LogoutIcon,
   Menu: MenuIcon,
   Search: SearchIcon,

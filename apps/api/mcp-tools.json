@@ -1,0 +1,89 @@
+[
+  {
+    "description": "Metadata search over CMS content (title/tag/status \u2014 not vector search). Returns matching items and the total match count.",
+    "inputSchema": {
+      "description": "`search_content`'s arguments (PRD \u00a76): metadata search \u2014 title/tag/status, not vector.",
+      "properties": {
+        "limit": {
+          "default": 10,
+          "title": "Limit",
+          "type": "integer"
+        },
+        "q": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Q"
+        },
+        "status": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Status"
+        },
+        "tag": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Tag"
+        }
+      },
+      "title": "SearchContentArgs",
+      "type": "object"
+    },
+    "name": "search_content"
+  },
+  {
+    "description": "Count non-deleted content, optionally filtered by status and/or tag.",
+    "inputSchema": {
+      "description": "`count_content`'s arguments (PRD \u00a76): `status`/`tag`, both optional.",
+      "properties": {
+        "status": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Status"
+        },
+        "tag": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Tag"
+        }
+      },
+      "title": "CountContentArgs",
+      "type": "object"
+    },
+    "name": "count_content"
+  }
+]

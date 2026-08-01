@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from app.auth.oauth import GoogleOAuthClient
 from app.config import Settings
+from app.mcp.server import mount_mcp_http
 from app.rag.embeddings import Embedder
 from app.rag.synthesis import ChatLLM
 from app.routes.auth_routes import router as auth_router
@@ -133,5 +134,11 @@ def create_app(
     app.include_router(auth_router, prefix=_API_PREFIX)
     app.include_router(content_router, prefix=_API_PREFIX)
     app.include_router(public_router, prefix=_API_PREFIX)
+
+    # PRD §3 MCP exposure rule: OFF by default: the route doesn't exist at all unless
+    # explicitly enabled, and even then sits behind the same `require_admin` gate as every
+    # REST admin route (`app.mcp.server.mount_mcp_http`, phase-5 task-01).
+    if resolved_settings.mcp_http_enabled:
+        mount_mcp_http(app, path=f"{_API_PREFIX}/mcp")
 
     return app

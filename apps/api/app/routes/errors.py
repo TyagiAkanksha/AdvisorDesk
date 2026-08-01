@@ -32,6 +32,8 @@ from app.services.errors import (
     NotFoundError,
     OAuthExchangeError,
     RateLimitedError,
+    ToolInputError,
+    ToolNotFoundError,
 )
 
 # PRD §9 envelope status mapping, per task-03 brief: NotFoundError->404,
@@ -41,6 +43,11 @@ from app.services.errors import (
 # OAuthExchangeError->502 added by the phase-2 final review (finding C-3 /
 # t01 M14): a Google-side OAuth exchange failure, same "upstream dependency
 # failed" status as EmbeddingFailedError.
+# ToolNotFoundError->404 / ToolInputError->422 added by phase-5 task-01: the same statuses
+# NotFoundError/`RequestValidationError` already use for the equivalent REST-side failures
+# (unknown resource; caller-supplied structured input that doesn't validate) — an MCP tool
+# call reuses both statuses rather than inventing new ones, per the task-01 brief's "choose
+# sensible ones" instruction.
 _STATUS_BY_ERROR: dict[type[AppError], int] = {
     NotFoundError: 404,
     ConflictError: 409,
@@ -49,6 +56,8 @@ _STATUS_BY_ERROR: dict[type[AppError], int] = {
     RateLimitedError: 429,
     EmbeddingFailedError: 502,
     OAuthExchangeError: 502,
+    ToolNotFoundError: 404,
+    ToolInputError: 422,
 }
 
 

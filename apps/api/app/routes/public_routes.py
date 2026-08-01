@@ -179,10 +179,17 @@ def _generate_chat_stream(
     only `flush()`; both commits live in the route layer, which already owns the transaction
     boundary for this request (`app.routes.deps.get_session` normally owns it alone, but a route
     is free to commit early when it has a documented reason to, same as it would be free to for
-    any other request). On the error path, `session.rollback()` clears any partial state left by
-    the failure before this generator returns — otherwise `get_session`'s own end-of-request
-    `commit()` (which still runs: the exception is caught here, never re-raised) could itself
-    raise on an already-poisoned transaction.
+    any other request).
+
+    On the error path, the `error` event is yielded BEFORE `session.rollback()` runs (review
+    round 2, finding N-1 — reordered from round 1's rollback-then-yield): probe RR-P7 showed that
+    if the rollback itself raises — reachable exactly when the DB is the thing that failed, i.e.
+    one of the failure classes I-1 widened this `try` to cover — a rollback-first ordering lets
+    that second exception escape the generator and reproduces I-1's original failure mode (a dead
+    connection with no `error` event ever sent). The client's envelope must never depend on the
+    health of a connection that just failed, so the rollback is now purely a best-effort cleanup
+    AFTER the response body is already complete: it runs inside its own `try/except`, logs on
+    failure, and never raises into the stream.
     """
     chat_session_id: uuid.UUID | None = None
     tokens: list[str] = []
@@ -225,9 +232,20 @@ def _generate_chat_stream(
         # always the fixed, generic string, regardless — raw provider/DB detail is logged for
         # operators, never enveloped.
         logger.warning("chat stream failed for session %s: %s", chat_session_id, exc)
-        session.rollback()
         code = exc.code if isinstance(exc, AppError) else _CHAT_STREAM_ERROR_CODE
         yield sse_event("error", {"error": {"code": code, "message": _CHAT_STREAM_ERROR_MESSAGE}})
+        # Review round 2, finding N-1: rollback is best-effort cleanup that runs AFTER the error
+        # event is already on the wire, in its own try/except — a rollback failure (only
+        # reachable when the DB itself is what failed) must never escape into the stream and
+        # revert to I-1's original symptom (a dead connection, no `error` event ever sent).
+        try:
+            session.rollback()
+        except Exception as rollback_exc:
+            logger.warning(
+                "session.rollback() failed after chat stream failure for session %s: %s",
+                chat_session_id,
+                rollback_exc,
+            )
         return
 
 

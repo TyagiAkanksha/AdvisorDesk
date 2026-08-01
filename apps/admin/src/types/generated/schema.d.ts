@@ -221,7 +221,10 @@ export interface paths {
         put?: never;
         /**
          * Content Archive
-         * @description PRD §5.2: archive — status -> archived, chunks removed.
+         * @description PRD §5.2/§4: archive — status -> archived, chunks removed.
+         *
+         *     Legal from `published` only; `draft`/`archived` -> archive both 409
+         *     (task-00 pinned transition matrix, `app.services.content.archive_content`).
          */
         post: operations["content_archive"];
         delete?: never;
@@ -1077,6 +1080,15 @@ export interface operations {
             };
             /** @description Not Found */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Conflict */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };

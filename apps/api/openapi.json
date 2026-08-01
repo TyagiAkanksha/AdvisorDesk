@@ -908,7 +908,7 @@
     },
     "/api/v1/content/{content_id}/archive": {
       "post": {
-        "description": "PRD \u00a75.2: archive \u2014 status -> archived, chunks removed.",
+        "description": "PRD \u00a75.2/\u00a74: archive \u2014 status -> archived, chunks removed.\n\nLegal from `published` only; `draft`/`archived` -> archive both 409\n(task-00 pinned transition matrix, `app.services.content.archive_content`).",
         "operationId": "content_archive",
         "parameters": [
           {
@@ -952,6 +952,16 @@
               }
             },
             "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Conflict"
           },
           "422": {
             "content": {

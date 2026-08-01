@@ -60,6 +60,15 @@ _MAX_PAGE_SIZE = 100
 # router-then-route `responses` merge, not repeated per decorator.
 _BY_ID_RESPONSES: dict[int | str, dict[str, object]] = {404: {"model": ErrorEnvelope}}
 
+# `content_archive` alone also 409s (task-00 pinned transition matrix:
+# archive is illegal from `draft`/`archived`) — `content_publish` has no
+# illegal transition (it's idempotent from every reachable status), so it
+# stays on the plain `_BY_ID_RESPONSES` above.
+_ARCHIVE_RESPONSES: dict[int | str, dict[str, object]] = {
+    **_BY_ID_RESPONSES,
+    409: {"model": ErrorEnvelope},
+}
+
 
 def _to_content_response(content: Content, tags: list[str]) -> ContentResponse:
     """Build a `ContentResponse` from an ORM `Content` row plus its resolved tag names."""
@@ -226,7 +235,7 @@ def content_publish(
     "/content/{content_id}/archive",
     operation_id="content_archive",
     response_model=ContentResponse,
-    responses=_BY_ID_RESPONSES,
+    responses=_ARCHIVE_RESPONSES,
 )
 def content_archive(
     content_id: uuid.UUID,
@@ -234,7 +243,11 @@ def content_archive(
     session: Session = Depends(get_session),
     pipeline: ChunkPipeline = Depends(get_chunk_pipeline),
 ) -> ContentResponse:
-    """PRD §5.2: archive — status -> archived, chunks removed."""
+    """PRD §5.2/§4: archive — status -> archived, chunks removed.
+
+    Legal from `published` only; `draft`/`archived` -> archive both 409
+    (task-00 pinned transition matrix, `app.services.content.archive_content`).
+    """
     content = content_service.archive_content(
         session, content_id, actor_id=principal.user_id, pipeline=pipeline
     )

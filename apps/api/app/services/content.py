@@ -18,7 +18,7 @@ from sqlalchemy import delete, func, or_, select
 from sqlalchemy.orm import Session
 
 from app.models import Content, ContentTag, Tag
-from app.services.errors import NotFoundError
+from app.services.errors import ConflictError, NotFoundError
 from app.services.lifecycle import ChunkPipeline
 from app.services.queries import active_select
 from app.services.tags import get_or_create_tags
@@ -414,14 +414,34 @@ def publish_content(
     actor_id: uuid.UUID | None,
     pipeline: ChunkPipeline,
 ) -> Content:
-    """Publish `content_id`: set `status='published'` + `published_at`, then chunk (PRD §4).
+    """Publish `content_id` (task-00 pinned transition matrix, PRD §4 lifecycle rule).
+
+    `draft`/`archived` -> `published` in both cases; `published` ->
+    `published` is a no-op transition, not an error (idempotent re-POST).
+    `published_at` is stamped iff it is currently `NULL` — the first
+    successful publish — and never overwritten afterwards, so the public
+    feed's `published_at DESC` order (`list_published_content`) stays stable
+    across any later re-publish.
+
+    Chunk pipeline call depends on the starting status:
+
+    - `draft`: `rebuild_chunks` (first publish — nothing to preserve).
+    - `archived`: `rebuild_chunks` — `archive_content` already removed this
+      item's chunks, so skipping here would publish an unretrievable item.
+    - `published`: no pipeline call at all. This is safe without comparing
+      the stored chunks to the current `body_md`: `update_content`
+      re-chunks atomically on every edit of an already-published item (PRD
+      §4), so a published row's chunks always already reflect its current
+      body — "body unchanged since last embed" is the only state reachable
+      through the API/MCP surface here, so no diffing mechanism or schema
+      change is needed to know it's safe to skip.
 
     Args:
         session: the caller's `Session`.
         content_id: the `Content.id` to publish.
         actor_id: the authenticated admin performing this write.
         pipeline: the `ChunkPipeline` whose `rebuild_chunks` is called
-            exactly once.
+            (except on the `published` -> `published` no-op above).
 
     Returns:
         The published `Content` row.
@@ -430,11 +450,14 @@ def publish_content(
         NotFoundError: no active row exists for `content_id`.
     """
     content = get_content(session, content_id)
+    already_published = content.status == "published"
     content.status = "published"
-    content.published_at = datetime.now(UTC)
+    if content.published_at is None:
+        content.published_at = datetime.now(UTC)
     _touch(content, actor_id)
     session.flush()
-    pipeline.rebuild_chunks(session, content)
+    if not already_published:
+        pipeline.rebuild_chunks(session, content)
     return content
 
 
@@ -447,6 +470,11 @@ def archive_content(
 ) -> Content:
     """Archive `content_id`: set `status='archived'` and remove its chunks (PRD §4).
 
+    Legal from `published` only (task-00 pinned transition matrix): `draft`
+    -> `archive` and `archived` -> `archive` both raise `ConflictError`
+    before touching the row or the pipeline, naming both the current status
+    and the attempted action in the message.
+
     Args:
         session: the caller's `Session`.
         content_id: the `Content.id` to archive.
@@ -458,8 +486,11 @@ def archive_content(
 
     Raises:
         NotFoundError: no active row exists for `content_id`.
+        ConflictError: `content_id`'s current status is not `published`.
     """
     content = get_content(session, content_id)
+    if content.status != "published":
+        raise ConflictError(f"Cannot archive content with status {content.status!r}.")
     content.status = "archived"
     _touch(content, actor_id)
     session.flush()

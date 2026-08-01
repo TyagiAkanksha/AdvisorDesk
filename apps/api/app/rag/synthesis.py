@@ -101,12 +101,25 @@ class ChatCompletionFailedError(AppError):
 
 def _format_sources(sources: Sequence[RetrievedChunk]) -> str:
     """Render `sources` as the `[n]`-numbered context block `SYSTEM_PROMPT` tells the model to
-    cite from. `n` is 1-based and follows `sources`' own order (retrieval's similarity-descending
-    order, PRD §7.3) — never re-sorted here.
+    cite from. `sources` keeps retrieval's similarity-descending order (PRD §7.3) and is never
+    re-sorted here — but `n` is NOT a per-chunk ordinal. `n` is assigned by CONTENT first-use
+    order, the exact same rule `dedupe_citations` uses to number the wire citations array: the
+    first chunk seen for a given `content_id` fixes that content's number, and every later chunk
+    sharing that `content_id` repeats it (phase-4 final review, F1). This is required because the
+    model only ever sees this block — it has no way to know a citation's numbering space differs
+    from the UI's — so every `[n]` it can legally emit must map 1:1 to `citations[n-1]` on the
+    wire (`dedupe_citations(sources)`). Numbering per chunk instead (the pre-fix behavior) let the
+    model cite a bracket beyond the deduped array's length, or a bracket that lands on the wrong
+    article once two-or-more chunks share a content — live-reproduced in the final review.
     """
     if not sources:
         return "(no context chunks were retrieved for this question)"
-    return "\n\n".join(f"[{index}] {chunk.text}" for index, chunk in enumerate(sources, start=1))
+    numbers: dict[uuid.UUID, int] = {}
+    lines: list[str] = []
+    for chunk in sources:
+        number = numbers.setdefault(chunk.content_id, len(numbers) + 1)
+        lines.append(f"[{number}] {chunk.text}")
+    return "\n\n".join(lines)
 
 
 def _build_user_message(question: str, sources: Sequence[RetrievedChunk]) -> str:

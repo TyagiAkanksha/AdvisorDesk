@@ -177,7 +177,13 @@ function normalizeLineEndings(buffer: string): string {
  *   bytes still sitting in the buffer with no closing boundary are flushed as one last frame
  *   (probe P-A7: a stream that closes right after its final frame's `data:` line, with no
  *   trailing blank line, previously dropped that frame — including a `done` event, meaning the
- *   session id was never persisted).
+ *   session id was never persisted). Honest tradeoff (final review, t05 N-1): this flush means a
+ *   connection that drops mid-frame — a `data:` line truncated partway through its JSON — is no
+ *   longer a silent drop either; `JSON.parse` throws a `SyntaxError` on the incomplete payload,
+ *   which propagates out of this function and surfaces in `useChatStream.ts`'s caller as the
+ *   generic friendly error banner sitting beside whatever partial answer already streamed in —
+ *   not the frame silently vanishing. Phase-5's `useAgentStream` inherits this exact contract
+ *   when it lifts `parseSseStream`.
  *
  * @param reader a `ReadableStreamDefaultReader<Uint8Array>` over an SSE response body (e.g.
  *   `response.body.getReader()`).

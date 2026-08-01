@@ -4,10 +4,13 @@
 `Embedder` seam (`app/rag/embeddings.py`), nearest-neighbor searches `chunks` by
 cosine distance — which Postgres' planner can serve directly from the HNSW index
 (`ix_chunks_embedding_hnsw`, `app/models/chunks.py`) when the published/non-deleted
-filter is unselective, falling back to an exact filtered scan otherwise (both plans
-return identical results — only the access path differs; review round 1, finding
-M1) — converts distance to similarity exactly once (`similarity_from_distance`),
-and applies `threshold` to that similarity value — never to the raw distance.
+filter is unselective, falling back to an exact filtered scan otherwise; the index
+path is approximate and applies the content filter after the ANN scan, so on a
+large corpus with a selective filter it can return fewer than `k` rows than the
+exact plan would (ledgered review finding M2 — reachable in production, not just
+theoretically) — converts distance to similarity exactly once
+(`similarity_from_distance`), and applies `threshold` to that similarity value —
+never to the raw distance.
 
 **Similarity convention (PRD §7.3, the implementation trap):** pgvector's `<=>`
 operator returns cosine **distance**, not similarity — `0.0` means identical,
@@ -176,13 +179,20 @@ def retrieve(
     # ORM entity is constructed, so neither entity's full column set
     # (notably `Chunk.embedding`, 1024 floats, and `Content.body_md`) is
     # hydrated for data `RetrievedChunk` never uses.
+    #
+    # Every column is explicitly `.label()`ed (review round 1, finding N2): `Chunk.id` and
+    # `active_content.c.id` both default to the bare column name `id`, so without a label
+    # they'd be indistinguishable by name. Labelling enables the named row access below
+    # (`row.chunk_id`, `row.content_id`, ...), which closes the transposition hazard the old
+    # positional-tuple unpacking had — `title`/`slug` are adjacent, same-typed (`str`) columns
+    # that would compile, lint, and type-check clean even swapped.
     rows = session.execute(
         select(
-            Chunk.id,
-            active_content.c.id,
-            active_content.c.title,
-            active_content.c.slug,
-            Chunk.text,
+            Chunk.id.label("chunk_id"),
+            active_content.c.id.label("content_id"),
+            active_content.c.title.label("title"),
+            active_content.c.slug.label("slug"),
+            Chunk.text.label("text"),
             distance,
         )
         .join(active_content, active_content.c.id == Chunk.content_id)
@@ -192,35 +202,28 @@ def retrieve(
     ).all()
 
     # Review round 1, finding M5: drop NaN-distance candidates (a
-    # degenerate all-zero query/stored vector) before any similarity
+    # degenerate all-zero query/stored vector) before either the similarity
     # conversion or `top_similarity` computation — a NaN candidate must
-    # never leak into either.
-    candidates = [
-        (chunk_id, content_id, title, slug, text, raw_distance)
-        for chunk_id, content_id, title, slug, text, raw_distance in rows
-        if not math.isnan(raw_distance)
+    # never leak into either. Named row access (review round 1, finding N2)
+    # replaces the previous positional 6-tuple unpacking done three
+    # separate times plus the bare `scored[0][5]` index.
+    scored = [
+        RetrievedChunk(
+            chunk_id=row.chunk_id,
+            content_id=row.content_id,
+            title=row.title,
+            slug=row.slug,
+            text=row.text,
+            similarity=similarity_from_distance(row.distance),
+        )
+        for row in rows
+        if not math.isnan(row.distance)
     ]
 
-    if not candidates:
+    if not scored:
         return RetrievalResult(chunks=[], top_similarity=None)
 
-    scored = [
-        (chunk_id, content_id, title, slug, text, similarity_from_distance(raw_distance))
-        for chunk_id, content_id, title, slug, text, raw_distance in candidates
-    ]
-    top_similarity = scored[0][5]
-
-    chunks = [
-        RetrievedChunk(
-            chunk_id=chunk_id,
-            content_id=content_id,
-            title=title,
-            slug=slug,
-            text=text,
-            similarity=similarity,
-        )
-        for chunk_id, content_id, title, slug, text, similarity in scored
-        if similarity >= threshold
-    ]
+    top_similarity = scored[0].similarity
+    chunks = [chunk for chunk in scored if chunk.similarity >= threshold]
 
     return RetrievalResult(chunks=chunks, top_similarity=top_similarity)

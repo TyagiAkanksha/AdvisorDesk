@@ -20,6 +20,7 @@ from app.routes.content_routes import router as content_router
 from app.routes.errors import register_error_handlers
 from app.routes.health_routes import router as health_router
 from app.routes.public_routes import router as public_router
+from app.routes.ratelimit import RateLimiter
 from app.services.lifecycle import ChunkPipeline, NoopChunkPipeline
 
 _API_PREFIX = "/api/v1"
@@ -32,6 +33,7 @@ def create_app(
     chunk_pipeline: ChunkPipeline | None = None,
     chat_llm: ChatLLM | None = None,
     embedder: Embedder | None = None,
+    rate_limiter: RateLimiter | None = None,
 ) -> FastAPI:
     """Build the AdvisorDesk FastAPI application.
 
@@ -76,6 +78,20 @@ def create_app(
             approved — mirrors `chat_llm`'s shape since nothing else on
             `app.state` supplies one testably). Same `None`/fail-loud
             contract as `chat_llm` above.
+        rate_limiter: an optional `app.routes.ratelimit.RateLimiter` (phase-4 task-03, PRD §9).
+            Unlike `chat_llm`/`embedder` above, `None` does NOT mean "unconfigured, fail loud at
+            request time" — a `RateLimiter` has no external provider to fail without, so `None`
+            resolves to a real, working `RateLimiter(resolved_settings)` right here, mirroring
+            `chunk_pipeline`'s `NoopChunkPipeline` default instead. Deliberate: every phase-4
+            task-02 test (`test_public_chat.py`, `test_public_chat_guards.py`) already calls
+            `create_app()` with no `rate_limiter=` argument, predating this task — a fail-loud
+            default would turn every `POST /public/chat` call in those pinned suites into an
+            unhandled `RuntimeError`. An always-real default instead means rate limiting is
+            simply always on, at the PRD §9 default caps, unless a caller injects a different
+            (e.g. tightly-capped, test-only) instance — every cap-tripping test in
+            `test_ratelimit.py` does exactly that. `app/main.py` still wires one built from the
+            real `Settings` explicitly (same pattern as `chat_llm`/`embedder`) so the production
+            caps are visibly, not implicitly, in force.
 
     Returns:
         A configured `FastAPI` app instance.
@@ -97,6 +113,11 @@ def create_app(
     app.state.chunk_pipeline = resolved_pipeline
     app.state.chat_llm = chat_llm
     app.state.embedder = embedder
+    # `None` -> a real, working default (docstring above) — unlike `chat_llm`/`embedder`, never
+    # left unset: `app.routes.deps.get_rate_limiter` has no fail-loud RuntimeError branch at all.
+    app.state.rate_limiter = (
+        rate_limiter if rate_limiter is not None else RateLimiter(resolved_settings)
+    )
 
     app.add_middleware(
         CORSMiddleware,

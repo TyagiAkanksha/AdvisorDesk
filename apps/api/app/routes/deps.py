@@ -16,6 +16,7 @@ from app.auth.oauth import GoogleOAuthClient
 from app.config import Settings
 from app.rag.embeddings import Embedder
 from app.rag.synthesis import ChatLLM
+from app.routes.ratelimit import RateLimiter
 from app.services.lifecycle import ChunkPipeline
 
 
@@ -115,3 +116,16 @@ def get_embedder(request: Request) -> Embedder:
             "was built by create_app() without an embedder. Only app/main.py wires a real one."
         )
     return cast(Embedder, embedder)
+
+
+def get_rate_limiter(request: Request) -> RateLimiter:
+    """Return the `RateLimiter` `create_app` stored on `app.state` (phase-4 task-03, PRD §9).
+
+    `create_app` always resolves this to a concrete `RateLimiter` — never `None` — same
+    always-resolved contract as `get_chunk_pipeline` (see `app.factory.create_app`'s
+    `rate_limiter` docstring for why this seam, unlike `get_chat_llm`/`get_embedder`, has no
+    fail-loud `RuntimeError` branch: a rate limiter has no external provider to fail without, so
+    every app — including every pre-existing test that never passes `rate_limiter=` at all —
+    gets a real, working default.
+    """
+    return cast(RateLimiter, request.app.state.rate_limiter)

@@ -1053,7 +1053,7 @@
     },
     "/api/v1/public/chat": {
       "post": {
-        "description": "PRD \u00a75.3: retrieval -> grounded synthesis -> typed SSE stream -> persistence.\n\nRate-limit rejection (task-03) happens before this route ever runs (task brief's\nimplementation note) \u2014 this route assumes every request that reaches it is allowed to\nproceed. See `_generate_chat_stream` for the full event-order/persistence contract.\n\nReview round 1, finding M-2: without `response_class=StreamingResponse` +\nthe explicit `200` `responses=` content override above, FastAPI's OpenAPI export defaults to\nan empty-schema `application/json` entry for this status (its generic default-`response_class`\nbehavior, since this route sets no `response_model`) \u2014 wrong for an endpoint that only ever\nreturns `text/event-stream`. `response_class=StreamingResponse` alone suppresses that default\n(`StreamingResponse.media_type` is `None` at the class level, so FastAPI's auto-schema branch\nnever fires); the `responses=` override then supplies the real media type both frontend\ncodegens read.",
+        "description": "PRD \u00a75.3: retrieval -> grounded synthesis -> typed SSE stream -> persistence.\n\nRate limiting (task-03, PRD \u00a79) is checked right here, first, before `session`/`chat_llm`/\n`embedder` are ever touched and before `_generate_chat_stream` builds any part of the SSE\nbody \u2014 the task brief's wiring-order pin. A breach raises `RateLimitedError` (no `try/except`\nhere, per CONVENTIONS.md \u00a74: it propagates straight to `register_error_handlers`'s 429\nmapping), so a rejected request never reaches `get_or_create_session`, retrieval, or the LLM,\nand the client sees a plain `application/json` 429 envelope \u2014 never a started SSE stream.\n\n`429: {\"model\": ErrorEnvelope}` is declared honestly in this route's own `responses=` above\n(task-03 brief) rather than left undeclared, since a rate-limit rejection is now a real,\nexpected outcome of calling this endpoint, not an edge case worth hiding from the OpenAPI\nexport both frontend codegens read.\n\nThe \u00a79 caps: `RATE_LIMIT_PER_MIN` (sliding one-minute window, per IP, always checked) and\n`RATE_LIMIT_PER_DAY` (per session, checked only once a real `session_id` exists) both live\nbehind `rate_limiter.check_message`; `SESSION_CREATE_PER_DAY` (per IP) is a separate gate,\nchecked only when `body.session_id is None` \u2014 the one client-visible-before-any-DB-lookup\nsignal that this request is about to mint a brand-new session (PRD \u00a75.3: \"absent ... session_id\nmeans the server creates a session\"). `note_session_created` is called immediately after that\ncheck passes, not after the mint actually happens inside `_generate_chat_stream` (which the\nwiring-order pin forbids querying ahead of here anyway) \u2014 `session_id is None` is exactly the\ncondition under which `get_or_create_session` is guaranteed to mint, so recording the create\nhere is never wrong, only earlier than the DB write it corresponds to.\n\nSee `_generate_chat_stream` for the full event-order/persistence contract once a request is\nadmitted.\n\nReview round 1, finding M-2: without `response_class=StreamingResponse` +\nthe explicit `200` `responses=` content override above, FastAPI's OpenAPI export defaults to\nan empty-schema `application/json` entry for this status (its generic default-`response_class`\nbehavior, since this route sets no `response_model`) \u2014 wrong for an endpoint that only ever\nreturns `text/event-stream`. `response_class=StreamingResponse` alone suppresses that default\n(`StreamingResponse.media_type` is `None` at the class level, so FastAPI's auto-schema branch\nnever fires); the `responses=` override then supplies the real media type both frontend\ncodegens read.",
         "operationId": "public_chat",
         "requestBody": {
           "content": {
@@ -1085,6 +1085,16 @@
               }
             },
             "description": "Unprocessable Entity"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Too Many Requests"
           }
         },
         "summary": "Public Chat"

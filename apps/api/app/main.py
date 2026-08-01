@@ -46,6 +46,7 @@ from app.models import embedding_column_dims
 from app.rag.embeddings import OpenAICompatibleEmbedder
 from app.rag.pipeline import EmbeddingChunkPipeline
 from app.rag.synthesis import OpenAICompatibleChatLLM
+from app.routes.ratelimit import RateLimiter
 
 logger = logging.getLogger(__name__)
 
@@ -166,6 +167,11 @@ oauth_client: GoogleOAuthClient = HttpxGoogleOAuthClient.from_settings(settings)
 embedder: OpenAICompatibleEmbedder = OpenAICompatibleEmbedder.from_settings(settings)
 chunk_pipeline: EmbeddingChunkPipeline = EmbeddingChunkPipeline(embedder)
 chat_llm: OpenAICompatibleChatLLM = OpenAICompatibleChatLLM.from_settings(settings)
+# Phase-4 task-03: one process-lifetime `RateLimiter` shared by every `/public/chat` request
+# (PRD §9) — same explicit-wiring pattern as `chat_llm`/`embedder` above, even though
+# `create_app`'s own `rate_limiter=None` default would already build an equivalent instance
+# (`app.factory.create_app`'s docstring) — the real caps stay visibly, not implicitly, in force.
+rate_limiter: RateLimiter = RateLimiter(settings)
 
 app: FastAPI = create_app(
     session_factory=session_factory,
@@ -174,4 +180,5 @@ app: FastAPI = create_app(
     chunk_pipeline=chunk_pipeline,
     chat_llm=chat_llm,
     embedder=embedder,
+    rate_limiter=rate_limiter,
 )

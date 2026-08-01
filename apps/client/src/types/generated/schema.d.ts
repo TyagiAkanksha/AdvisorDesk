@@ -283,9 +283,31 @@ export interface paths {
          * Public Chat
          * @description PRD §5.3: retrieval -> grounded synthesis -> typed SSE stream -> persistence.
          *
-         *     Rate-limit rejection (task-03) happens before this route ever runs (task brief's
-         *     implementation note) — this route assumes every request that reaches it is allowed to
-         *     proceed. See `_generate_chat_stream` for the full event-order/persistence contract.
+         *     Rate limiting (task-03, PRD §9) is checked right here, first, before `session`/`chat_llm`/
+         *     `embedder` are ever touched and before `_generate_chat_stream` builds any part of the SSE
+         *     body — the task brief's wiring-order pin. A breach raises `RateLimitedError` (no `try/except`
+         *     here, per CONVENTIONS.md §4: it propagates straight to `register_error_handlers`'s 429
+         *     mapping), so a rejected request never reaches `get_or_create_session`, retrieval, or the LLM,
+         *     and the client sees a plain `application/json` 429 envelope — never a started SSE stream.
+         *
+         *     `429: {"model": ErrorEnvelope}` is declared honestly in this route's own `responses=` above
+         *     (task-03 brief) rather than left undeclared, since a rate-limit rejection is now a real,
+         *     expected outcome of calling this endpoint, not an edge case worth hiding from the OpenAPI
+         *     export both frontend codegens read.
+         *
+         *     The §9 caps: `RATE_LIMIT_PER_MIN` (sliding one-minute window, per IP, always checked) and
+         *     `RATE_LIMIT_PER_DAY` (per session, checked only once a real `session_id` exists) both live
+         *     behind `rate_limiter.check_message`; `SESSION_CREATE_PER_DAY` (per IP) is a separate gate,
+         *     checked only when `body.session_id is None` — the one client-visible-before-any-DB-lookup
+         *     signal that this request is about to mint a brand-new session (PRD §5.3: "absent ... session_id
+         *     means the server creates a session"). `note_session_created` is called immediately after that
+         *     check passes, not after the mint actually happens inside `_generate_chat_stream` (which the
+         *     wiring-order pin forbids querying ahead of here anyway) — `session_id is None` is exactly the
+         *     condition under which `get_or_create_session` is guaranteed to mint, so recording the create
+         *     here is never wrong, only earlier than the DB write it corresponds to.
+         *
+         *     See `_generate_chat_stream` for the full event-order/persistence contract once a request is
+         *     admitted.
          *
          *     Review round 1, finding M-2: without `response_class=StreamingResponse` +
          *     the explicit `200` `responses=` content override above, FastAPI's OpenAPI export defaults to
@@ -1141,6 +1163,15 @@ export interface operations {
             };
             /** @description Unprocessable Entity */
             422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too Many Requests */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };

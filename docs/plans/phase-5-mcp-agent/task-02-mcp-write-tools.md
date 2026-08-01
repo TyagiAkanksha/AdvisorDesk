@@ -1,7 +1,7 @@
 ---
 id: task-02
 phase: phase-5-mcp-agent
-depends_on: [task-01]
+depends_on: [task-00, task-01]
 status: planned
 spec: advisordesk-prd.md §6, §4.1
 ---
@@ -46,6 +46,10 @@ are live for the agent loop.
   - All six: a `content_id` addressing a missing OR soft-deleted item → structured not-found
     tool error (§6 footer); the acting admin's id is stamped into `author_id`/`updated_by`
     (§4.1) — `call_tool`'s `actor_id` threads through.
+  - `publish`/`archive` inherit task-00's hardened lifecycle by construction (same services):
+    re-publish preserves `published_at` and skips re-embedding; an illegal transition's
+    `ConflictError` surfaces as a structured tool error, never a raw exception — one test pins
+    the conflict-through-the-tool-path shape.
 
 ## Steps (TDD)
 

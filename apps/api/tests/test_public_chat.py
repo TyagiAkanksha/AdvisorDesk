@@ -51,7 +51,6 @@ from datetime import UTC, datetime
 from typing import Literal
 
 import pytest
-from app.rag.synthesis import SYSTEM_PROMPT
 from fastapi.testclient import TestClient
 from sqlalchemy import Engine, select
 from sqlalchemy.orm import Session
@@ -60,6 +59,7 @@ from app.db import make_session_factory
 from app.factory import create_app
 from app.models import ChatMessage, ChatSession, Chunk, Content
 from app.rag.retrieval import RetrievedChunk
+from app.rag.synthesis import SYSTEM_PROMPT
 
 # `nvidia/nv-embedqa-e5-v5` (PRD §7.2 v1.5) — matches `Chunk.embedding`'s `Vector(1024)` column
 # and `Settings.embedding_dimensions`'s default, same as `test_retrieval.py`.

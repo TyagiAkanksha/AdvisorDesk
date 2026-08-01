@@ -155,15 +155,28 @@ def _already_seeded(session: Session, title: str) -> bool:
     active/published status, which would wrongly report a soft-deleted or draft row as "not seeded"
     and attempt to create a duplicate.
 
+    **`.limit(1)` is required (review round 2, finding I2): `Content.title` carries no unique
+    constraint** — unlike `Content.slug` (`unique=True`, `app/models/content.py`), which the
+    round-1 slug-keyed check was implicitly safe against by construction. PRD §4's `-2`/`-3`
+    slug-suffix rule exists precisely because duplicate titles are legal: the admin UI
+    (`POST /content`) and, from phase 5, the agent's `create_draft` MCP tool can both create two
+    `Content` rows sharing one title. Without `.limit(1)`, `scalar_one_or_none()` raises
+    `sqlalchemy.exc.MultipleResultsFound` the moment two such rows exist and a seed file happens to
+    share their title — aborting the whole run instead of skipping. `.limit(1)` makes this function
+    answer "does at least one row exist," not "does exactly one," which is the only question
+    idempotency actually needs.
+
     Args:
         session: the caller's `Session`.
         title: the candidate title (a seed file's frontmatter `title`).
 
     Returns:
-        `True` if a `Content` row with this exact title already exists.
+        `True` if at least one `Content` row with this exact title already exists.
     """
     return (
-        session.execute(select(Content.id).where(Content.title == title)).scalar_one_or_none()
+        session.execute(
+            select(Content.id).where(Content.title == title).limit(1)
+        ).scalar_one_or_none()
         is not None
     )
 

@@ -22,7 +22,7 @@
   expected_slugs: ["traditional-vs-roth-ira-basics"]
   answerable: true
 
-- question: "When do I have to start taking required minimum distributions from my retirement accounts?"
+- question: "How is the deadline for my first required minimum distribution determined, and what happens if I delay it?"
   expected_slugs: ["required-minimum-distributions-explained"]
   answerable: true
 
@@ -50,7 +50,7 @@
   expected_slugs: ["beneficiary-designation-basics"]
   answerable: true
 
-- question: "How much can I pass on to my heirs before federal estate tax applies?"
+- question: "How does the federal estate tax exemption work, and can a surviving spouse use my unused amount?"
   expected_slugs: ["estate-tax-exemption-basics"]
   answerable: true
 

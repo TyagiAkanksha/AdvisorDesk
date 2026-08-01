@@ -11,17 +11,32 @@ task-04-seed-content-eval-set.md`'s Context section requires ("the seed script g
 services... never raw SQL/ORM writes").
 
 Idempotency (PRD §8: seeding is safe to re-run) is checked with one read — `select(Content.id)
-.where(Content.slug == slug)` — deliberately not routed through any existing `app.services.content`
-read helper: `get_content`/`list_content` filter to active (non-soft-deleted) rows via
-`active_select`, and `get_published_by_slug` additionally requires `status == 'published'`; none of
-them can answer "does ANY row, active or not, published or draft, already own this slug" — the
-exact question idempotency needs. This mirrors `app.services.content.generate_slug`'s own
-documented exception to the active-read convention, for the identical reason: a slug's existence
-must be checked directly, not through a filtered service. The read never appears inside the same
-module as a write elsewhere in this codebase (`app.services` is the only ORM-touching layer per
+.where(Content.title == title)` — deliberately not routed through any existing
+`app.services.content` read helper: `get_content`/`list_content` filter to active (non-soft-deleted)
+rows via `active_select`, and `get_published_by_slug` additionally requires `status == 'published'`;
+none of them can answer "does ANY row, active or not, published or draft, already own this title" —
+the exact question idempotency needs. This mirrors `app.services.content.generate_slug`'s own
+documented exception to the active-read convention, for the identical reason: existence must be
+checked directly, not through a filtered service. The read never appears inside the same module as
+a write elsewhere in this codebase (`app.services` is the only ORM-touching layer per
 CONVENTIONS.md §2) — but `app.seed`, like `app.main`, is a top-level wiring/script module outside
 that layer diagram, not a `routes`/`mcp` caller `services` exists to keep from duplicating business
 logic between. Every WRITE still goes through `create_draft`/`publish_content`.
+
+**Keyed on TITLE, not slug or filename (review round 1, finding I1).** `create_draft` always
+derives the persisted slug from `title` via `app.services.content.generate_slug`, which is
+collision-aware: if a row with the "natural" (unsuffixed) slug for a title already exists,
+`generate_slug` returns a DIFFERENT, `-2`/`-3`-suffixed slug instead — its contract is "give me an
+AVAILABLE slug," which by definition returns something NEW whenever the natural base is taken.
+Calling `generate_slug` a second time here, purely to compute a check key, is therefore NOT a fix:
+on a re-run, it would report the (as yet unoccupied) suffixed slug as "not found" and re-create the
+row anyway — reproducing the exact bug this check exists to close, one level removed. Checking by
+TITLE sidesteps this: `title` is the one identity that must agree between a seed file and its
+previously-created row regardless of what slug `generate_slug` (correctly) assigned it, whether or
+not the file's own name happens to match that slug. PRD §8 requires no filename-slug agreement; the
+21 committed `seed/sample_content/*.md` files satisfy it anyway (verified live by
+`tests/test_seed.py`'s DB-backed slug-join test), but a user-supplied `content_dir` is not bound by
+that pinned test — `tests/test_seed_guards.py` exercises exactly this mismatch case directly.
 
 Seeded rows are created with `actor_id=None` (PRD §4.1: "seeded rows carry `author_id = null` /
 `updated_by = null` (created outside any session)") — `create_draft`/`publish_content` already
@@ -127,24 +142,28 @@ def _parse_seed_file(path: Path) -> tuple[dict[str, Any], str]:
     return frontmatter, match.group("body")
 
 
-def _slug_already_seeded(session: Session, slug: str) -> bool:
-    """Return whether any `Content` row — any status, active or soft-deleted — already owns `slug`.
+def _already_seeded(session: Session, title: str) -> bool:
+    """Return whether any `Content` row — any status, active or soft-deleted — already has `title`.
 
-    The idempotency check PRD §8 requires: a re-run of `seed_all` must skip a file whose slug was
-    already created by a prior run, without touching that row. See the module docstring for why
-    this is a direct read rather than a call through an existing `app.services.content` helper —
-    every one of those filters by active/published status, which would wrongly report a
-    soft-deleted or draft row as "not seeded" and attempt to create a duplicate.
+    The idempotency check PRD §8 requires: a re-run of `seed_all` must skip a file whose title was
+    already created by a prior run, without touching that row. See the module docstring's
+    "Keyed on TITLE, not slug or filename" section for why this checks `title`, not `slug` or the
+    seed file's filename stem — the short version: `generate_slug` is collision-aware, so re-calling
+    it here to compute a check key would itself return a different (as yet unoccupied) suffixed
+    slug on a re-run, silently defeating the check. This is also a direct read rather than a call
+    through an existing `app.services.content` helper — every one of those filters by
+    active/published status, which would wrongly report a soft-deleted or draft row as "not seeded"
+    and attempt to create a duplicate.
 
     Args:
         session: the caller's `Session`.
-        slug: the candidate slug (a seed file's filename stem).
+        title: the candidate title (a seed file's frontmatter `title`).
 
     Returns:
-        `True` if a `Content` row with this exact slug already exists.
+        `True` if a `Content` row with this exact title already exists.
     """
     return (
-        session.execute(select(Content.id).where(Content.slug == slug)).scalar_one_or_none()
+        session.execute(select(Content.id).where(Content.title == title)).scalar_one_or_none()
         is not None
     )
 
@@ -174,13 +193,14 @@ def seed_all(
     """Load every `content_dir/*.md` seed file, creating (and publishing) it through the real
     services.
 
-    For each file, sorted by filename for deterministic ordering: if a `Content` row already owns
-    that file's slug (filename stem), the file is skipped (idempotency, PRD §8). Otherwise, a draft
-    is created via `create_draft` (title/tags/body from the file's frontmatter/body, `actor_id=None`
-    per PRD §4.1) and, if the frontmatter's `status` is `"published"`, immediately published via
-    `publish_content` — which runs the real chunk + embed + insert transaction through `pipeline`
-    (PRD §4's atomic publish rule). Files marked `status: "draft"` are left as drafts (PRD §8: "3-4
-    as drafts so the agent has content to find/publish in demos").
+    For each file, sorted by filename for deterministic ordering: if a `Content` row already has
+    that file's frontmatter `title` (see the module docstring's "Keyed on TITLE" section for why),
+    the file is skipped (idempotency, PRD §8). Otherwise, a draft is created via `create_draft`
+    (title/tags/body from the file's frontmatter/body, `actor_id=None` per PRD §4.1) and, if the
+    frontmatter's `status` is `"published"`, immediately published via `publish_content` — which
+    runs the real chunk + embed + insert transaction through `pipeline` (PRD §4's atomic publish
+    rule). Files marked `status: "draft"` are left as drafts (PRD §8: "3-4 as drafts so the agent
+    has content to find/publish in demos").
 
     Args:
         session: the caller's `Session`. Per CONVENTIONS.md §3, this function only `flush()`es (via
@@ -201,17 +221,15 @@ def seed_all(
     chunk_count = 0
 
     for path in sorted(content_dir.glob("*.md")):
-        slug = path.stem
-
-        if _slug_already_seeded(session, slug):
-            skipped += 1
-            logger.info("seed: %s already exists (slug=%s) — skipped", path.name, slug)
-            continue
-
         frontmatter, body = _parse_seed_file(path)
         title = str(frontmatter["title"])
         tags = [str(tag) for tag in frontmatter.get("tags") or []]
         status = str(frontmatter["status"])
+
+        if _already_seeded(session, title):
+            skipped += 1
+            logger.info("seed: %s (title=%r) already exists — skipped", path.name, title)
+            continue
 
         content = create_draft(session, title=title, body_md=body, tags=tags, actor_id=None)
         created += 1
@@ -221,9 +239,9 @@ def seed_all(
             item_chunk_count = _chunk_count_for(session, content.id)
             chunk_count += item_chunk_count
             published += 1
-            logger.info("seed: published %s (%d chunks)", slug, item_chunk_count)
+            logger.info("seed: published %s (%d chunks)", content.slug, item_chunk_count)
         else:
-            logger.info("seed: created draft %s", slug)
+            logger.info("seed: created draft %s", content.slug)
 
     return SeedReport(
         created=created, published=published, skipped=skipped, chunk_count=chunk_count

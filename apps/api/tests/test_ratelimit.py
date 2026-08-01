@@ -51,7 +51,6 @@ from dataclasses import dataclass, field
 from typing import Literal
 
 import pytest
-from app.routes.ratelimit import RateLimiter
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from sqlalchemy import Engine
@@ -59,6 +58,7 @@ from sqlalchemy import Engine
 from app.config import Settings
 from app.db import make_session_factory
 from app.factory import create_app
+from app.routes.ratelimit import RateLimiter
 from app.services.errors import RateLimitedError
 
 # One day, in seconds — `floor(clock() / 86400)` is the day-bucket key the brief pins (UTC

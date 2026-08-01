@@ -21,6 +21,22 @@ import { ChatScreen } from '.';
 // (controller commit 332764c). The original RED draft used `fireEvent` only because the package
 // was not yet resolvable from this workspace — assertions and test list are unchanged.
 //
+// Controller-approved pin fix (defect surfaced during implementation, see
+// `.superpowers/sdd/reports/p4-t05-implementer.md`'s "Blocking issue"): the "disables the
+// message input while streaming" test originally checked `toBeDisabled()` *synchronously* right
+// after an awaited `user.click()`, with no `waitFor`. That assumption — that React's
+// `streaming: true` flush from `send()` would still be observable at that instant — does not
+// hold: with a mocked `fetch`/`ReadableStream` that resolves entirely via microtasks, the WHOLE
+// `send()` cycle (fetch → parse → `citations`/`done` → `streaming: false`) completes faster than
+// `user.click()`'s own internal pointer/mouse/focus event sequencing (which is gated behind real
+// macrotasks) — so by the time the test's `await user.click(...)` returns, the disabled window
+// has already opened AND closed, unobserved. Three independent timing probes (bare chained-
+// microtask handlers, a capped 500-tick loop, and direct instrumentation of the real
+// implementation) confirmed this in the implementer's report. Fix: gate the mocked stream open
+// with a deferred promise (`gatedStreamResponse` below) so `streaming` provably STAYS `true`
+// until the test explicitly releases it — turning a timing race into a stable, `waitFor`-safe
+// assertion. No other test in this file changed.
+//
 // Judgment calls (test-author, flagged for controller review — mirrored in useChatStream.test.ts
 // and MessageBubble/Component.test.tsx for consistency across the three files):
 // (1) `ChatScreen` takes NO props (rendered `<ChatScreen />`): it is the client island that owns
@@ -62,6 +78,41 @@ function streamResponse(frames: SseFrame[]): Response {
     status: 200,
     headers: { 'content-type': 'text/event-stream' },
   });
+}
+
+interface Deferred<T> {
+  promise: Promise<T>;
+  resolve: (value: T) => void;
+}
+
+function deferred<T>(): Deferred<T> {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((res) => {
+    resolve = res;
+  });
+  return { promise, resolve };
+}
+
+/**
+ * Build a `Response` whose SSE body stays open (no bytes enqueued, never closed) until the
+ * returned `release()` is called — used only by the "disables the message input while
+ * streaming" test to hold `streaming: true` open for a deterministic window, instead of racing
+ * a fully-microtask-resolving stream against `user.click()`'s own event sequencing.
+ */
+function gatedStreamResponse(frames: SseFrame[]): { response: Response; release: () => void } {
+  const gate = deferred<void>();
+  const body = new ReadableStream<Uint8Array>({
+    async start(controller) {
+      await gate.promise;
+      controller.enqueue(new TextEncoder().encode(sseBody(frames)));
+      controller.close();
+    },
+  });
+  const response = new Response(body, {
+    status: 200,
+    headers: { 'content-type': 'text/event-stream' },
+  });
+  return { response, release: () => gate.resolve() };
 }
 
 async function askQuestion(
@@ -193,26 +244,31 @@ describe('ChatScreen', () => {
   });
 
   it('disables the message input while streaming, and re-enables it once the stream completes', async () => {
-    vi.stubGlobal(
-      'fetch',
-      vi.fn().mockResolvedValue(
-        streamResponse([
-          { event: 'token', data: { text: 'An answer.' } },
-          { event: 'citations', data: { citations: [] } },
-          { event: 'done', data: { session_id: 's-5', message_id: 'm-5' } },
-        ]),
-      ),
-    );
+    const { response, release } = gatedStreamResponse([
+      { event: 'token', data: { text: 'An answer.' } },
+      { event: 'citations', data: { citations: [] } },
+      { event: 'done', data: { session_id: 's-5', message_id: 'm-5' } },
+    ]);
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(response));
     const user = userEvent.setup();
 
     render(<ChatScreen />);
     const input = screen.getByRole('textbox', { name: 'Message' });
+    const sendButton = screen.getByRole('button', { name: 'Send' });
     expect(input).toBeEnabled();
+    expect(sendButton).toBeEnabled();
 
     await askQuestion(user, 'A question.');
 
-    expect(input).toBeDisabled();
+    // The stream is held open (no frames released yet) — `streaming` is stably `true`, not a
+    // narrow race window, so `waitFor` here is about letting React's state update propagate,
+    // not about racing the mocked network.
+    await waitFor(() => expect(input).toBeDisabled());
+    expect(screen.getByRole('button', { name: 'Send' })).toBeDisabled();
+
+    release();
 
     await waitFor(() => expect(input).toBeEnabled());
+    expect(screen.getByRole('button', { name: 'Send' })).toBeEnabled();
   });
 });

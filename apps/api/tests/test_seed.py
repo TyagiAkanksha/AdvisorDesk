@@ -48,13 +48,13 @@ from pathlib import Path
 from typing import Any, Literal
 
 import pytest
-from app.seed import SeedReport, seed_all
 from sqlalchemy import Engine, func, select
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.db import make_session_factory
 from app.models import Chunk, Content
 from app.rag.pipeline import EmbeddingChunkPipeline
+from app.seed import SeedReport, seed_all
 from app.services.tags import tags_for_contents
 
 # Repo root is four levels up from this file (tests/ -> api/ -> apps/ -> repo root) — computed

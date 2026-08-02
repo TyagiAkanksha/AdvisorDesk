@@ -6,7 +6,7 @@ back through these dependencies rather than holding module-level globals.
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from typing import cast
 
 from fastapi import Request
@@ -120,18 +120,37 @@ def get_embedder(request: Request) -> Embedder:
 
 
 def get_agent_llm(request: Request) -> AgentLLM:
-    """Return the `AgentLLM` `create_app` stored on `app.state` (phase-5 task-03, PRD §5.4/§6).
+    """Return a per-request `AgentLLM` (phase-5 task-03, PRD §5.4/§6).
+
+    Fix round 1, finding C-3: prefers `app.state.agent_llm_factory` — a zero-argument callable
+    that mints a FRESH `AgentLLM`-conforming object on every call (`app.main` wires
+    `OpenAICompatibleAgentLLM.new_conversation`). Calling it fresh per request is what keeps an
+    adapter's per-exchange state (a queued parallel tool call, or the "this turn already
+    finished" flag) from leaking into a DIFFERENT admin's later request, or racing across
+    threadpool workers on the same mutable object — both reproduced against the real provider
+    before this fix (see `app.agent.llm`'s module docstring).
+
+    Falls back to the legacy `app.state.agent_llm` — a single object returned as-is, unchanged
+    across calls — when no factory is configured. Every test that calls
+    `create_app(agent_llm=FakeAgentLLM(...))` directly relies on exactly this fallback (each
+    such test drives at most one `/agent/chat` request per fake instance, so the fake's own lack
+    of a `new_conversation()` method is never exercised); a DB-less/schema-only app (e.g. the
+    OpenAPI baseline export) leaves both unset.
 
     Raises:
-        RuntimeError: the app was built by `create_app()` without an `agent_llm` (a DB-less/
-            schema-only app, e.g. the OpenAPI baseline export) — mirrors `get_chat_llm`'s
-            fail-loud guard rather than silently dereferencing `None` at the first real request.
+        RuntimeError: neither `app.state.agent_llm_factory` nor `app.state.agent_llm` is
+            configured — this app was built by `create_app()` with no agent LLM seam at all.
+            Only `app/main.py` wires a real one.
     """
+    agent_llm_factory = getattr(request.app.state, "agent_llm_factory", None)
+    if agent_llm_factory is not None:
+        return cast(Callable[[], AgentLLM], agent_llm_factory)()
     agent_llm = getattr(request.app.state, "agent_llm", None)
     if agent_llm is None:
         raise RuntimeError(
-            "get_agent_llm() requires app.state.agent_llm, but none was configured — this app "
-            "was built by create_app() without an agent_llm. Only app/main.py wires a real one."
+            "get_agent_llm() requires app.state.agent_llm_factory or app.state.agent_llm, but "
+            "neither was configured — this app was built by create_app() without an agent LLM "
+            "seam. Only app/main.py wires a real one."
         )
     return cast(AgentLLM, agent_llm)
 

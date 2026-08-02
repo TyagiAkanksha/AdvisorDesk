@@ -23,6 +23,35 @@ return one `LlmStep` per call. Any extra tool calls from the same turn are queue
 the model, before a fresh completion is ever requested again — this keeps the adapter correct if
 the pinned model (`meta/llama-3.1-8b-instruct`) ever emits more than one tool call per turn, even
 though in practice it rarely does under `tool_choice="auto"`.
+
+Fix round 1 (Opus review of commit e58f007, findings C-2/C-3/I-2):
+
+  - **C-2** — a completion with `content` and no `tool_calls` IS the model's final message (PRD
+    §6: "the loop executes tool calls until the model returns a final message"). `next_step` now
+    records that fact (`self._finished`) right before returning that final `TextDelta`; the VERY
+    NEXT `next_step` call on the SAME instance returns `LlmDone()` immediately, with no further
+    provider call, so `run_agent`'s `while True:` actually terminates instead of re-querying a
+    conversation that already ended (live-verified: a text-only "What can you do?" answer used
+    to trigger 8 unrequested tool calls off the full registry before this fix).
+  - **C-3** — `_pending_tool_calls`/`self._finished` are per-EXCHANGE state. Before this fix,
+    `app.main` built exactly ONE `OpenAICompatibleAgentLLM` and wired it directly as
+    `app.state.agent_llm`, shared by every `/agent/chat` request for the life of the process — a
+    still-queued parallel tool call (or a `self._finished=True` left over from a PRIOR request)
+    leaked into the NEXT admin's unrelated request, and concurrent requests raced on the same
+    mutable list across threadpool workers. Fix: `new_conversation()` below returns a FRESH
+    instance sharing this one's `client`/`model` (cheap and thread-safe to share — the `openai`
+    SDK's `OpenAI` client wraps its own connection-pooled `httpx.Client`) but starting with an
+    empty queue and `self._finished=False`. `app.main` now wires
+    `agent_llm_factory=<the one boot-time instance>.new_conversation` into
+    `app.factory.create_app`; `app.routes.deps.get_agent_llm` calls that factory FRESH on every
+    request, so no per-exchange state can ever survive past the exchange that created it.
+  - **I-2** — `tests/test_agent_llm_client.py` (new) is this module's first test coverage at
+    all, covering all of the above plus the wire-format request shape, `_to_openai_tools`, the
+    `tool_calls` -> `ToolCallStep` mapping (including a malformed-JSON `arguments` string from
+    the provider, handled the same way every other provider failure already was — caught by the
+    existing `except (..., json.JSONDecodeError)` clause below and turned into
+    `AgentLLMFailedError`, never a raw `json.JSONDecodeError` escaping to the caller), the
+    `"unset"` boot-safe fallback, and provider errors being logged, never enveloped.
 """
 
 from __future__ import annotations
@@ -92,7 +121,25 @@ class OpenAICompatibleAgentLLM:
         """
         self._client = client
         self._model = model
+        # Per-EXCHANGE state (fix round 1, findings C-2/C-3) — an instance returned by
+        # `new_conversation()` starts with an empty queue and an un-finished turn; see the
+        # module docstring's "Fix round 1" section for why this must never be shared across
+        # requests.
         self._pending_tool_calls: list[ChatCompletionMessageFunctionToolCall] = []
+        self._finished = False
+
+    def new_conversation(self) -> OpenAICompatibleAgentLLM:
+        """Return a FRESH `OpenAICompatibleAgentLLM` sharing this instance's `client`/`model`.
+
+        Fix round 1, finding C-3: the per-exchange mutable state (`_pending_tool_calls`,
+        `_finished`) must never survive past the request that created it, or leak between
+        concurrent requests — but the underlying `client`/`model` are cheap and safe to share
+        (the `openai` SDK's `OpenAI` client wraps its own connection-pooled `httpx.Client`).
+        `app.main` builds exactly ONE `OpenAICompatibleAgentLLM` at boot and wires
+        `agent_llm_factory=<that instance>.new_conversation` into `app.factory.create_app` —
+        `app.routes.deps.get_agent_llm` calls it fresh on every `/agent/chat` request.
+        """
+        return OpenAICompatibleAgentLLM(client=self._client, model=self._model)
 
     @classmethod
     def from_settings(cls, settings: Settings) -> OpenAICompatibleAgentLLM:
@@ -126,10 +173,20 @@ class OpenAICompatibleAgentLLM:
                 limit, non-2xx, ...), any `httpx.HTTPError` (a connection reset/timeout), or a
                 `json.JSONDecodeError` from parsing a tool call's `arguments` string (mirrors
                 `OpenAICompatibleChatLLM.stream_answer`'s exact three-type provider-failure
-                family). The raw provider detail is logged for operators, never placed on the
-                exception message.
+                family — this also covers a malformed/non-JSON `arguments` string from the
+                provider itself, handled the same way, never escaping as a raw
+                `json.JSONDecodeError`). The raw provider detail is logged for operators, never
+                placed on the exception message.
         """
         try:
+            # Fix round 1, finding C-2: the PREVIOUS `next_step` call already returned this
+            # exchange's final `TextDelta` (a completion with `content` and no `tool_calls`) —
+            # that IS the model's final message (PRD §6). Return `LlmDone()` immediately, with
+            # NO provider call, so `run_agent`'s loop actually terminates instead of re-querying
+            # a conversation that has already ended.
+            if self._finished:
+                return LlmDone()
+
             if self._pending_tool_calls:
                 call = self._pending_tool_calls.pop(0)
                 return ToolCallStep(call.function.name, json.loads(call.function.arguments))
@@ -159,6 +216,10 @@ class OpenAICompatibleAgentLLM:
                     return ToolCallStep(first.function.name, json.loads(first.function.arguments))
 
             if message.content:
+                # Fix round 1, finding C-2: mark the exchange finished BEFORE returning — the
+                # NEXT `next_step` call (this same instance, `run_agent`'s very next loop
+                # iteration) returns `LlmDone()` without querying the provider again.
+                self._finished = True
                 return TextDelta(message.content)
 
             return LlmDone()

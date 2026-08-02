@@ -13,8 +13,10 @@ a real provider failure from `app.agent.llm.OpenAICompatibleAgentLLM` (`AgentLLM
 raised from inside `llm.next_step` while `run_agent`'s generator is being driven.
 
 Statelessness (§5.4/§12): no `app.services.chat`/`ChatSession`/`ChatMessage` code is imported or
-called anywhere in this module — there is nothing here that COULD write a chat row. The only
-`session.commit()` below persists whatever CMS content the agent's own tool calls produced
+called anywhere in this module — there is nothing here that COULD write a chat row. Every
+`session.commit()`/`session.rollback()` that runs for a request through this route lives inside
+`run_agent` itself (fix round 1, finding C-4 — one commit/rollback per tool call, never a single
+trailing commit here), and persists only whatever CMS content the agent's own tool calls produced
 (`Content`/`Tag` rows), never a chat message.
 """
 
@@ -73,20 +75,31 @@ def _generate_agent_stream(
 ) -> Iterator[str]:
     """Yield the §5.4 SSE body for one `/agent/chat` exchange.
 
-    On success, `session.commit()` runs once, after `run_agent`'s generator is fully exhausted —
-    regardless of whether it ended in `Done` or a graceful `Error` (§6: a second consecutive tool
-    failure can follow one or more EARLIER successful calls in the same request; those earlier
-    writes must still land). On an exception escaping `run_agent` itself (a bug, or
-    `AgentLLMFailedError` from the real provider seam), the `error` event is yielded BEFORE
-    `session.rollback()` runs — same ordering `public_chat._generate_chat_stream` uses and for
-    the same reason: a rollback failure must never cost the client its `error` event.
+    Fix round 1, finding C-4: the single TRAILING `session.commit()` this generator used to run
+    after `run_agent` was fully exhausted is REMOVED — it was the actual bug. `run_agent` itself
+    now commits after every SUCCESSFUL `call_tool` and rolls back after every FAILED one
+    (mirroring `app.mcp.server._execute_tool_call`'s per-call transaction semantics), so a
+    publish whose `rebuild_chunks` raised `EmbeddingFailedError` mid-exchange rolls back on the
+    spot instead of riding this generator's own trailing commit to a
+    published-with-zero-chunks row the SSE stream had just reported as NOT completed. Nothing is
+    lost by removing it: every write in this whole request path originates from a `call_tool`
+    call inside `run_agent`, and each one now owns its own commit/rollback boundary the instant
+    it succeeds or fails — there is never anything left pending by the time `run_agent`'s
+    generator is exhausted, whether it ended in `Done` or a graceful `Error`.
+
+    On an exception escaping `run_agent` itself (a bug, or `AgentLLMFailedError` from the real
+    provider seam), the `error` event is still yielded BEFORE `session.rollback()` runs — same
+    ordering `public_chat._generate_chat_stream` uses and for the same reason: a rollback
+    failure must never cost the client its `error` event. This `rollback()` is now purely
+    defensive (every tool call already resolved its own transaction boundary by the time any
+    exception could reach here) — kept as a safety net for a bug elsewhere, or any state left
+    dirty on a path that isn't `run_agent`'s own tool-call loop.
     """
     try:
         for event in run_agent(
             messages, llm=llm, session=session, actor_id=actor_id, pipeline=pipeline
         ):
             yield _to_sse_event(event)
-        session.commit()
     except Exception as exc:
         logger.warning("agent chat stream failed for actor %s: %s", actor_id, exc)
         code = exc.code if isinstance(exc, AppError) else _AGENT_STREAM_ERROR_CODE

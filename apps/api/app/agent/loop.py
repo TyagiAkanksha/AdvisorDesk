@@ -12,10 +12,17 @@ Naming (controller-fixed pin, task-03 brief + test-author report): `LlmStep`'s c
 is `LlmDone`; `AgentEvent`'s completion member is the plain `Done` — `Done` is the more
 externally-visible type (constructed/matched by both test files and this module's own SSE-facing
 route), `LlmDone` is purely internal to the model-querying inner loop.
+
+Fix round 1 (Opus review of commit e58f007, findings C-1/C-4/I-1): see `run_agent` for the
+specifics of each — `json.dumps`-ing a synthesized tool call's `arguments` onto the wire (C-1),
+committing/rolling back around each individual `call_tool` invocation instead of relying on one
+trailing commit at the route layer (C-4), and counting the §6 cap against every ATTEMPTED tool
+call, not just successful ones (I-1).
 """
 
 from __future__ import annotations
 
+import json
 import uuid
 from collections.abc import Iterator
 from dataclasses import dataclass
@@ -219,7 +226,9 @@ def run_agent(
         messages: the client-resent conversation history, oldest first, last element the new
             user turn (PRD §5.4) — copied, never mutated.
         llm: the model-querying seam (`AgentLLM.next_step`).
-        session: the caller's `Session` — every tool call runs in this same transaction.
+        session: the caller's `Session` — every tool call runs through it, but each call now
+            owns its own commit/rollback boundary (fix round 1, finding C-4), not one shared
+            transaction for the whole exchange.
         actor_id: the authenticated admin driving this exchange (stamped on any write tool).
         pipeline: the `ChunkPipeline` every tool call threads through (required, keyword-only,
             no default — t02 amendment: a caller must supply a real pipeline or agent-driven
@@ -228,6 +237,17 @@ def run_agent(
     Yields:
         `AgentEvent`s in execution order: `Token`s for text, a `ToolCall` for every attempt (a
         `ToolResult` follows only if it succeeded), then exactly one final `Done` or `Error`.
+
+    Transaction boundary (fix round 1, finding C-4): `session.commit()` runs immediately after
+    each SUCCESSFUL `call_tool`, and `session.rollback()` immediately after each FAILED one —
+    mirroring `app.mcp.server._execute_tool_call`'s per-call semantics, in-band with whether the
+    call actually raised, never left for a single trailing commit at the route layer. Before
+    this fix, one commit at the end of the whole exchange could commit a tool's partial write
+    (e.g. `publish` flushing `status='published'` before `rebuild_chunks` raised
+    `EmbeddingFailedError`) as if it had fully succeeded, while `done`/`error` honestly reported
+    it hadn't — or roll back an EARLIER call's already-reported success just because a LATER
+    call in the same exchange failed. Each tool call now keeps its own §4 transaction semantics
+    regardless of which surface (REST, MCP, or this loop) drove it.
     """
     conversation: list[dict[str, Any]] = [
         {"role": "system", "content": SYSTEM_PROMPT},
@@ -237,6 +257,17 @@ def run_agent(
     completed: list[dict[str, Any]] = []
     consecutive_failures = 0
     call_index = 0
+
+    # Fix round 1, finding C-4: establish a clean transaction baseline before this exchange's
+    # own per-call commit/rollback boundary begins. `session.rollback()` (below, on a failed
+    # call) reverts the WHOLE current transaction, not just this attempt's own writes — without
+    # this, a caller that had already flushed (but not committed) unrelated work onto the same
+    # `session` before calling `run_agent` would lose it the moment this exchange's FIRST tool
+    # call happened to fail, even though that failure did no writes of its own. In production
+    # `get_session` hands `run_agent` a brand-new session with nothing pending, so this commits
+    # an empty transaction (a no-op); it only matters for a caller (e.g. a test fixture) that
+    # flushes setup data onto the same session first.
+    session.commit()
 
     while True:
         step = llm.next_step(conversation, tool_schemas)
@@ -263,7 +294,16 @@ def run_agent(
                     {
                         "id": tool_call_id,
                         "type": "function",
-                        "function": {"name": step.name, "arguments": step.arguments},
+                        "function": {
+                            "name": step.name,
+                            # Fix round 1, finding C-1: the OpenAI wire protocol (and the real
+                            # NVIDIA endpoint, live-verified 400) requires `arguments` to be a
+                            # JSON-encoded STRING, not the raw dict `ToolCallStep.arguments`
+                            # carries — every follow-up provider query failed until this was
+                            # fixed. `app.agent.llm.OpenAICompatibleAgentLLM` mirrors this with
+                            # its own `json.loads` when re-hydrating a queued parallel tool call.
+                            "arguments": json.dumps(step.arguments),
+                        },
                     }
                 ],
             }
@@ -275,6 +315,12 @@ def run_agent(
                 step.name, step.arguments, session=session, actor_id=actor_id, pipeline=pipeline
             )
         except AppError as exc:
+            # Fix round 1, finding C-4: roll back THIS call's (possibly partial) write
+            # immediately — in-band with the failure, mirroring
+            # `app.mcp.server._execute_tool_call`. Safe even when nothing was actually written
+            # (e.g. a pure Pydantic validation `ToolInputError` before any handler ran) — an
+            # empty rollback is a no-op.
+            session.rollback()
             # PRD §6: "On a tool error, surface the error to the model once for self-correction,
             # then fail gracefully with an explanation." The error text is fed back VERBATIM
             # (probe-derived pin (2): the model self-corrects only when the field name and shape
@@ -294,8 +340,23 @@ def run_agent(
                     ),
                 }
             )
+            if call_index >= _MAX_TOOL_CALLS:
+                # Fix round 1, finding I-1: the cap bounds ATTEMPTS (`call_index`), not
+                # successes (`len(completed)`) — an alternating fail/succeed script previously
+                # ran 16 tool executions (16 provider queries) against an "8 tool calls per
+                # request" cap. This stops at exactly 8 attempts, full stop, regardless of how
+                # many of them succeeded.
+                report = _cap_report(completed)
+                conversation.append({"role": "assistant", "content": report})
+                yield Token(report)
+                yield Done(completed)
+                return
             continue
 
+        # Fix round 1, finding C-4: commit THIS call's write immediately — never left pending
+        # for a later iteration or a trailing route-level commit to (mis)handle. A LATER failure
+        # in the same exchange can now never roll back an already-reported success.
+        session.commit()
         consecutive_failures = 0
         summary = str(result)
         conversation.append({"role": "tool", "tool_call_id": tool_call_id, "content": summary})
@@ -304,8 +365,9 @@ def run_agent(
         )
         yield ToolResult(step.name, summary)
 
-        if len(completed) >= _MAX_TOOL_CALLS:
-            # §6 cap pin: stop WITHOUT asking the model for another step — synthesize the honest
+        if call_index >= _MAX_TOOL_CALLS:
+            # §6 cap pin (finding I-1: counts attempts via `call_index`, not successes) — stop
+            # WITHOUT asking the model for another step — synthesize the honest
             # partial-completion report ourselves.
             report = _cap_report(completed)
             conversation.append({"role": "assistant", "content": report})

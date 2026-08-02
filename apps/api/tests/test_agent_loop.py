@@ -55,6 +55,9 @@ from dataclasses import dataclass, field
 from typing import Any
 
 import pytest
+from sqlalchemy import select
+from sqlalchemy.orm import Session
+
 from app.agent.loop import (
     SYSTEM_PROMPT,
     AgentEvent,
@@ -69,9 +72,6 @@ from app.agent.loop import (
     ToolResult,
     run_agent,
 )
-from sqlalchemy import select
-from sqlalchemy.orm import Session
-
 from app.models import Content, User
 from app.services import content as content_service
 from app.services.lifecycle import NoopChunkPipeline

@@ -45,12 +45,12 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Any
 
-from app.agent.loop import LlmDone, LlmStep, TextDelta, ToolCallStep
 from auth_helpers import FakeGoogleOAuthClient, login_as
 from fastapi.testclient import TestClient
 from sqlalchemy import Engine, select
 from sqlalchemy.orm import Session
 
+from app.agent.loop import LlmDone, LlmStep, TextDelta, ToolCallStep
 from app.config import Settings
 from app.db import make_session_factory
 from app.factory import create_app

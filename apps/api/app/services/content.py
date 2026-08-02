@@ -420,6 +420,16 @@ def update_content_tags(
         normalized_remove = {normalize_tag_name(name) for name in remove}
         normalized_remove.discard("")
         if normalized_remove:
+            # Final-review note (F4c, t02 M4): this `Tag` lookup deliberately does NOT go
+            # through `active_select(Tag)`, unlike every other read of `Tag` in this module —
+            # the same documented exception `get_or_create_tags` takes, for the same reason.
+            # `Tag.name` uniqueness spans soft-deleted rows (PRD §4.1: reactivating a
+            # soft-deleted tag reuses its SAME id/name), so a name in `remove` maps to at most
+            # one `Tag` row regardless of that row's `is_deleted` state. Filtering through
+            # `active_select` here would let a `Tag` soft-deleted by some future admin-facing
+            # path silently fail to match, leaving its now-orphaned `ContentTag` association
+            # un-removable by name — this association-removal path must resolve a name to the
+            # tag it actually points at, not to "the currently-active tag with that name".
             session.execute(
                 delete(ContentTag).where(
                     ContentTag.content_id == content.id,

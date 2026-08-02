@@ -223,7 +223,16 @@ def content_publish(
     session: Session = Depends(get_session),
     pipeline: ChunkPipeline = Depends(get_chunk_pipeline),
 ) -> ContentResponse:
-    """PRD §5.2/§4: publish transaction — status, `published_at`, then (re)chunk."""
+    """PRD §5.2/§4: publish — status -> published, (re)chunks.
+
+    Legal from every status (task-00 pinned transition matrix,
+    `app.services.content.publish_content`): `draft`/`archived` -> `published`
+    rebuilds chunks (an `archived` starting point still rebuilds, since
+    archiving already removed its chunks); `published` -> `published` is an
+    idempotent no-op re-publish — no error, no re-chunk. `published_at` is
+    stamped only on the first successful publish and preserved, unchanged,
+    on every later re-publish.
+    """
     content = content_service.publish_content(
         session, content_id, actor_id=principal.user_id, pipeline=pipeline
     )

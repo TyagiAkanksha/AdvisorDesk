@@ -1,4 +1,12 @@
-"""content_stats — the §5.2 dashboard aggregate (also backs the phase-5 `count_content` tool)."""
+"""content_stats — the §5.2 dashboard aggregate.
+
+Final-review fix (F4b, t01 M1): this module previously claimed to also back the phase-5
+`count_content` MCP tool — false since task-01. `count_content` needs a COMBINED status-AND-tag
+count `content_stats`'s marginal (by-status, by-tag separately) breakdowns can't answer, so it
+calls `app.services.content.list_content`'s own filtered `total` directly instead (see
+`app.mcp.tools_read._count_content`'s docstring for the full reasoning). This module backs only
+`GET /stats` (`app.routes.content_routes.stats_get`).
+"""
 
 from __future__ import annotations
 

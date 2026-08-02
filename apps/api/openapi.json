@@ -1069,7 +1069,7 @@
     },
     "/api/v1/content/{content_id}/publish": {
       "post": {
-        "description": "PRD \u00a75.2/\u00a74: publish transaction \u2014 status, `published_at`, then (re)chunk.",
+        "description": "PRD \u00a75.2/\u00a74: publish \u2014 status -> published, (re)chunks.\n\nLegal from every status (task-00 pinned transition matrix,\n`app.services.content.publish_content`): `draft`/`archived` -> `published`\nrebuilds chunks (an `archived` starting point still rebuilds, since\narchiving already removed its chunks); `published` -> `published` is an\nidempotent no-op re-publish \u2014 no error, no re-chunk. `published_at` is\nstamped only on the first successful publish and preserved, unchanged,\non every later re-publish.",
         "operationId": "content_publish",
         "parameters": [
           {

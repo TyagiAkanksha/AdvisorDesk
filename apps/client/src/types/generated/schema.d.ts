@@ -268,7 +268,15 @@ export interface paths {
         put?: never;
         /**
          * Content Publish
-         * @description PRD §5.2/§4: publish transaction — status, `published_at`, then (re)chunk.
+         * @description PRD §5.2/§4: publish — status -> published, (re)chunks.
+         *
+         *     Legal from every status (task-00 pinned transition matrix,
+         *     `app.services.content.publish_content`): `draft`/`archived` -> `published`
+         *     rebuilds chunks (an `archived` starting point still rebuilds, since
+         *     archiving already removed its chunks); `published` -> `published` is an
+         *     idempotent no-op re-publish — no error, no re-chunk. `published_at` is
+         *     stamped only on the first successful publish and preserved, unchanged,
+         *     on every later re-publish.
          */
         post: operations["content_publish"];
         delete?: never;

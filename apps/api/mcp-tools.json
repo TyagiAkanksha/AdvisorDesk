@@ -102,6 +102,7 @@
           "type": "string"
         },
         "tags": {
+          "default": [],
           "items": {
             "type": "string"
           },
@@ -186,7 +187,7 @@
     "description": "Soft-delete a content item (tombstone, not restorable) and remove its chunks in one transaction.",
     "inputSchema": {
       "additionalProperties": false,
-      "description": "Shared arguments for `delete_content`/`publish`/`archive` (PRD \u00a76): just `content_id`.",
+      "description": "A single `content_id` argument (PRD \u00a76) \u2014 no other fields.",
       "properties": {
         "content_id": {
           "format": "uuid",
@@ -209,6 +210,7 @@
       "description": "`tag_content`'s arguments (PRD \u00a76): `content_id`, plus `add`/`remove` name lists.",
       "properties": {
         "add": {
+          "default": [],
           "items": {
             "type": "string"
           },
@@ -221,6 +223,7 @@
           "type": "string"
         },
         "remove": {
+          "default": [],
           "items": {
             "type": "string"
           },
@@ -240,7 +243,7 @@
     "description": "Publish a content item: runs the full publish transaction (\u00a74).",
     "inputSchema": {
       "additionalProperties": false,
-      "description": "Shared arguments for `delete_content`/`publish`/`archive` (PRD \u00a76): just `content_id`.",
+      "description": "A single `content_id` argument (PRD \u00a76) \u2014 no other fields.",
       "properties": {
         "content_id": {
           "format": "uuid",
@@ -260,7 +263,7 @@
     "description": "Archive a content item: status -> archived, removes its chunks.",
     "inputSchema": {
       "additionalProperties": false,
-      "description": "Shared arguments for `delete_content`/`publish`/`archive` (PRD \u00a76): just `content_id`.",
+      "description": "A single `content_id` argument (PRD \u00a76) \u2014 no other fields.",
       "properties": {
         "content_id": {
           "format": "uuid",

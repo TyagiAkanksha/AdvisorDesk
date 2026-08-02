@@ -97,7 +97,13 @@ class CreateDraftArgs(BaseModel):
 
     title: str = Field(min_length=1)
     body_md: str = ""
-    tags: list[str] = Field(default_factory=list)
+    # Final-review fix (F5, t02 M3): `json_schema_extra` puts an explicit `"default": []` into
+    # the exported `mcp-tools.json` — Pydantic's `default_factory` alone leaves the property with
+    # no visible default in the JSON Schema (still correctly non-`required`, but silent on WHAT
+    # omitting it means). The checkpoint's own probe found the model struggles with exactly this
+    # kind of unstated-default list argument; the schema is the model's only view of the
+    # contract, so the default belongs in it, not just in this class's runtime behavior.
+    tags: list[str] = Field(default_factory=list, json_schema_extra={"default": []})
 
     @field_validator("title")
     @classmethod
@@ -163,8 +169,14 @@ def _edit_content(
 # ---------------------------------------------------------------------------
 
 
+# Final-review fix (F5, t02 M6): this class's docstring becomes `inputSchema.description` on
+# EVERY tool that uses it (`delete_content`, `publish`, `archive`) — it previously named all
+# three sibling tools by name, so e.g. `publish`'s own exported schema told the model about
+# `delete_content` and `archive` too, information irrelevant (and mildly confusing) to a model
+# looking only at `publish`'s schema. Kept neutral below on purpose: say what the field IS, not
+# which other tools happen to share its shape.
 class ContentIdArgs(BaseModel):
-    """Shared arguments for `delete_content`/`publish`/`archive` (PRD §6): just `content_id`."""
+    """A single `content_id` argument (PRD §6) — no other fields."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -217,8 +229,9 @@ class TagContentArgs(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     content_id: uuid.UUID
-    add: list[str] = Field(default_factory=list)
-    remove: list[str] = Field(default_factory=list)
+    # Final-review fix (F5, t02 M3) — see `CreateDraftArgs.tags`'s comment for the full reasoning.
+    add: list[str] = Field(default_factory=list, json_schema_extra={"default": []})
+    remove: list[str] = Field(default_factory=list, json_schema_extra={"default": []})
 
 
 def _tag_content(args: TagContentArgs, *, session: Session, actor_id: uuid.UUID) -> dict[str, Any]:

@@ -64,10 +64,18 @@ __all__ = [
 #      the model to convert a conversational tag name into that form itself, both when tagging
 #      content and when filtering by tag, rather than relying solely on the tool layer's own
 #      normalization (`app.mcp.tools_read`) to paper over a mismatched filter.
+#   5. Checkpoint fix (99419e6, 2026-08-01): topics are organized by tags, not free-text — steer
+#      "how many/find everything on <topic>" questions to `count_content`/`search_content`'s
+#      `tag` filter, and warn that the `q` argument matches TITLE text only, so it silently
+#      under-matches a topic query the model might otherwise route through `q`.
+# Final-review fix (F2, I-2): a 6th clause promising "a tool to report content gaps" was removed
+# — `report_content_gaps` is phase-7 scope (PRD §10), not registered at HEAD, and the sentence
+# was a capability lie the shipped panel could surface (either a `ToolNotFoundError` round-trip
+# or the model textually claiming a capability it doesn't have).
 SYSTEM_PROMPT = (
     "You are AdvisorDesk's CMS operations agent, working on behalf of an authenticated admin. "
     "You are given tools to search, create, edit, tag, publish, archive, delete, and count CMS "
-    "content, plus a tool to report content gaps. Use a tool only when the user is asking you to "
+    "content. Use a tool only when the user is asking you to "
     "actually operate on CMS content. For capability or general questions — 'what can you do', "
     "'how does this work', and similar — answer directly in text without calling any tool. "
     "When asked to draft an article, write the full article body yourself in this same turn and "
@@ -82,6 +90,18 @@ SYSTEM_PROMPT = (
 
 # PRD §6 verbatim: "Cap: 8 tool calls per request."
 _MAX_TOOL_CALLS = 8
+
+# Final-review fix (F3, t03 M-7 promoted): a hard ceiling on total `llm.next_step` QUERIES this
+# exchange makes, independent of `_MAX_TOOL_CALLS` — that cap only bounds tool-call ATTEMPTS, so
+# an adapter regression that keeps returning `TextDelta` (or otherwise never reports `LlmDone`
+# and never calls a tool) was previously unbounded: the confirm pass reproduced this exact C-2
+# class of bug and measured it HANGING the test suite for ~10 minutes instead of failing it. 64
+# is deliberately generous — eight full legitimate 8-tool-call cycles' worth of steps, far above
+# any real exchange the §6 cap already bounds — so no genuine conversation can ever reach it; a
+# runaway adapter now ends the exchange with the standard graceful `Error` event (below) instead
+# of hanging the caller, the CI run, or a live admin session.
+_MAX_STEPS = 64
+_STEP_LIMIT_ERROR_CODE = "agent_step_limit_exceeded"
 
 
 # ---------------------------------------------------------------------------
@@ -277,7 +297,23 @@ def run_agent(
     # flushes setup data onto the same session first.
     session.commit()
 
+    step_count = 0
     while True:
+        # F3: count every QUERY to the model, not just tool-call attempts (`_MAX_TOOL_CALLS`
+        # below already bounds those) — see `_MAX_STEPS`'s own comment for the failure mode
+        # this closes. Checked before querying again, so a runaway adapter can make at most
+        # `_MAX_STEPS` calls to `next_step` before this fires.
+        step_count += 1
+        if step_count > _MAX_STEPS:
+            yield Error(
+                code=_STEP_LIMIT_ERROR_CODE,
+                message=(
+                    f"Reached the internal {_MAX_STEPS}-step safety limit for this exchange "
+                    "without finishing; aborting."
+                ),
+            )
+            return
+
         step = llm.next_step(conversation, tool_schemas)
 
         if isinstance(step, TextDelta):

@@ -48,9 +48,14 @@ export default function Component({ children }: AppShellProps) {
     <Box sx={{ display: 'flex' }}>
       <AppBar>
         <Box sx={{ flexGrow: 1 }} />
-        <Button onClick={() => setAgentPanelOpen((prev) => !prev)}>Agent</Button>
+        {/* User checkpoint (phase-5): both AppBar buttons rendered theme-primary text on the
+            primary-colored bar — present in the a11y tree, invisible to the eye. `inherit`
+            picks up the AppBar's contrast text color (the standard MUI AppBar idiom). */}
+        <Button color="inherit" onClick={() => setAgentPanelOpen((prev) => !prev)}>
+          Agent
+        </Button>
         {me ? (
-          <Button onClick={(event) => setAnchorEl(event.currentTarget)}>
+          <Button color="inherit" onClick={(event) => setAnchorEl(event.currentTarget)}>
             <Avatar alt={userName} src={me.avatar_url}>
               {userName.charAt(0)}
             </Avatar>

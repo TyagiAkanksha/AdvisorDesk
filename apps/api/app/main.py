@@ -38,6 +38,7 @@ from fastapi import FastAPI
 from sqlalchemy import Engine
 from sqlalchemy.orm import Session, sessionmaker
 
+from app.agent.llm import OpenAICompatibleAgentLLM
 from app.auth.oauth import GoogleOAuthClient, HttpxGoogleOAuthClient
 from app.config import Settings
 from app.db import make_engine, make_session_factory
@@ -167,6 +168,17 @@ oauth_client: GoogleOAuthClient = HttpxGoogleOAuthClient.from_settings(settings)
 embedder: OpenAICompatibleEmbedder = OpenAICompatibleEmbedder.from_settings(settings)
 chunk_pipeline: EmbeddingChunkPipeline = EmbeddingChunkPipeline(embedder)
 chat_llm: OpenAICompatibleChatLLM = OpenAICompatibleChatLLM.from_settings(settings)
+# Phase-5 task-03 (fix round 1, finding C-3): the real agent LLM (PRD §5.4/§6, v1.5) — same
+# `from_settings` construction pattern as `chat_llm`/`embedder` above, EXACTLY ONE
+# `OpenAICompatibleAgentLLM` built at boot, holding the shared, thread-safe `openai.OpenAI`
+# client. Unlike `chat_llm`/`embedder`, this instance is never itself wired directly as
+# `app.state.agent_llm` — that was the pre-fix-round shape whose `_pending_tool_calls`/
+# "turn finished" state leaked across requests on the process-lifetime singleton. Instead,
+# `agent_llm_builder.new_conversation` (a fresh, per-call instance sharing this one's
+# `client`/`model`) is wired below as `agent_llm_factory`, called fresh by
+# `app.routes.deps.get_agent_llm` on every `/agent/chat` request — see `app.agent.llm`'s module
+# docstring for the full rationale.
+agent_llm_builder: OpenAICompatibleAgentLLM = OpenAICompatibleAgentLLM.from_settings(settings)
 # Phase-4 task-03: one process-lifetime `RateLimiter` shared by every `/public/chat` request
 # (PRD §9) — same explicit-wiring pattern as `chat_llm`/`embedder` above, even though
 # `create_app`'s own `rate_limiter=None` default would already build an equivalent instance
@@ -181,4 +193,5 @@ app: FastAPI = create_app(
     chat_llm=chat_llm,
     embedder=embedder,
     rate_limiter=rate_limiter,
+    agent_llm_factory=agent_llm_builder.new_conversation,
 )

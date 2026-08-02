@@ -18,10 +18,10 @@ from sqlalchemy import delete, func, or_, select
 from sqlalchemy.orm import Session
 
 from app.models import Content, ContentTag, Tag
-from app.services.errors import NotFoundError
+from app.services.errors import ConflictError, NotFoundError
 from app.services.lifecycle import ChunkPipeline
 from app.services.queries import active_select
-from app.services.tags import get_or_create_tags
+from app.services.tags import get_or_create_tags, normalize_tag_name
 
 _SLUG_INVALID_RE = re.compile(r"[^a-z0-9]+")
 _LIKE_SPECIAL_RE = re.compile(r"[\\%_]")
@@ -375,6 +375,84 @@ def update_content(
     return content
 
 
+def update_content_tags(
+    session: Session,
+    content_id: uuid.UUID,
+    *,
+    add: Sequence[str] = (),
+    remove: Sequence[str] = (),
+    actor_id: uuid.UUID | None,
+) -> Content:
+    """Add/remove `content_id`'s tag associations in one call (PRD §6 `tag_content`).
+
+    Unlike `update_content`'s `tags` parameter (a full replacement set), this is a
+    differential edit: `add` resolves each name through `get_or_create_tags` (creating a
+    missing tag, or reactivating a soft-deleted one, PRD §4.1) and associates it if not
+    already linked; `remove` disassociates any currently-linked tag whose normalized name
+    matches one in `remove` — a name that resolves to no existing tag, or one already
+    unassociated, is a no-op for that name (this never creates a tag just to remove it,
+    unlike `add`'s own `get_or_create_tags` call).
+
+    `remove` is applied before `add`, so a name present in both lists ends up associated
+    (`add` wins) — the only ordering that makes "swap tag X for tag Y in one call" behave
+    sanely when X and Y happen to collide.
+
+    Deliberately does not call `pipeline.rebuild_chunks`: PRD §4's re-chunk/re-embed trigger
+    is `body_md` content changing on a published item (`update_content`'s own rule); tags are
+    metadata, not chunked/embedded content, so a tag-only edit has nothing to re-embed.
+
+    Args:
+        session: the caller's `Session`.
+        content_id: the `Content.id` to modify.
+        add: raw tag names to associate.
+        remove: raw tag names to disassociate, if currently associated.
+        actor_id: the authenticated admin performing this write.
+
+    Returns:
+        The updated `Content` row.
+
+    Raises:
+        NotFoundError: no active row exists for `content_id`.
+    """
+    content = get_content(session, content_id)
+
+    if remove:
+        normalized_remove = {normalize_tag_name(name) for name in remove}
+        normalized_remove.discard("")
+        if normalized_remove:
+            # Final-review note (F4c, t02 M4): this `Tag` lookup deliberately does NOT go
+            # through `active_select(Tag)`, unlike every other read of `Tag` in this module —
+            # the same documented exception `get_or_create_tags` takes, for the same reason.
+            # `Tag.name` uniqueness spans soft-deleted rows (PRD §4.1: reactivating a
+            # soft-deleted tag reuses its SAME id/name), so a name in `remove` maps to at most
+            # one `Tag` row regardless of that row's `is_deleted` state. Filtering through
+            # `active_select` here would let a `Tag` soft-deleted by some future admin-facing
+            # path silently fail to match, leaving its now-orphaned `ContentTag` association
+            # un-removable by name — this association-removal path must resolve a name to the
+            # tag it actually points at, not to "the currently-active tag with that name".
+            session.execute(
+                delete(ContentTag).where(
+                    ContentTag.content_id == content.id,
+                    ContentTag.tag_id.in_(select(Tag.id).where(Tag.name.in_(normalized_remove))),
+                )
+            )
+
+    if add:
+        linked_tag_ids = set(
+            session.execute(
+                select(ContentTag.tag_id).where(ContentTag.content_id == content.id)
+            ).scalars()
+        )
+        for tag in get_or_create_tags(session, add):
+            if tag.id not in linked_tag_ids:
+                session.add(ContentTag(content_id=content.id, tag_id=tag.id))
+                linked_tag_ids.add(tag.id)
+
+    _touch(content, actor_id)
+    session.flush()
+    return content
+
+
 def delete_content(
     session: Session,
     content_id: uuid.UUID,
@@ -414,14 +492,34 @@ def publish_content(
     actor_id: uuid.UUID | None,
     pipeline: ChunkPipeline,
 ) -> Content:
-    """Publish `content_id`: set `status='published'` + `published_at`, then chunk (PRD §4).
+    """Publish `content_id` (task-00 pinned transition matrix, PRD §4 lifecycle rule).
+
+    `draft`/`archived` -> `published` in both cases; `published` ->
+    `published` is a no-op transition, not an error (idempotent re-POST).
+    `published_at` is stamped iff it is currently `NULL` — the first
+    successful publish — and never overwritten afterwards, so the public
+    feed's `published_at DESC` order (`list_published_content`) stays stable
+    across any later re-publish.
+
+    Chunk pipeline call depends on the starting status:
+
+    - `draft`: `rebuild_chunks` (first publish — nothing to preserve).
+    - `archived`: `rebuild_chunks` — `archive_content` already removed this
+      item's chunks, so skipping here would publish an unretrievable item.
+    - `published`: no pipeline call at all. This is safe without comparing
+      the stored chunks to the current `body_md`: `update_content`
+      re-chunks atomically on every edit of an already-published item (PRD
+      §4), so a published row's chunks always already reflect its current
+      body — "body unchanged since last embed" is the only state reachable
+      through the API/MCP surface here, so no diffing mechanism or schema
+      change is needed to know it's safe to skip.
 
     Args:
         session: the caller's `Session`.
         content_id: the `Content.id` to publish.
         actor_id: the authenticated admin performing this write.
         pipeline: the `ChunkPipeline` whose `rebuild_chunks` is called
-            exactly once.
+            (except on the `published` -> `published` no-op above).
 
     Returns:
         The published `Content` row.
@@ -430,11 +528,14 @@ def publish_content(
         NotFoundError: no active row exists for `content_id`.
     """
     content = get_content(session, content_id)
+    already_published = content.status == "published"
     content.status = "published"
-    content.published_at = datetime.now(UTC)
+    if content.published_at is None:
+        content.published_at = datetime.now(UTC)
     _touch(content, actor_id)
     session.flush()
-    pipeline.rebuild_chunks(session, content)
+    if not already_published:
+        pipeline.rebuild_chunks(session, content)
     return content
 
 
@@ -447,6 +548,11 @@ def archive_content(
 ) -> Content:
     """Archive `content_id`: set `status='archived'` and remove its chunks (PRD §4).
 
+    Legal from `published` only (task-00 pinned transition matrix): `draft`
+    -> `archive` and `archived` -> `archive` both raise `ConflictError`
+    before touching the row or the pipeline, naming both the current status
+    and the attempted action in the message.
+
     Args:
         session: the caller's `Session`.
         content_id: the `Content.id` to archive.
@@ -458,8 +564,11 @@ def archive_content(
 
     Raises:
         NotFoundError: no active row exists for `content_id`.
+        ConflictError: `content_id`'s current status is not `published`.
     """
     content = get_content(session, content_id)
+    if content.status != "published":
+        raise ConflictError(f"Cannot archive content with status {content.status!r}.")
     content.status = "archived"
     _touch(content, actor_id)
     session.flush()

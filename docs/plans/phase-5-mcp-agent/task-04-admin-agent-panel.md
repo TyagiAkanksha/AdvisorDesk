@@ -32,7 +32,10 @@ history held client-side and content lists refreshing automatically after agent 
 ## Interfaces
 
 - **Consumes:** `agent_chat` SSE events (task-03); `AppShell` (p2-t04); RTK tags
-  `['Content','Stats','Tags']`; `AppSnackbar` (p2-t06).
+  `['Content','Stats','Tags']`. *(Amended by owner ratification, phase-5 checkpoint 2026-08-02:
+  the original brief named `AppSnackbar` (p2-t06) for error display; the built panel renders
+  errors INLINE inside the panel instead — a persistent notice at the point of failure suits a
+  chat surface better than a transient edge toast. Ratified as-built.)*
 - **Produces (later tasks rely on — produce exactly):**
   - `useAgentStream` (in-file Args/Result): state `{turns: AgentTurn[], streaming, error}` and
     `send(text)`; `AgentTurn = {role:'user'|'assistant', text, events: ToolEvent[]}`;

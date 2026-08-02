@@ -16,6 +16,7 @@ dependencies = [
     "tiktoken>=0.13.0",
     "openai>=2.51.0",
     "pyyaml>=6.0.3",
+    "mcp>=2.0.0",
 ]
 
 [dependency-groups]
@@ -117,9 +118,30 @@ forbidden_modules = [
 ]
 
 [[tool.importlinter.contracts]]
-name = "app.routes and app.mcp are independent"
-type = "independence"
-modules = ["app.routes", "app.mcp"]
+name = "app.agent imports only app.mcp, app.services, app.models, and app.config"
+type = "forbidden"
+source_modules = ["app.agent"]
+forbidden_modules = [
+    "app.routes",
+    "app.rag",
+    "app.auth",
+    "app.main",
+    "app.db",
+    "app.factory",
+]
+
+[[tool.importlinter.contracts]]
+name = "app.mcp never imports app.routes"
+type = "forbidden"
+source_modules = ["app.mcp"]
+forbidden_modules = ["app.routes"]
+# Phase-5 task-03: was a two-way "independence" contract (task-01) — narrowed to one-directional
+# here because `POST /agent/chat` (app.routes.agent_routes) now legitimately reaches
+# `app.mcp.runtime.call_tool`/`list_tool_schemas` *through* `app.agent.loop` (the agent tool-loop
+# seam, task-03's own Interfaces block: "the only tool interface"). `app.mcp` itself — the
+# standalone streamable-HTTP MCP surface — must still never depend on `app.routes` in the other
+# direction, so it stays reusable independent of the REST surface; that one-way guarantee is what
+# this contract keeps.
 
 [[tool.importlinter.contracts]]
 name = "nothing imports app.main; only app.main imports app.factory"

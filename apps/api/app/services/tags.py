@@ -15,13 +15,21 @@ from app.services.queries import active_select
 _NORMALIZE_RE = re.compile(r"[^a-z0-9]+")
 
 
-def _normalize_tag_name(name: str) -> str:
+def normalize_tag_name(name: str) -> str:
     """Lowercase-hyphenate a raw tag name.
 
     PRD §4.1: `tags.name` is stored "lowercase, hyphenated, e.g.
     'tax-planning'". Any run of characters outside `[a-z0-9]` (after
     lowercasing) collapses to a single hyphen; leading/trailing hyphens are
     stripped, so `"Tax Planning"` -> `"tax-planning"`.
+
+    Public (not `_`-prefixed): shared with `app.services.content.
+    update_content_tags` (phase-5 task-02), which must normalize `remove`
+    names the same way `get_or_create_tags` normalizes `add` names before
+    matching them against stored `Tag.name` values — the same normalization
+    rule cannot live in two places (CONVENTIONS.md §3's soft-delete-filter
+    "defined once" rule applies here too: two independent normalizers could
+    drift).
     """
     return _NORMALIZE_RE.sub("-", name.strip().lower()).strip("-")
 
@@ -59,7 +67,7 @@ def get_or_create_tags(session: Session, names: Sequence[str]) -> list[Tag]:
     """
     tags: list[Tag] = []
     for raw_name in names:
-        normalized = _normalize_tag_name(raw_name)
+        normalized = normalize_tag_name(raw_name)
         if not normalized:
             continue
         tag = session.execute(select(Tag).where(Tag.name == normalized)).scalar_one_or_none()

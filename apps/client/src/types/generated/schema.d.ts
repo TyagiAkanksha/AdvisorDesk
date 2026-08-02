@@ -4,6 +4,30 @@
  */
 
 export interface paths {
+    "/api/v1/agent/chat": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Agent Chat
+         * @description PRD §5.4: stateless agent exchange — resent history in, typed SSE tool-loop events out.
+         *
+         *     `pipeline` is `app.state.chunk_pipeline` (t02 amendment, `get_chunk_pipeline`) — threaded
+         *     straight into `run_agent`, so an agent-driven publish/archive/delete/edit-of-published runs
+         *     the SAME chunk-rebuild path the REST `/content/{id}/...` routes do, never silently a no-op.
+         */
+        post: operations["agent_chat"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/auth/callback": {
         parameters: {
             query?: never;
@@ -221,7 +245,10 @@ export interface paths {
         put?: never;
         /**
          * Content Archive
-         * @description PRD §5.2: archive — status -> archived, chunks removed.
+         * @description PRD §5.2/§4: archive — status -> archived, chunks removed.
+         *
+         *     Legal from `published` only; `draft`/`archived` -> archive both 409
+         *     (task-00 pinned transition matrix, `app.services.content.archive_content`).
          */
         post: operations["content_archive"];
         delete?: never;
@@ -241,7 +268,15 @@ export interface paths {
         put?: never;
         /**
          * Content Publish
-         * @description PRD §5.2/§4: publish transaction — status, `published_at`, then (re)chunk.
+         * @description PRD §5.2/§4: publish — status -> published, (re)chunks.
+         *
+         *     Legal from every status (task-00 pinned transition matrix,
+         *     `app.services.content.publish_content`): `draft`/`archived` -> `published`
+         *     rebuilds chunks (an `archived` starting point still rebuilds, since
+         *     archiving already removed its chunks); `published` -> `published` is an
+         *     idempotent no-op re-publish — no error, no re-chunk. `published_at` is
+         *     stamped only on the first successful publish and preserved, unchanged,
+         *     on every later re-publish.
          */
         post: operations["content_publish"];
         delete?: never;
@@ -444,6 +479,30 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /**
+         * AgentChatRequest
+         * @description `POST /agent/chat`'s request body (PRD §5.4): `{messages: [{role, content}]}`.
+         *
+         *     `messages` requires at least one element — the new user turn `run_agent` (`app.agent.loop`)
+         *     answers.
+         */
+        AgentChatRequest: {
+            /** Messages */
+            messages: components["schemas"]["AgentMessage"][];
+        };
+        /**
+         * AgentMessage
+         * @description One turn in the resent history: `role` is `"user"` or `"assistant"` (§5.4 exact shape).
+         */
+        AgentMessage: {
+            /** Content */
+            content: string;
+            /**
+             * Role
+             * @enum {string}
+             */
+            role: "user" | "assistant";
+        };
         /**
          * ChatRequest
          * @description `POST /public/chat`'s request body (PRD §5.3, exact field set).
@@ -694,6 +753,48 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    agent_chat: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AgentChatRequest"];
+            };
+        };
+        responses: {
+            /** @description SSE stream (PRD §5.4): `token`/`tool_call`/`tool_result` interleaved in execution order, then `done` on success or `error` on failure. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/event-stream": string;
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
     auth_callback: {
         parameters: {
             query: {
@@ -1077,6 +1178,15 @@ export interface operations {
             };
             /** @description Not Found */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Conflict */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };

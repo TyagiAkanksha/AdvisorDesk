@@ -47,7 +47,8 @@ Dependency direction (each layer may import the ones after it, never before):
 
 | Layer | May import |
 |---|---|
-| `routes/`, `mcp/`, `agent/` | `services/`, `rag/`, `auth/`, `models/`, `config` |
+| `routes/` | `agent/` (see rule 3), plus everything the next row lists |
+| `mcp/`, `agent/` | `services/`, `rag/`, `auth/`, `models/`, `config` — and `agent/` imports `mcp/` (its tool interface) |
 | `rag/`, `auth/` | `services/`, `models/`, `config` |
 | `services/` | `models/`, `config` |
 | `db` | `config` at most (engine/session factories take the URL as a parameter) |
@@ -60,8 +61,13 @@ Hard rules, declared as import-linter contracts in `apps/api/pyproject.toml` and
 
 1. `app.models` imports no other `app.*` package (pure leaf).
 2. `app.services` imports only `app.models` and `app.config` from `app.*`.
-3. `app.routes` and `app.mcp` never import each other (sibling independence — they share
-   `app.services`, which is the PRD §3 "no duplicated business logic" rule made structural).
+3. `app.mcp` never imports `app.routes` — tools must stay ignorant of HTTP machinery. *(Owner
+   ratification, phase-5 checkpoint 2026-08-02: this rule was originally bidirectional "sibling
+   independence". Phase 5's agent loop made the chain `routes → agent → mcp` legal by necessity —
+   `/agent/chat` calls `run_agent`, which calls MCP tools through `app.mcp.runtime.call_tool` —
+   so the enforced contract was narrowed to the direction that actually protects the
+   architecture. The PRD §3 "no duplicated business logic" rule is untouched: both surfaces
+   still share `app.services`.)*
 4. Nothing imports `app.main`.
 
 **Contract-verification ritual** (run once when adding a contract): inject a deliberately violating

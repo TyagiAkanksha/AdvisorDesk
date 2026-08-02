@@ -79,3 +79,30 @@ class OAuthExchangeError(AppError):
     """
 
     code = "oauth_exchange_failed"
+
+
+class ToolNotFoundError(AppError):
+    """An MCP tool name has no registered `ToolSpec` (phase-5 task-01, PRD §6) — maps to 404.
+
+    Raised by `app.mcp.runtime.call_tool` when `name` isn't in the tool registry — the same
+    "addressing something that doesn't exist" shape `NotFoundError` covers for a `content_id`,
+    kept as a distinct type/code (`tool_not_found` vs `not_found`) since the two are addressing
+    different kinds of things (a tool name vs. a `Content`/`Tag`/`User` row) and a caller (the
+    agent loop, task-03) may want to branch on which one it hit.
+    """
+
+    code = "tool_not_found"
+
+
+class ToolInputError(AppError):
+    """An MCP tool call's `arguments` failed its Pydantic args-model validation — maps to 422.
+
+    Raised by `app.mcp.runtime.call_tool`; the message names the offending field(s) (mirrors
+    `app.routes.errors._validation_error_handler`'s `loc: msg` shape for FastAPI's own
+    `RequestValidationError`, the closest existing precedent for "a caller sent bad structured
+    input" in this codebase) so both a human operator and the agent loop's self-correction pass
+    (PRD §6: "surface the error to the model once for self-correction") can see which argument
+    was wrong.
+    """
+
+    code = "tool_input_error"

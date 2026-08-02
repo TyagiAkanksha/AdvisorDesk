@@ -7,14 +7,19 @@ app. Every later route task includes its router here.
 
 from __future__ import annotations
 
+from collections.abc import Callable
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session, sessionmaker
 
+from app.agent.loop import AgentLLM
 from app.auth.oauth import GoogleOAuthClient
 from app.config import Settings
+from app.mcp.server import mount_mcp_http
 from app.rag.embeddings import Embedder
 from app.rag.synthesis import ChatLLM
+from app.routes.agent_routes import router as agent_router
 from app.routes.auth_routes import router as auth_router
 from app.routes.content_routes import router as content_router
 from app.routes.errors import register_error_handlers
@@ -34,6 +39,8 @@ def create_app(
     chat_llm: ChatLLM | None = None,
     embedder: Embedder | None = None,
     rate_limiter: RateLimiter | None = None,
+    agent_llm: AgentLLM | None = None,
+    agent_llm_factory: Callable[[], AgentLLM] | None = None,
 ) -> FastAPI:
     """Build the AdvisorDesk FastAPI application.
 
@@ -92,6 +99,22 @@ def create_app(
             `test_ratelimit.py` does exactly that. `app/main.py` still wires one built from the
             real `Settings` explicitly (same pattern as `chat_llm`/`embedder`) so the production
             caps are visibly, not implicitly, in force.
+        agent_llm: an optional `app.agent.loop.AgentLLM` (a test fake — every pinned
+            `tests/test_agent_endpoint.py` test forwards its own `FakeAgentLLM` here, phase-5
+            task-03, PRD §5.4/§6) — returned AS-IS, unchanged, on every request that resolves it
+            (`app.routes.deps.get_agent_llm`'s fallback branch). `None` leaves
+            `app.state.agent_llm` unset; a real `/agent/chat` request then falls through to
+            `agent_llm_factory` below, or raises `RuntimeError` if that is unset too.
+        agent_llm_factory: an optional zero-argument callable returning a fresh
+            `app.agent.loop.AgentLLM` on every call (fix round 1, finding C-3) — `app/main.py`
+            is the only caller that wires a real one (`OpenAICompatibleAgentLLM.
+            new_conversation`, bound to one boot-time instance sharing its `client`/`model`
+            across every call). `app.routes.deps.get_agent_llm` prefers this over `agent_llm`
+            whenever both are set, and calls it FRESH on every request — the fix for a
+            process-lifetime singleton's per-exchange state (a queued parallel tool call, or an
+            already-finished-turn flag) leaking into a different admin's later request. `None`
+            (every pinned test's own path, and the OpenAPI baseline export) falls back to
+            `agent_llm` above.
 
     Returns:
         A configured `FastAPI` app instance.
@@ -113,6 +136,8 @@ def create_app(
     app.state.chunk_pipeline = resolved_pipeline
     app.state.chat_llm = chat_llm
     app.state.embedder = embedder
+    app.state.agent_llm = agent_llm
+    app.state.agent_llm_factory = agent_llm_factory
     # `None` -> a real, working default (docstring above) — unlike `chat_llm`/`embedder`, never
     # left unset: `app.routes.deps.get_rate_limiter` has no fail-loud RuntimeError branch at all.
     app.state.rate_limiter = (
@@ -133,5 +158,12 @@ def create_app(
     app.include_router(auth_router, prefix=_API_PREFIX)
     app.include_router(content_router, prefix=_API_PREFIX)
     app.include_router(public_router, prefix=_API_PREFIX)
+    app.include_router(agent_router, prefix=_API_PREFIX)
+
+    # PRD §3 MCP exposure rule: OFF by default: the route doesn't exist at all unless
+    # explicitly enabled, and even then sits behind the same `require_admin` gate as every
+    # REST admin route (`app.mcp.server.mount_mcp_http`, phase-5 task-01).
+    if resolved_settings.mcp_http_enabled:
+        mount_mcp_http(app, path=f"{_API_PREFIX}/mcp")
 
     return app

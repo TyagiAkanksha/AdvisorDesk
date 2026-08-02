@@ -42,8 +42,8 @@ starts here.
     actor_id: uuid.UUID) -> dict` — validates via the tool's Pydantic args model, executes,
     returns the tool's JSON payload; raises `ToolNotFoundError` / `ToolInputError` (add to the
     error family). **This is the seam the agent loop (task-03) calls — no HTTP involved.**
-    Also `list_tool_schemas() -> list[dict]` (name, description, JSON schema) — fed to the OpenAI
-    loop AND the baseline export.
+    Also `list_tool_schemas() -> list[dict]` (name, description, JSON schema) — fed to the agent
+    loop (task-03) AND the baseline export.
   - Tools (names/args/returns exactly per §6): `search_content(q?, status?, tag?, limit=10)` →
     `{items:[{id,title,slug,status,tags}], count}` (metadata search over title/tag/status — NOT
     vector search); `count_content(status?, tag?)` → `{count}`. Both read through

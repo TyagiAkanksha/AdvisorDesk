@@ -38,6 +38,7 @@ from fastapi import FastAPI
 from sqlalchemy import Engine
 from sqlalchemy.orm import Session, sessionmaker
 
+from app.agent.llm import OpenAICompatibleAgentLLM
 from app.auth.oauth import GoogleOAuthClient, HttpxGoogleOAuthClient
 from app.config import Settings
 from app.db import make_engine, make_session_factory
@@ -167,6 +168,11 @@ oauth_client: GoogleOAuthClient = HttpxGoogleOAuthClient.from_settings(settings)
 embedder: OpenAICompatibleEmbedder = OpenAICompatibleEmbedder.from_settings(settings)
 chunk_pipeline: EmbeddingChunkPipeline = EmbeddingChunkPipeline(embedder)
 chat_llm: OpenAICompatibleChatLLM = OpenAICompatibleChatLLM.from_settings(settings)
+# Phase-5 task-03: the real agent LLM (PRD §5.4/§6, v1.5) — same `from_settings` construction
+# pattern as `chat_llm`/`embedder` above, wired here so `app.state.agent_llm` is never left
+# unset in production (`app.routes.deps.get_agent_llm`'s fail-loud guard only ever fires for a
+# DB-less/schema-only `create_app()`, e.g. the OpenAPI baseline export).
+agent_llm: OpenAICompatibleAgentLLM = OpenAICompatibleAgentLLM.from_settings(settings)
 # Phase-4 task-03: one process-lifetime `RateLimiter` shared by every `/public/chat` request
 # (PRD §9) — same explicit-wiring pattern as `chat_llm`/`embedder` above, even though
 # `create_app`'s own `rate_limiter=None` default would already build an equivalent instance
@@ -181,4 +187,5 @@ app: FastAPI = create_app(
     chat_llm=chat_llm,
     embedder=embedder,
     rate_limiter=rate_limiter,
+    agent_llm=agent_llm,
 )

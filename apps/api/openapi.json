@@ -1,6 +1,47 @@
 {
   "components": {
     "schemas": {
+      "AgentChatRequest": {
+        "description": "`POST /agent/chat`'s request body (PRD \u00a75.4): `{messages: [{role, content}]}`.\n\n`messages` requires at least one element \u2014 the new user turn `run_agent` (`app.agent.loop`)\nanswers.",
+        "properties": {
+          "messages": {
+            "items": {
+              "$ref": "#/components/schemas/AgentMessage"
+            },
+            "minItems": 1,
+            "title": "Messages",
+            "type": "array"
+          }
+        },
+        "required": [
+          "messages"
+        ],
+        "title": "AgentChatRequest",
+        "type": "object"
+      },
+      "AgentMessage": {
+        "description": "One turn in the resent history: `role` is `\"user\"` or `\"assistant\"` (\u00a75.4 exact shape).",
+        "properties": {
+          "content": {
+            "title": "Content",
+            "type": "string"
+          },
+          "role": {
+            "enum": [
+              "user",
+              "assistant"
+            ],
+            "title": "Role",
+            "type": "string"
+          }
+        },
+        "required": [
+          "role",
+          "content"
+        ],
+        "title": "AgentMessage",
+        "type": "object"
+      },
       "ChatRequest": {
         "description": "`POST /public/chat`'s request body (PRD \u00a75.3, exact field set).\n\n`session_id` absent or referencing an unknown session both mean \"start a new session\" (\u00a75.3)\n\u2014 `app.services.chat.get_or_create_session` handles both cases identically once this schema\nhas parsed a syntactically valid UUID (or `None`) out of the request body.\n\n`message` is `min_length=1` plus a whitespace-only rejection (review round 1, finding M-5) \u2014\nmirrors `app.models.schemas.content.ContentCreate.title`'s established two-guard pattern\nexactly: `min_length=1` alone still lets a whitespace-only string (`\"   \"`) through, since\nPydantic's length check counts characters, not content. An empty/blank message would otherwise\nstill burn an LLM call and a \u00a79 rate-limit slot, and poison phase-7's `report_content_gaps`\nwith empty \"questions\" (probe P7).",
         "properties": {
@@ -435,6 +476,55 @@
   },
   "openapi": "3.1.0",
   "paths": {
+    "/api/v1/agent/chat": {
+      "post": {
+        "description": "PRD \u00a75.4: stateless agent exchange \u2014 resent history in, typed SSE tool-loop events out.\n\n`pipeline` is `app.state.chunk_pipeline` (t02 amendment, `get_chunk_pipeline`) \u2014 threaded\nstraight into `run_agent`, so an agent-driven publish/archive/delete/edit-of-published runs\nthe SAME chunk-rebuild path the REST `/content/{id}/...` routes do, never silently a no-op.",
+        "operationId": "agent_chat",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AgentChatRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "text/event-stream": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "SSE stream (PRD \u00a75.4): `token`/`tool_call`/`tool_result` interleaved in execution order, then `done` on success or `error` on failure."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          }
+        },
+        "summary": "Agent Chat"
+      }
+    },
     "/api/v1/auth/callback": {
       "get": {
         "description": "PRD \u00a75.1: exchange `code`, reject non-allowlisted emails, upsert, set the session cookie.\n\n`state` is accepted (Google always sends back what `/auth/login`\ngenerated) but not cryptographically verified against a stored value \u2014\nPRD \u00a79 pins the allowlist/session-cookie/soft-delete behaviors, not a\nCSRF `state` round-trip, so this stays minimal.\n\nEmail normalization (phase-2 task-01 review round 1, finding I3):\n`identity[\"email\"]` is normalized (`strip().lower()`) exactly once, here,\nand the SAME normalized value is used both for the allowlist check and\nfor persistence \u2014 passing a raw, differently-cased email through to\n`upsert_from_google` would let e.g. `'Admin@Example.com'` and\n`'admin@example.com'` create two distinct `User` rows, splitting the\nadmin's identity and breaking the PRD \u00a74.1 same-row reactivation\nguarantee. `upsert_from_google` also normalizes defensively (belt and\nsuspenders for any future caller), but this route is the canonical place\nthe normalization is decided, since it is also what the allowlist check\nmust agree with. `name`/`avatar_url` are passed through unchanged.\n\nReview round 1, finding F2: `responses=` declares the 403 `ForbiddenError`\nraises below plus the 422 a missing/malformed `code`/`state` query param\nproduces (both rendered as `ErrorEnvelope` by `register_error_handlers`,\nnever FastAPI's own default validation-error schema) \u2014 this route has\nno `require_admin` dependency, so, unlike the admin routes in\n`app.routes.content_routes`, no 401 applies here. Final review, finding\nC-3 / t01 M14: 502 added for `oauth_client.exchange_code`'s\n`OAuthExchangeError` (a reused/expired `code`, or a Google-side\nfailure) \u2014 previously an unhandled 500 with a plain-text body.\n\nCallback landing (task-01 review M8 resolution, amended before task-04):\nsuccess now 303-redirects to `settings.admin_app_url` with the session\ncookie set on that SAME `RedirectResponse` \u2014 a bodyless 200 dead-ended\nthe browser on the API's own origin after Google sign-in, since nothing\nin the admin SPA runs there to pick the flow back up.\n`status_code=303`/`response_class=RedirectResponse` on the decorator\n(rather than leaving FastAPI's implicit 200 default) makes the OpenAPI\nbaseline's success entry both the true status code and correctly\nbody-less (`RedirectResponse.media_type` is `None`, unlike the default\n`JSONResponse`) \u2014 `responses=`'s `403`/`422` arms are untouched by this\nand still render as `ErrorEnvelope`. Error paths never construct a\nresponse at all (they raise), so they are unaffected by this route\nalways building a `RedirectResponse` on the success path.\n\nRaises:\n    ForbiddenError: the normalized email is not in `ADMIN_EMAILS` \u2014 the\n        check runs before any row write (PRD \u00a75.1/\u00a79).",

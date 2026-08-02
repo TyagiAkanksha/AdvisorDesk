@@ -12,6 +12,7 @@ from typing import cast
 from fastapi import Request
 from sqlalchemy.orm import Session
 
+from app.agent.loop import AgentLLM
 from app.auth.oauth import GoogleOAuthClient
 from app.config import Settings
 from app.rag.embeddings import Embedder
@@ -116,6 +117,23 @@ def get_embedder(request: Request) -> Embedder:
             "was built by create_app() without an embedder. Only app/main.py wires a real one."
         )
     return cast(Embedder, embedder)
+
+
+def get_agent_llm(request: Request) -> AgentLLM:
+    """Return the `AgentLLM` `create_app` stored on `app.state` (phase-5 task-03, PRD §5.4/§6).
+
+    Raises:
+        RuntimeError: the app was built by `create_app()` without an `agent_llm` (a DB-less/
+            schema-only app, e.g. the OpenAPI baseline export) — mirrors `get_chat_llm`'s
+            fail-loud guard rather than silently dereferencing `None` at the first real request.
+    """
+    agent_llm = getattr(request.app.state, "agent_llm", None)
+    if agent_llm is None:
+        raise RuntimeError(
+            "get_agent_llm() requires app.state.agent_llm, but none was configured — this app "
+            "was built by create_app() without an agent_llm. Only app/main.py wires a real one."
+        )
+    return cast(AgentLLM, agent_llm)
 
 
 def get_rate_limiter(request: Request) -> RateLimiter:

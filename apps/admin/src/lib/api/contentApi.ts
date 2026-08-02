@@ -88,3 +88,10 @@ export const {
   usePublishContentMutation,
   useArchiveContentMutation,
 } = contentApi;
+
+// phase-5 task-04 / PRD §2.2, §5.4: no new endpoint — `useAgentStream` dispatches this action
+// itself on every `done` SSE event, so the content list, dashboard stats, and tag counts refetch
+// after an agent write without a manual reload, the same tag set the mutations above already
+// invalidate.
+export const invalidateAgentWrites = () =>
+  contentApi.util.invalidateTags(['Content', 'Stats', 'Tags']);

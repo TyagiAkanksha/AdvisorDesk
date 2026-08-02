@@ -12,6 +12,7 @@ export type { ButtonProps } from './Button';
 export { ConfirmDialog } from './ConfirmDialog';
 export type { ConfirmDialogProps } from './ConfirmDialog';
 export { Drawer } from './Drawer';
+export type { DrawerProps } from './Drawer';
 export { EmptyState } from './EmptyState';
 export type { EmptyStateProps } from './EmptyState';
 export { ErrorState } from './ErrorState';

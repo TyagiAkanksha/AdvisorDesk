@@ -13,6 +13,7 @@ export default function Component({
   type = 'text',
   multiline,
   minRows,
+  disabled,
 }: TextFieldProps) {
   const handleChange = (event: ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
     onChange(event.target.value);
@@ -29,6 +30,7 @@ export default function Component({
       type={type}
       multiline={multiline}
       minRows={minRows}
+      disabled={disabled}
     />
   );
 }

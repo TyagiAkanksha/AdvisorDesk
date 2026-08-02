@@ -10,4 +10,6 @@ export interface TextFieldProps {
   /** task-06: multi-line growth for longer inputs (e.g. the editor's markdown body). */
   multiline?: boolean;
   minRows?: number;
+  /** phase-5 task-04: disables the field, e.g. `AgentPanel`'s message box while streaming. */
+  disabled?: boolean;
 }

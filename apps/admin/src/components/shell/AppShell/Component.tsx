@@ -3,6 +3,7 @@
 import { useRouter } from 'next/navigation';
 import { useState } from 'react';
 
+import { AgentPanel } from '@/components/agent/AgentPanel';
 import {
   AppBar,
   Avatar,
@@ -29,6 +30,11 @@ export default function Component({ children }: AppShellProps) {
   const { data: me } = useGetMeQuery();
   const [logout] = useLogoutMutation();
   const [anchorEl, setAnchorEl] = useState<HTMLElement | null>(null);
+  // phase-5 task-04: the agent panel's open/closed VISUAL state lives here, ABOVE the
+  // `children` route outlet — `AgentPanel` itself is always mounted (never conditionally
+  // rendered) so its own `useAgentStream` conversation state survives navigation between pages
+  // (brief's Interfaces section); only the wrapping Drawer's `open` toggles.
+  const [agentPanelOpen, setAgentPanelOpen] = useState(false);
 
   const handleSignOut = () => {
     void logout().finally(() => {
@@ -42,6 +48,7 @@ export default function Component({ children }: AppShellProps) {
     <Box sx={{ display: 'flex' }}>
       <AppBar>
         <Box sx={{ flexGrow: 1 }} />
+        <Button onClick={() => setAgentPanelOpen((prev) => !prev)}>Agent</Button>
         {me ? (
           <Button onClick={(event) => setAnchorEl(event.currentTarget)}>
             <Avatar alt={userName} src={me.avatar_url}>
@@ -64,6 +71,14 @@ export default function Component({ children }: AppShellProps) {
         <ToolbarSpacer />
         {children}
       </Box>
+      <Drawer
+        anchor="right"
+        variant="persistent"
+        open={agentPanelOpen}
+        onClose={() => setAgentPanelOpen(false)}
+      >
+        <AgentPanel />
+      </Drawer>
     </Box>
   );
 }

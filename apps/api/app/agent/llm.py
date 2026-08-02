@@ -297,11 +297,17 @@ class OpenAICompatibleAgentLLM:
                 )
                 return ToolCallStep(call.function.name, arguments)
 
+            # temperature=0: every probe that qualified this model for the agent loop
+            # (2026-08-01) ran at 0 — and the user checkpoint showed provider-default
+            # sampling makes tool SELECTION nondeterministic across identical commands
+            # (count_content-with-tag on one run, title-substring search_content on the
+            # next). A CMS operations agent should act deterministically.
             response = self._client.chat.completions.create(
                 model=self._model,
                 messages=cast(Any, messages),
                 tools=cast(Any, _to_openai_tools(tool_schemas)),
                 tool_choice="auto",
+                temperature=0,
             )
             message = response.choices[0].message
 

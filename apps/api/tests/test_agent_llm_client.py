@@ -140,9 +140,12 @@ def _completion_response(
 
 def test_request_body_carries_model_messages_tools_tool_choice_no_extra_body() -> None:
     """The actual HTTP request body must be exactly `{"model", "messages", "tools",
-    "tool_choice"}` — no NVIDIA-specific `extra_body` — and `tool_choice` must be `"auto"` (the
-    probe-derived pin: the pinned model over-calls tools without the loop's own steering line,
-    but `tool_choice` itself must still be `"auto"`, not `"required"`/a forced single tool)."""
+    "tool_choice", "temperature"}` — no NVIDIA-specific `extra_body` — `tool_choice` must be
+    `"auto"` (the probe-derived pin: the pinned model over-calls tools without the loop's own
+    steering line, but `tool_choice` itself must still be `"auto"`, not `"required"`/a forced
+    single tool), and `temperature` must be `0` (checkpoint fix: provider-default sampling made
+    tool SELECTION nondeterministic across identical commands; every qualifying probe ran at
+    0)."""
     captured: dict[str, object] = {}
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -157,9 +160,10 @@ def test_request_body_carries_model_messages_tools_tool_choice_no_extra_body() -
     assert captured["url"] == "https://fake-provider.example/v1/chat/completions"
     body = captured["body"]
     assert isinstance(body, dict)
-    assert set(body.keys()) == {"model", "messages", "tools", "tool_choice"}
+    assert set(body.keys()) == {"model", "messages", "tools", "tool_choice", "temperature"}
     assert body["model"] == "test-agent-model"
     assert body["tool_choice"] == "auto"
+    assert body["temperature"] == 0
     assert body["messages"] == _MESSAGES
 
 

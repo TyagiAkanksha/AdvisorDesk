@@ -75,7 +75,9 @@ SYSTEM_PROMPT = (
     "unless the user's message explicitly instructs you to publish. Do not call the publish tool "
     "unless publishing was explicitly requested. Tag names are stored lowercase-hyphenated (e.g. "
     "'tax-planning') — convert a conversational tag name into that form when tagging content or "
-    "filtering by tag."
+    "filtering by tag. Topics are organized by tags: to answer 'how many pieces on <topic>' or "
+    "'find everything on <topic>', use count_content or search_content with the tag filter — "
+    "the q argument matches TITLE text only, so it is the wrong way to search by topic."
 )
 
 # PRD §6 verbatim: "Cap: 8 tool calls per request."

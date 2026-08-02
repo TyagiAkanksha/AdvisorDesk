@@ -32,10 +32,11 @@ and must not change.
 
 from __future__ import annotations
 
+import types
 import uuid
-from typing import Any
+from typing import Any, get_args, get_origin
 
-from pydantic import ValidationError
+from pydantic import BaseModel, ValidationError
 from sqlalchemy.orm import Session
 
 from app.mcp.tool_spec import SESSION_INFO_PIPELINE_KEY, ToolSpec
@@ -52,18 +53,83 @@ _ALL_TOOLS: tuple[ToolSpec, ...] = (*READ_TOOLS, *WRITE_TOOLS)
 _REGISTRY: dict[str, ToolSpec] = {tool.name: tool for tool in _ALL_TOOLS}
 
 
-def _format_validation_error(exc: ValidationError) -> str:
-    """Render a `ValidationError` as `"field: message; field2: message2"`.
+def _describe_example(annotation: Any) -> tuple[str, str] | None:
+    """Return `(type description, literal example)` for a field's type annotation, or `None`.
 
-    Mirrors `app.routes.errors._validation_error_handler`'s `loc: msg`
-    shape (module docstring on `ToolInputError`) — every failing field is
-    named, never the raw offending value (same information-hygiene reason
-    that handler avoids `input`/`ctx`).
+    Checkpoint fix (finding L-1, task-03 brief pin): the pinned model (meta/llama-3.1-8b-instruct)
+    self-corrects a bad tool-call argument ONLY when the fed-back error shows the EXPECTED shape
+    with a literal example — a field-name-only message or a schema-description example both fail
+    (probe-established fact, 2026-08-01, ledger). Derived generically from the annotation (list of
+    strings, int, str, bool, ...) rather than special-cased to any one field (e.g. `tags`), so any
+    args model's field gets the same treatment.
+
+    Recurses once through `X | None` (every optional field in `app.mcp`'s args models uses this
+    form) to describe the non-`None` member. Returns `None` for an annotation this doesn't
+    recognize (e.g. `uuid.UUID`) — the caller falls back to the plain `"field: message"` shape
+    for those, exactly as before this fix.
+    """
+    origin = get_origin(annotation)
+    if origin is types.UnionType:
+        non_none = [arg for arg in get_args(annotation) if arg is not type(None)]
+        return _describe_example(non_none[0]) if non_none else None
+    if origin is list:
+        item_types = get_args(annotation)
+        item_type = item_types[0] if item_types else str
+        if item_type is str:
+            return ("a JSON array of strings", '["example"]')
+        if item_type is int:
+            return ("a JSON array of integers", "[1, 2, 3]")
+        return ("a JSON array", "[...]")
+    if annotation is bool:
+        return ("a boolean", "true")
+    if annotation is int:
+        return ("an integer", "10")
+    if annotation is float:
+        return ("a number", "3.14")
+    if annotation is str:
+        return ("a string", '"example"')
+    return None
+
+
+def _field_hint(model: type[BaseModel], loc: tuple[int | str, ...]) -> str | None:
+    """Build the `"Expected <type>, e.g. <example>."` suffix for one `ValidationError` error.
+
+    Looks up only the TOP-LEVEL field (`loc[0]`) — every args model under `app.mcp` is flat (no
+    nested `BaseModel` fields), so this is the whole field path. Returns `None` when `loc[0]`
+    doesn't name a field on `model` (e.g. `extra="forbid"`'s unknown-argument errors — `loc[0]`
+    there names whatever the CALLER sent, not a real field) or the annotation isn't a recognized
+    shape (`_describe_example`); the caller falls back to the base message alone either way.
+    """
+    if not loc or not isinstance(loc[0], str):
+        return None
+    field_info = model.model_fields.get(loc[0])
+    if field_info is None:
+        return None
+    described = _describe_example(field_info.annotation)
+    if described is None:
+        return None
+    type_desc, example = described
+    return f"Expected {type_desc}, e.g. {example}."
+
+
+def _format_validation_error(exc: ValidationError, model: type[BaseModel]) -> str:
+    """Render a `ValidationError` as `"field: message[ Expected <type>, e.g. <example>.]; ..."`.
+
+    The base `"field: message"` shape mirrors `app.routes.errors._validation_error_handler`'s
+    `loc: msg` shape (module docstring on `ToolInputError`) exactly as before — every failing
+    field is named, never the raw offending value (same information-hygiene reason that handler
+    avoids `input`/`ctx`). The appended sentence (`_field_hint`) is the checkpoint fix (finding
+    L-1): it makes the message actionable enough for the agent loop's one-shot self-correction
+    retry (PRD §6) to succeed against the pinned model's known first-shot habits. No input
+    coercion happens anywhere in this path — validation stays strict; this only changes what the
+    rejection message SAYS.
     """
     parts: list[str] = []
     for error in exc.errors():
         loc = ".".join(str(segment) for segment in error["loc"])
-        parts.append(f"{loc}: {error['msg']}" if loc else error["msg"])
+        base = f"{loc}: {error['msg']}" if loc else error["msg"]
+        hint = _field_hint(model, error["loc"])
+        parts.append(f"{base} {hint}" if hint else base)
     return "; ".join(parts) if parts else "invalid arguments"
 
 
@@ -109,7 +175,7 @@ def call_tool(
     try:
         args = spec.args_model.model_validate(arguments)
     except ValidationError as exc:
-        raise ToolInputError(_format_validation_error(exc)) from exc
+        raise ToolInputError(_format_validation_error(exc, spec.args_model)) from exc
     session.info[SESSION_INFO_PIPELINE_KEY] = (
         pipeline if pipeline is not None else NoopChunkPipeline()
     )

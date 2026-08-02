@@ -23,7 +23,7 @@ from sqlalchemy.orm import Session
 
 from app.mcp.tool_spec import ToolSpec
 from app.services import content as content_service
-from app.services.tags import tags_for_contents
+from app.services.tags import normalize_tag_name, tags_for_contents
 
 # PRD §6: `search_content(q?, status?, tag?, limit=10)`.
 _DEFAULT_SEARCH_LIMIT = 10
@@ -64,11 +64,18 @@ def _search_content(
     match count is left open by the brief/PRD §6, so `count` here is `list_content`'s own
     `total` (the untruncated match count) — the value `list_content` already computes for
     exactly this purpose, needing no second query.
+
+    Checkpoint fix (finding L-2): `args.tag` is run through `normalize_tag_name` (the exact
+    normalizer `get_or_create_tags`/creation already applies) before reaching `list_content`,
+    which itself does an exact `Tag.name` match — without this, a conversational tag name from
+    the model (e.g. `"Tax Planning"`, or `"tax planning"`) never matches the stored
+    lowercase-hyphenated form (`tax-planning`, PRD §4.1) and silently returns zero rows instead
+    of erroring, the confidently-wrong-answer failure mode this fix closes.
     """
     items, total = content_service.list_content(
         session,
         status=args.status,
-        tag=args.tag,
+        tag=normalize_tag_name(args.tag) if args.tag is not None else None,
         q=args.q,
         page=1,
         page_size=args.limit,
@@ -111,9 +118,16 @@ def _count_content(
     `.join()` clauses) to compute its own `total`; calling it with `page_size=1` (the smallest
     legal page, since only `total` is used) reuses that filtering rather than re-implementing
     a second status+tag query here.
+
+    Checkpoint fix (finding L-2): `args.tag` is normalized the same way `_search_content` now
+    does — see that docstring for the full reasoning.
     """
     _, total = content_service.list_content(
-        session, status=args.status, tag=args.tag, page=1, page_size=1
+        session,
+        status=args.status,
+        tag=normalize_tag_name(args.tag) if args.tag is not None else None,
+        page=1,
+        page_size=1,
     )
     return {"count": total}
 

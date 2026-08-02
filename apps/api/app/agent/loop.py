@@ -60,6 +60,10 @@ __all__ = [
 #   3. Answer capability/general questions directly in text, with no tool call — only call a
 #      tool to actually operate on CMS content (probe-derived pin (b), 2026-08-01: the pinned
 #      model over-calls tools under `tool_choice="auto"` without this steering line).
+#   4. Checkpoint fix (finding L-2): tag names are stored lowercase-hyphenated (PRD §4.1) — tell
+#      the model to convert a conversational tag name into that form itself, both when tagging
+#      content and when filtering by tag, rather than relying solely on the tool layer's own
+#      normalization (`app.mcp.tools_read`) to paper over a mismatched filter.
 SYSTEM_PROMPT = (
     "You are AdvisorDesk's CMS operations agent, working on behalf of an authenticated admin. "
     "You are given tools to search, create, edit, tag, publish, archive, delete, and count CMS "
@@ -69,7 +73,9 @@ SYSTEM_PROMPT = (
     "When asked to draft an article, write the full article body yourself in this same turn and "
     "pass it to create_draft. Every draft you create is ALWAYS status 'draft' — never publish it "
     "unless the user's message explicitly instructs you to publish. Do not call the publish tool "
-    "unless publishing was explicitly requested."
+    "unless publishing was explicitly requested. Tag names are stored lowercase-hyphenated (e.g. "
+    "'tax-planning') — convert a conversational tag name into that form when tagging content or "
+    "filtering by tag."
 )
 
 # PRD §6 verbatim: "Cap: 8 tool calls per request."

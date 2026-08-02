@@ -56,6 +56,7 @@ Fix round 1 (Opus review of commit e58f007, findings C-2/C-3/I-2):
 
 from __future__ import annotations
 
+import ast
 import json
 import logging
 from typing import Any, cast
@@ -71,6 +72,105 @@ from app.services.errors import AppError
 logger = logging.getLogger(__name__)
 
 __all__ = ["AgentLLMFailedError", "OpenAICompatibleAgentLLM"]
+
+
+def _schema_declares_type(property_schema: dict[str, Any], type_name: str) -> bool:
+    """True if a JSON-schema property declares `type_name`, directly or via `anyOf`.
+
+    Pydantic emits `X | None` fields as `{"anyOf": [{"type": "array", ...}, {"type": "null"}]}`
+    (see `mcp-tools.json`, e.g. `edit_content`'s `tags`) rather than a flat top-level `"type"` —
+    both shapes are checked so the repair below (finding L-3) applies to optional array/object
+    fields too, not just required ones.
+    """
+    if property_schema.get("type") == type_name:
+        return True
+    return any(
+        isinstance(variant, dict) and variant.get("type") == type_name
+        for variant in property_schema.get("anyOf", ())
+    )
+
+
+def _parse_string_literal(value: str) -> Any:
+    """Best-effort parse of a string that MIGHT encode a JSON/Python literal, or `None`.
+
+    Tries `json.loads` first (covers the quoted-valid-JSON malformation, e.g. `'["retirement"]'`
+    — a string whose contents already ARE correct JSON), then `ast.literal_eval` (covers the
+    Python-repr malformation, e.g. `"['retirement']"` — single-quoted, not valid JSON). Both are
+    wrapped: any failure (of either) falls through to `None`, meaning "could not parse" — never
+    raises, since an unparseable value must pass through unchanged (finding L-3 spec) rather than
+    fail the whole tool call before it even reaches the actionable-error/retry chain (finding L-1).
+    """
+    try:
+        return json.loads(value)
+    except (json.JSONDecodeError, ValueError):
+        pass
+    try:
+        return ast.literal_eval(value)
+    except (ValueError, SyntaxError, TypeError, MemoryError, RecursionError):
+        pass
+    return None
+
+
+def _repair_string_encoded_arguments(
+    arguments: dict[str, Any], tool_name: str, tool_schemas: list[dict[str, Any]]
+) -> dict[str, Any]:
+    """Repair a tool call's string-encoded array/object argument values (finding L-3).
+
+    The pinned model (`meta/llama-3.1-8b-instruct`) sometimes emits an array-typed (or, in
+    principle, object-typed) argument as a STRING — either Python-repr (`"['retirement']"`) or
+    quoted-valid-JSON (`'["retirement"]'`) — rather than a real JSON array in the tool-call
+    arguments object. Finding L-1's actionable `ToolInputError` message + one-retry
+    self-correction is the safety net for this, but a live proof (checkpoint follow-up) showed
+    one retry isn't reliably enough: the model sometimes regenerates the SAME malformation. Since
+    C-1 already established that wire-format translation is the ADAPTER's job (not the loop's,
+    not `call_tool`'s), unambiguous cases are repaired HERE, before the arguments ever reach
+    `call_tool` — never in `app.mcp.runtime`/the services, which stay exactly as strict as before.
+
+    For every top-level argument whose value is a `str` AND whose schema property (looked up in
+    `tool_schemas`, this tool's own `inputSchema`) declares `array` or `object`
+    (`_schema_declares_type`): attempt `_parse_string_literal`, and accept the repair ONLY if the
+    parsed result's Python type actually matches (a `list` for `array`, a `dict` for `object`).
+    A `string`-typed property (e.g. `body_md`, which could legitimately contain literal brackets
+    in an article body) is NEVER inspected — the schema-type check gates repair, not a guess
+    based on what the string looks like. An unparseable or type-mismatched value is left
+    UNCHANGED, so it still reaches `call_tool`'s strict validation and, if still wrong, the
+    existing actionable-error retry chain.
+
+    Args:
+        arguments: the tool call's arguments, already `json.loads`'d from the provider's raw
+            `arguments` string (that outer parse is unrelated to this repair and still raises
+            `AgentLLMFailedError`/logs on failure exactly as before — this function only ever
+            sees an already-valid JSON object).
+        tool_name: the tool this call targets — looked up in `tool_schemas` for its own
+            `inputSchema`. A name with no matching schema (should not happen in practice —
+            `call_tool` would reject it anyway) returns `arguments` untouched.
+        tool_schemas: `list_tool_schemas()`'s own shape, passed straight through from
+            `next_step`'s own parameter.
+
+    Returns:
+        A NEW dict — `arguments` itself is never mutated — with any successfully repaired values
+        replaced; everything else (including unparseable/mismatched values) passed through as-is.
+    """
+    schema = next((s["inputSchema"] for s in tool_schemas if s["name"] == tool_name), None)
+    if schema is None:
+        return arguments
+    properties = schema.get("properties", {})
+    repaired = dict(arguments)
+    for key, value in arguments.items():
+        if not isinstance(value, str):
+            continue
+        property_schema = properties.get(key)
+        if not isinstance(property_schema, dict):
+            continue
+        if _schema_declares_type(property_schema, "array"):
+            parsed = _parse_string_literal(value)
+            if isinstance(parsed, list):
+                repaired[key] = parsed
+        elif _schema_declares_type(property_schema, "object"):
+            parsed = _parse_string_literal(value)
+            if isinstance(parsed, dict):
+                repaired[key] = parsed
+    return repaired
 
 
 class AgentLLMFailedError(AppError):
@@ -189,7 +289,13 @@ class OpenAICompatibleAgentLLM:
 
             if self._pending_tool_calls:
                 call = self._pending_tool_calls.pop(0)
-                return ToolCallStep(call.function.name, json.loads(call.function.arguments))
+                arguments = json.loads(call.function.arguments)
+                # Finding L-3: repair unambiguous string-encoded array/object arguments here,
+                # in the adapter, before they ever reach `call_tool`.
+                arguments = _repair_string_encoded_arguments(
+                    arguments, call.function.name, tool_schemas
+                )
+                return ToolCallStep(call.function.name, arguments)
 
             response = self._client.chat.completions.create(
                 model=self._model,
@@ -213,7 +319,12 @@ class OpenAICompatibleAgentLLM:
                 if function_calls:
                     self._pending_tool_calls = function_calls[1:]
                     first = function_calls[0]
-                    return ToolCallStep(first.function.name, json.loads(first.function.arguments))
+                    arguments = json.loads(first.function.arguments)
+                    # Finding L-3 (see the `_pending_tool_calls` branch above for the reasoning).
+                    arguments = _repair_string_encoded_arguments(
+                        arguments, first.function.name, tool_schemas
+                    )
+                    return ToolCallStep(first.function.name, arguments)
 
             if message.content:
                 # Fix round 1, finding C-2: mark the exchange finished BEFORE returning — the

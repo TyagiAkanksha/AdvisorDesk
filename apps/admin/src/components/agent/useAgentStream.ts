@@ -36,6 +36,12 @@ export interface UseAgentStreamResult {
 
 const NETWORK_ERROR_MESSAGE = "Couldn't reach the agent. Please try again.";
 const GENERIC_STREAM_ERROR_MESSAGE = 'The agent failed to complete this request. Please try again.';
+// Review round 1, finding I-1: a `done` can arrive with ZERO preceding `token`/`tool_call`
+// events on the current turn (the API's adapter yields `Done([])` for a completion with neither
+// content nor tool calls) — without this fallback, no assistant turn is ever created and the
+// user sees their own bubble and silence. Mirrors `useChatStream.ts`'s M-7 precedent (a
+// `citations` event with no preceding token still starts an empty assistant turn).
+const EMPTY_DONE_FALLBACK_MESSAGE = 'The agent returned no response. Please try again.';
 
 /** Append a `token` chunk to the in-progress assistant turn, starting a new one if the last
  * turn isn't an in-progress assistant turn yet (mirrors `useChatStream.ts`'s
@@ -57,6 +63,17 @@ function appendAssistantEvent(turns: AgentTurn[], event: ToolEvent): AgentTurn[]
     return [...turns, { role: 'assistant', text: '', events: [event] }];
   }
   return [...turns.slice(0, -1), { ...last, events: [...last.events, event] }];
+}
+
+/** I-1: if `done` fires and the last turn is still the user's own turn (no `token`/`tool_call`
+ * ever appended an assistant turn), append one carrying honest fallback copy instead of leaving
+ * the exchange silently blank. A no-op when an assistant turn already exists. Pure. */
+function ensureAssistantTurnOnDone(turns: AgentTurn[]): AgentTurn[] {
+  const last = turns[turns.length - 1];
+  if (last === undefined || last.role !== 'assistant') {
+    return [...turns, { role: 'assistant', text: EMPTY_DONE_FALLBACK_MESSAGE, events: [] }];
+  }
+  return turns;
 }
 
 /** Turn a non-2xx `/agent/chat` response into a friendly, never-raw-JSON message (PRD §9's
@@ -173,6 +190,7 @@ export function useAgentStream(): UseAgentStreamResult {
               );
             },
             onDone: () => {
+              setTurnsState(ensureAssistantTurnOnDone);
               dispatch(invalidateAgentWrites());
             },
             onError: ({ message }) => {

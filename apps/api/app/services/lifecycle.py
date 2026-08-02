@@ -19,20 +19,6 @@ from sqlalchemy.orm import Session
 
 from app.models import Content
 
-# The `Session.info` key `app.mcp.runtime.call_tool` stashes its injected `ChunkPipeline`
-# under, for the MCP write-tool handlers (`app.mcp.tools_write`, phase-5 task-02) to read
-# back. `call_tool`'s handler-call shape (`spec.handler(args, session=session,
-# actor_id=actor_id)`) is pinned by `tests/test_mcp_runtime_guards.py`/
-# `tests/test_mcp_read_tools.py` and cannot grow a fourth argument, so `session.info` (a
-# plain per-`Session` dict SQLAlchemy reserves for exactly this kind of caller-defined
-# state) is the injectable seam instead (CONVENTIONS.md §10: "external seams are
-# injectable, never monkeypatched at a distance"). Defined here rather than in `app.mcp`
-# because both `app.mcp.runtime` (which sets it) and `app.mcp.tools_write` (which reads it)
-# already import this module for `ChunkPipeline`/`NoopChunkPipeline`, and `tools_write`
-# cannot import `runtime` without a circular import (`runtime` assembles `tools_write`'s own
-# `WRITE_TOOLS` into its tool registry).
-SESSION_INFO_PIPELINE_KEY = "app.services.lifecycle.chunk_pipeline"
-
 
 class ChunkPipeline(Protocol):
     """The chunk (re)build/removal seam content lifecycle transitions call through.

@@ -20,6 +20,20 @@ fourth argument. `call_tool` instead stashes the resolved pipeline on
 `session.info[SESSION_INFO_PIPELINE_KEY]` right before calling any handler (every tool call,
 not just a write one — harmless for the two read tools, which never look at it); handlers
 below that need it read it back via `_pipeline_from_session`.
+
+FAIL LOUD, NOT SILENT (fix round 1, finding I1): `call_tool` itself still defaults its own
+`pipeline` parameter to `NoopChunkPipeline()` when a caller passes none — that default is
+correct and stays (read-tool ergonomics, and every pinned test that never bothers to pass a
+pipeline for a write tool it doesn't care about). But `_pipeline_from_session` below is a
+different seam: it asserts that `call_tool`'s stash actually happened. If a write handler is
+ever reached WITHOUT going through `call_tool` (a future direct
+`WRITE_TOOLS[i].handler(...)` call, a second `call_tool`-like entry point, a refactor that
+moves the stash below the handler invocation), silently substituting a `NoopChunkPipeline()`
+here would let e.g. `publish` commit a `status='published'` row with zero chunks — invisible
+to retrieval forever, no exception, no failing test (PRD §4: "partial chunk sets must never
+be visible to retrieval"). This mirrors `app.routes.deps.get_session`/`get_chat_llm`/
+`get_embedder`'s own philosophy for an unresolvable injected seam: fail loudly, never
+silently degrade.
 """
 
 from __future__ import annotations
@@ -30,21 +44,40 @@ from typing import Any, cast
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 from sqlalchemy.orm import Session
 
-from app.mcp.tool_spec import ToolSpec
+from app.mcp.tool_spec import SESSION_INFO_PIPELINE_KEY, ToolSpec
 from app.services import content as content_service
-from app.services.lifecycle import SESSION_INFO_PIPELINE_KEY, ChunkPipeline, NoopChunkPipeline
+from app.services.lifecycle import ChunkPipeline
 from app.services.tags import tags_for_contents
 
 
 def _pipeline_from_session(session: Session) -> ChunkPipeline:
     """Read back the `ChunkPipeline` `call_tool` stashed on `session.info` for this call.
 
-    `call_tool` always sets `SESSION_INFO_PIPELINE_KEY` (defaulting to `NoopChunkPipeline()`)
-    immediately before invoking any tool's handler (`app.mcp.runtime.call_tool`), so the
-    `.get(..., NoopChunkPipeline())` fallback here is only a defensive belt-and-braces for a
-    handler somehow invoked outside that seam — never expected to fire in practice.
+    `call_tool` always sets `SESSION_INFO_PIPELINE_KEY` (defaulting to `NoopChunkPipeline()`
+    when its own caller passes none) immediately before invoking any tool's handler
+    (`app.mcp.runtime.call_tool`) — that stash is unconditional, so its absence here means
+    this handler was invoked outside `call_tool`'s seam entirely. `cast` here is purely a
+    static-typing aid (mypy can't otherwise narrow `session.info`'s `dict[Any, Any]` value
+    to `ChunkPipeline`) — it performs no runtime check and, unlike the `.get(...,
+    NoopChunkPipeline())` this replaced, substitutes nothing.
+
+    Raises:
+        RuntimeError: `session.info` carries no pipeline — this write-tool handler was
+            called directly rather than through `app.mcp.runtime.call_tool`. Fails loudly
+            (fix round 1, finding I1) rather than silently substituting a `NoopChunkPipeline`,
+            which would let a write tool commit a lifecycle transition with zero chunks.
     """
-    return cast(ChunkPipeline, session.info.get(SESSION_INFO_PIPELINE_KEY, NoopChunkPipeline()))
+    try:
+        return cast(ChunkPipeline, session.info[SESSION_INFO_PIPELINE_KEY])
+    except KeyError as exc:
+        raise RuntimeError(
+            "app.mcp.tools_write: no ChunkPipeline on session.info "
+            f"[{SESSION_INFO_PIPELINE_KEY!r}] — this write-tool handler was invoked outside "
+            "app.mcp.runtime.call_tool's seam, which is the only thing that stashes a "
+            "pipeline (even the NoopChunkPipeline() default when the caller passes none). "
+            "Call this handler through call_tool(), or pass pipeline= explicitly if adding "
+            "a new entry point that bypasses it."
+        ) from exc
 
 
 # ---------------------------------------------------------------------------

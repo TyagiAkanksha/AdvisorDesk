@@ -23,7 +23,7 @@ through (publish/archive/delete/edit-of-published-item, PRD §4). It is
 optional, defaulting to `NoopChunkPipeline()` when omitted (mirroring
 `app.factory.create_app`'s own `chunk_pipeline: ChunkPipeline | None = None`
 default), and reaches write-tool handlers via `session.info` rather than a
-new handler argument — see `app.services.lifecycle.SESSION_INFO_PIPELINE_KEY`
+new handler argument — see `app.mcp.tool_spec.SESSION_INFO_PIPELINE_KEY`
 and `app.mcp.tools_write`'s module docstring for why: the handler-call shape
 right below (`spec.handler(args, session=session, actor_id=actor_id)`) is
 pinned by `tests/test_mcp_runtime_guards.py`/`tests/test_mcp_read_tools.py`
@@ -38,11 +38,11 @@ from typing import Any
 from pydantic import ValidationError
 from sqlalchemy.orm import Session
 
-from app.mcp.tool_spec import ToolSpec
+from app.mcp.tool_spec import SESSION_INFO_PIPELINE_KEY, ToolSpec
 from app.mcp.tools_read import READ_TOOLS
 from app.mcp.tools_write import WRITE_TOOLS
 from app.services.errors import ToolInputError, ToolNotFoundError
-from app.services.lifecycle import SESSION_INFO_PIPELINE_KEY, ChunkPipeline, NoopChunkPipeline
+from app.services.lifecycle import ChunkPipeline, NoopChunkPipeline
 
 __all__ = ["ToolSpec", "call_tool", "list_tool_schemas"]
 
@@ -91,7 +91,9 @@ def call_tool(
             to `NoopChunkPipeline()`. Stashed on `session.info` (not passed
             to `spec.handler` directly) so this stays a purely additive
             change to this function's own signature — see the module
-            docstring.
+            docstring. Popped again once `handler` returns or raises (fix
+            round 1, finding M7), so `session.info` never holds a stale
+            pipeline reference from a previous call.
 
     Returns:
         The tool's structured JSON-able payload.
@@ -111,7 +113,10 @@ def call_tool(
     session.info[SESSION_INFO_PIPELINE_KEY] = (
         pipeline if pipeline is not None else NoopChunkPipeline()
     )
-    return spec.handler(args, session=session, actor_id=actor_id)
+    try:
+        return spec.handler(args, session=session, actor_id=actor_id)
+    finally:
+        session.info.pop(SESSION_INFO_PIPELINE_KEY, None)
 
 
 def list_tool_schemas() -> list[dict[str, Any]]:

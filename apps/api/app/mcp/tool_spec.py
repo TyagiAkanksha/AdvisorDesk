@@ -15,6 +15,24 @@ from typing import Any
 
 from pydantic import BaseModel
 
+# The `Session.info` key `app.mcp.runtime.call_tool` stashes its injected `ChunkPipeline`
+# under, for the MCP write-tool handlers (`app.mcp.tools_write`, phase-5 task-02) to read
+# back. `call_tool`'s handler-call shape (`spec.handler(args, session=session,
+# actor_id=actor_id)`) is pinned by `tests/test_mcp_runtime_guards.py`/
+# `tests/test_mcp_read_tools.py` and cannot grow a fourth argument, so `session.info` (a
+# plain per-`Session` dict SQLAlchemy reserves for exactly this kind of caller-defined
+# state) is the injectable seam instead (CONVENTIONS.md §10: "external seams are
+# injectable, never monkeypatched at a distance").
+#
+# Lives here — not in `app.services.lifecycle`, where it originally landed (phase-5 task-02
+# review finding I2) — because this key exists solely for `app.mcp`'s own conveyance
+# mechanism: no `app.services` code ever reads it, and a services module owning an MCP-only
+# symbol is a coupling defect no import-linter contract catches (a bare `str` creates no
+# import edge). Both `app.mcp.runtime` (which sets it) and `app.mcp.tools_write` (which
+# reads it) already import this module for `ToolSpec`, and this module imports nothing from
+# `app.mcp` itself, so the placement is non-circular.
+SESSION_INFO_PIPELINE_KEY = "app.mcp.tool_spec.chunk_pipeline"
+
 
 @dataclass(frozen=True)
 class ToolSpec:

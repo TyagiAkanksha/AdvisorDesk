@@ -22,6 +22,14 @@ Phase-6 task-04: `_AdminGatedMcpApp.__call__` gained the bearer-token gate
 `mount_mcp_http`'s bare-path `Route` gained `methods=["POST"]` so an
 unauthenticated `GET` answers 405 at the routing layer instead of 401 from
 `require_admin` (phase-5 final-review t01-M8 fix).
+
+Phase-6 task-04, fix round 1 (review findings I1/M2): `_extract_bearer_token` now raises
+`AuthRequiredError` itself for a present-but-malformed `Authorization` header instead of
+returning `None` and silently falling through to the cookie path (I1); `_AdminGatedMcpApp.__call__`
+now rejects any non-POST method with a 405 (`Allow: POST`) BEFORE the auth gate, closing the same
+hole for the `Mount`'s sub-paths that `methods=["POST"]` already closed for the bare path — a
+`GET`/etc. through `path + "/..."` previously reached the streamable-HTTP transport and hung
+indefinitely instead of returning (M2).
 """
 
 from __future__ import annotations
@@ -39,6 +47,7 @@ from mcp.server.context import ServerRequestContext
 from mcp.server.lowlevel import Server
 from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
 from sqlalchemy.orm import Session, sessionmaker
+from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.requests import Request
 from starlette.routing import Route
 from starlette.types import Receive, Scope, Send
@@ -207,19 +216,28 @@ async def _handle_call_tool(
 def _extract_bearer_token(request: Request) -> str | None:
     """Return the raw token from an `Authorization: Bearer <token>` header, or `None`.
 
-    `None` covers both "no `Authorization` header at all" and "an `Authorization` header present
-    but not the `Bearer` scheme" (e.g. `Basic ...`) — either way `_AdminGatedMcpApp.__call__`
-    treats it as "no bearer offered" and falls back to the unchanged `require_admin` cookie path.
-    Only a header that actually carries a `Bearer` value routes into the bearer-first,
-    no-fall-through gate (task-04 brief).
+    Fix round 1, finding I1: three cases, not two.
+      - No `Authorization` header at all -> `None`. This is the ONLY case that still falls back
+        to the unchanged `require_admin` cookie path (`_AdminGatedMcpApp.__call__`).
+      - A well-formed `Bearer` credential — scheme `bearer` (case-insensitive per RFC 7235),
+        exactly one separating space, a non-empty, single-token value (no embedded whitespace) —
+        returns that raw value, routing the caller into the bearer-first, no-fall-through gate.
+      - An `Authorization` header IS present but does not parse as a well-formed `Bearer`
+        credential (missing/empty value, a non-space or doubled separator such as a tab or two
+        spaces, or any scheme other than `bearer` — including `Basic ...`) -> raises
+        `AuthRequiredError` directly, from here. The controller's binding rule (review round 1):
+        OFFERING any `Authorization` header at all commits the caller to the bearer path — there
+        is no header value that is silently ignored and falls through to the cookie. Previously
+        this branch returned `None` like the absent-header case, which let a malformed bearer
+        header authenticate via a coincidentally-present valid session cookie.
     """
     header = request.headers.get("authorization")
     if header is None:
         return None
-    scheme, _, value = header.partition(" ")
-    if scheme.lower() != "bearer" or not value:
-        return None
-    return value
+    scheme, sep, value = header.partition(" ")
+    if sep == " " and scheme.lower() == "bearer" and value and " " not in value:
+        return value
+    raise AuthRequiredError("Sign in required.")
 
 
 def _resolve_bearer_principal(request: Request, raw_token: str) -> AdminPrincipal:
@@ -290,8 +308,20 @@ class _AdminGatedMcpApp:
         self._server = server
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
-        """Gate on a bearer token (if offered) or `require_admin`'s cookie, bind a request-scoped
-        session factory + actor, then dispatch.
+        """Reject a non-POST method fast, then gate on a bearer token (if offered) or
+        `require_admin`'s cookie, bind a request-scoped session factory + actor, and dispatch.
+
+        Phase-6 task-04 fix round 1, finding M2: this ASGI app is reachable two ways — the
+        bare-path `Route` (`mount_mcp_http`, method-restricted to POST at the routing layer, so a
+        non-POST request there never reaches this `__call__` at all) AND the `Mount`'s sub-paths
+        (`path + "/..."`, e.g. `/api/v1/mcp/`), which Starlette's `Mount` does not method-restrict.
+        A `GET`/`DELETE`/etc. through the `Mount` used to reach the streamable-HTTP transport
+        directly, which opens a standalone SSE stream and never returns — the request hangs
+        indefinitely. The check below runs BEFORE the auth gate (so it's also DB-less, matching
+        the bare path's routing-layer 405) and raises the same `StarletteHTTPException(405,
+        headers={"Allow": "POST"})` shape Starlette's own router raises for the bare path's
+        method mismatch, so `register_error_handlers` renders both through the identical §9
+        envelope + `Allow` header.
 
         Phase-6 task-04: `_extract_bearer_token` checks for an `Authorization: Bearer <token>`
         header FIRST. When one is present, it must resolve via `_resolve_bearer_principal` or the
@@ -300,15 +330,18 @@ class _AdminGatedMcpApp:
         explicit no-fall-through pin: offering a bearer header commits the caller to the bearer
         path). Only when NO bearer header is present at all does this fall back to the unchanged
         `require_admin` cookie path — everything below this auth step is exactly as it was before
-        task-04, for either path.
+        task-04, for either path. Fix round 1, finding I1: a present-but-malformed `Authorization`
+        header (empty/missing value, a bad separator, or a non-`bearer` scheme) now raises
+        `AuthRequiredError` from inside `_extract_bearer_token` itself, before this method ever
+        considers the cookie path — see that function's docstring for the exact three-way split.
 
         Either way, auth runs first, so an unauthenticated call never binds a session factory or
         starts the transport (§3 pin: state 2 stays DB-less, mirroring every REST admin route). A
-        raised `AuthRequiredError` propagates out of this ASGI callable uncaught, through the app's
-        normal exception-handling middleware (`app.routes.errors.register_error_handlers`), the
-        same path any `Depends(require_admin)` route failure takes — CONVENTIONS.md §4's "routes
-        contain no try/except" extends here: this mount has no try/except around the auth check
-        either.
+        raised `AuthRequiredError` (or the `StarletteHTTPException` above) propagates out of this
+        ASGI callable uncaught, through the app's normal exception-handling middleware
+        (`app.routes.errors.register_error_handlers`), the same path any `Depends(require_admin)`
+        route failure takes — CONVENTIONS.md §4's "routes contain no try/except" extends here:
+        this mount has no try/except around the auth check either.
 
         Fix round 1, finding C1: `require_admin` itself runs a synchronous DB query
         (`app/auth/deps.py`) — offloaded to a worker thread the same way tool execution is
@@ -331,6 +364,9 @@ class _AdminGatedMcpApp:
         `None`, so no fail-loud branch is needed here) — so an HTTP-invoked write tool embeds
         chunks for real, not through a request-local `NoopChunkPipeline`.
         """
+        if scope["type"] == "http" and scope["method"] != "POST":
+            raise StarletteHTTPException(status_code=405, headers={"Allow": "POST"})
+
         request = Request(scope, receive=receive)
         bearer_token = _extract_bearer_token(request)
         principal: AdminPrincipal

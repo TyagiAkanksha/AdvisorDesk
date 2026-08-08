@@ -19,10 +19,18 @@ metric this middleware cannot see on its own — the SSE body generator, not the
 knows when the first event is actually produced. `app.routes.public_routes.public_chat` wires
 `observe_and_maybe_log_chat_latency` (below) as `app.routes.sse.sse_response`'s optional
 `on_first_event` hook — called once, right before the first SSE block is yielded (see that
-module's docstring) — which records the sample under `PUBLIC_CHAT_KEY` and, every 100 samples,
-logs the greppable `chat_latency p50=<ms> p95=<ms> count=<n>` line phase-7 task-03 greps for the
-§9.1 metric (controller adjudication: the cadence is driven by this one key's own accumulated
-count reaching a multiple of 100, not a separate counter).
+module's docstring), filtered there to genuine `token` events only (fix round 1, finding I-2) —
+which records the sample under `PUBLIC_CHAT_KEY` and, every 100 samples, logs the greppable
+`chat_latency p50=<ms> p95=<ms> count=<n>` line phase-7 task-03 greps for the §9.1 metric.
+
+Fix round 1, finding C-1: the cadence (and the log line's own `count=<n>` field) is driven by a
+per-key LIFETIME observation counter (`LatencyTracker.lifetime_count`, incremented on every
+`observe()` call, never capped) — NOT `snapshot()`/`stats()`'s own `count` field, which is the
+CURRENT window size and therefore permanently pinned at `window` once a route's samples exceed
+it (a rolling window can never serve as a request counter). `p50`/`p95` in the log line still
+come from the current window (`LatencyTracker.stats`, a targeted single-key read — fix round 1,
+finding I-1: no full `snapshot()` on this hot path) — only the cadence gate and the reported
+`count` needed a lifetime source.
 
 `LatencyTracker.snapshot()` returns SECONDS, the same unit `observe()` receives — millisecond
 formatting is applied exactly once, here, at each of the two places a log line is built from it
@@ -62,6 +70,13 @@ PUBLIC_CHAT_KEY = "public_chat"
 # route, guaranteeing no collision with `PUBLIC_CHAT_KEY` above rather than relying on a
 # case-by-case check.
 _REQUEST_KEY_PREFIX = "request:"
+
+# Fix round 1, finding I-1: every request whose route never matched an `APIRoute` (a 404, or a
+# path inside a `Mount` this middleware can't name) buckets into this ONE constant key, never the
+# raw request path — `LatencyTracker` never evicts *keys*, only samples within a key, so keying on
+# the raw path let an unauthenticated scanner walking N distinct 404 paths grow the tracker's key
+# set (and the per-request work under its lock) without bound.
+_UNMATCHED_ROUTE_KEY = "unmatched"
 
 # Task brief: "every 100 chat requests logs `chat_latency p50=<ms> p95=<ms> count=<n>`".
 _CHAT_LATENCY_LOG_EVERY = 100
@@ -125,6 +140,13 @@ class LatencyTracker:
         self._window = window
         self._lock = threading.Lock()
         self._observations: dict[str, deque[float]] = {}
+        # Fix round 1, finding C-1: a per-key LIFETIME observation counter, independent of the
+        # window-capped `deque` above and never itself capped or evicted. `snapshot()`/`stats()`'s
+        # own `count` field stays exactly what it always was (the CURRENT window size, pinned by
+        # the unit tests) — this is a second, separate number, read only by `lifetime_count()`
+        # below, that a route's own rolling window can never substitute for once samples exceed
+        # `window`.
+        self._lifetime_counts: dict[str, int] = {}
 
     def observe(self, route: str, seconds: float) -> None:
         """Record one latency sample for `route`, evicting the oldest sample once `window` is
@@ -137,6 +159,7 @@ class LatencyTracker:
         with self._lock:
             bucket = self._observations.setdefault(route, deque(maxlen=self._window))
             bucket.append(seconds)
+            self._lifetime_counts[route] = self._lifetime_counts.get(route, 0) + 1
 
     def snapshot(self) -> dict[str, RouteStats]:
         """The current per-route `{p50, p95, count}` (task brief Interfaces block), computed
@@ -153,13 +176,45 @@ class LatencyTracker:
                 )
             return result
 
+    def stats(self, route: str) -> RouteStats | None:
+        """The current window-capped `{p50, p95, count}` for exactly ONE `route` — the same
+        per-key math `snapshot()` runs, without sorting every OTHER key's bucket under the same
+        lock acquisition (fix round 1, finding I-1: `observe_and_maybe_log_chat_latency`'s hot
+        path no longer pays for unrelated routes' bucket sizes). `None` if `route` has never been
+        observed.
+        """
+        with self._lock:
+            bucket = self._observations.get(route)
+            if not bucket:
+                return None
+            values = sorted(bucket)
+            return RouteStats(
+                p50=_nearest_rank(values, 50.0),
+                p95=_nearest_rank(values, 95.0),
+                count=len(values),
+            )
+
+    def lifetime_count(self, route: str) -> int:
+        """The total number of `observe(route, ...)` calls ever made (fix round 1, finding C-1) —
+        never capped by `window`, unlike `stats()`/`snapshot()`'s own `count` field. `0` if `route`
+        has never been observed.
+        """
+        with self._lock:
+            return self._lifetime_counts.get(route, 0)
+
 
 def observe_and_maybe_log_chat_latency(tracker: LatencyTracker, seconds: float) -> None:
     """Record one `/public/chat` first-token latency sample, then — every
-    `_CHAT_LATENCY_LOG_EVERY` (100) samples — log the greppable
-    `chat_latency p50=<ms> p95=<ms> count=<n>` line phase-7 task-03 greps for the PRD §9.1 metric
-    (controller adjudication: the cadence is driven by the `PUBLIC_CHAT_KEY` bucket's own
-    accumulated count reaching a multiple of 100, not a separate counter).
+    `_CHAT_LATENCY_LOG_EVERY` (100) LIFETIME samples — log the greppable
+    `chat_latency p50=<ms> p95=<ms> count=<n>` line phase-7 task-03 greps for the PRD §9.1 metric.
+
+    Fix round 1, finding C-1: the cadence gate and the log line's `count=<n>` both read
+    `tracker.lifetime_count(PUBLIC_CHAT_KEY)` — a counter that is never capped by the tracker's
+    rolling window — instead of `stats()`/`snapshot()`'s own window-capped `count` (which, once a
+    route's samples exceed `window`, is permanently pinned at `window` and can never again be a
+    multiple-of-100 gate past the first `window` requests). `p50`/`p95` still come from the
+    current window (`tracker.stats`, a single-key read — finding I-1) since the rolling-window
+    percentiles themselves are the right statistic; only the cadence/count source was wrong.
 
     `app.routes.public_routes.public_chat` wires this function as its
     `app.routes.sse.sse_response` `on_first_event` callback, via a closure capturing the elapsed
@@ -171,25 +226,35 @@ def observe_and_maybe_log_chat_latency(tracker: LatencyTracker, seconds: float) 
         seconds: the measured first-token latency, in seconds.
     """
     tracker.observe(PUBLIC_CHAT_KEY, seconds)
-    stats = tracker.snapshot()[PUBLIC_CHAT_KEY]
     logger.info("route=public_chat first_token_ms=%d", round(seconds * 1000))
-    if stats["count"] % _CHAT_LATENCY_LOG_EVERY == 0:
-        logger.info(
-            "chat_latency p50=%d p95=%d count=%d",
-            round(stats["p50"] * 1000),
-            round(stats["p95"] * 1000),
-            stats["count"],
-        )
+    lifetime_count = tracker.lifetime_count(PUBLIC_CHAT_KEY)
+    if lifetime_count % _CHAT_LATENCY_LOG_EVERY == 0:
+        stats = tracker.stats(PUBLIC_CHAT_KEY)
+        if stats is not None:  # always true here: `observe()` above just wrote this key.
+            logger.info(
+                "chat_latency p50=%d p95=%d count=%d",
+                round(stats["p50"] * 1000),
+                round(stats["p95"] * 1000),
+                lifetime_count,
+            )
 
 
 def _route_name(scope: Scope) -> str:
-    """The matched route's name, or the raw path when nothing matched (a 404 — `Router.app` never
-    sets `scope["route"]` in that case; FastAPI's own `APIRoute.matches` is what sets it on a
-    match, `:832` of `fastapi.routing`)."""
+    """The matched route's name, or `_UNMATCHED_ROUTE_KEY` when nothing matched (a 404 —
+    `Router.app` never sets `scope["route"]` in that case; FastAPI's own `APIRoute.matches` is
+    what sets it on a match, `:832` of `fastapi.routing` — or a path inside a `Mount`, whose
+    `scope["route"]` is never an `APIRoute` either).
+
+    Fix round 1, finding I-1: this used to fall back to the raw request path, so every distinct
+    unmatched path (e.g. an unauthenticated scanner walking 404s) created its own permanent
+    `LatencyTracker` key — unbounded memory growth with no eviction, since the tracker only evicts
+    SAMPLES within a key, never keys themselves. Every unmatched request now buckets into the same
+    single constant key instead.
+    """
     route = scope.get("route")
     if isinstance(route, APIRoute):
         return route.name
-    return str(scope.get("path", "unknown"))
+    return _UNMATCHED_ROUTE_KEY
 
 
 class LatencyMiddleware:

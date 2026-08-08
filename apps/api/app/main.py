@@ -52,6 +52,34 @@ from app.routes.ratelimit import RateLimiter
 logger = logging.getLogger(__name__)
 
 
+def _configure_logging() -> None:
+    """Configure the root logger to INFO with a stream handler (fix round 1, phase-6 task-01
+    review round 1, finding C-2) — GUARDED so it never clobbers an already-configured root.
+
+    Before this, nothing in `apps/api/app/` ever called `logging.basicConfig`/`dictConfig`, so
+    under uvicorn's own default `LOGGING_CONFIG` (what `uvicorn app.main:app` applies — it only
+    configures the `uvicorn`/`uvicorn.access`/`uvicorn.error` loggers, never the root logger) the
+    root logger was left at its library default (WARNING, no handlers). Every `logger.info(...)`
+    call in `app.routes.metrics` — including the one greppable `chat_latency ...` line PRD §9.1
+    exists to produce — was therefore silently discarded in any real deployed process; the pinned
+    `tests/test_metrics.py` suite never caught this because `caplog.at_level(logging.INFO)`
+    forcibly lowers the level for the duration of each test, masking the gap.
+
+    `logging.basicConfig(level=logging.INFO)`'s own built-in behavior — a no-op whenever the root
+    logger already has at least one handler, unless `force=True` is passed (never passed here) —
+    IS the "only configure if root has no handlers" guard the controller adjudication asked for,
+    so this function adds no separate check on top of it. Called unconditionally at import time,
+    below, so it always runs before `app.main` wires anything else: it is a no-op only when
+    something else (a test harness that pre-configured logging, or a future task-02 dictConfig)
+    already added a handler to the root logger first — this function then leaves that
+    configuration completely untouched.
+    """
+    logging.basicConfig(level=logging.INFO)
+
+
+_configure_logging()
+
+
 def _require_nonempty(value: str, env_var: str, settings_attr: str) -> None:
     """Raise `RuntimeError` naming `env_var` if `value` (read from `settings_attr`) is empty.
 

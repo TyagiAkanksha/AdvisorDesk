@@ -81,6 +81,12 @@ logger = logging.getLogger(__name__)
 _CHAT_STREAM_ERROR_CODE = "chat_synthesis_failed"
 _CHAT_STREAM_ERROR_MESSAGE = "The assistant failed to generate a response. Please try again."
 
+# Fix round 1, finding I-2: the exact prefix `app.routes.sse.sse_event("token", ...)` always
+# produces — `public_chat`'s `_on_first_event` hook below uses this to recognize a genuine first
+# `token` event (and only that) among the first SSE block `sse_response` hands it, which may
+# instead be an `error` block on the failure path.
+_FIRST_TOKEN_EVENT_PREFIX = "event: token\n"
+
 # No 401 (unlike `app.routes.content_routes.router`): these routes are
 # unauthenticated by design. 422 is over-declared on the whole router for
 # simplicity, mirroring `content_routes.py`'s same trade-off, even though
@@ -356,14 +362,21 @@ def public_chat(
     # point is meant to reflect what a client actually experiences waiting for its first byte of
     # answer, not just the retrieval/synthesis portion. `_on_first_event` (passed to
     # `sse_response` below) fires once, right before `_generate_chat_stream`'s first SSE block is
-    # yielded (`app.routes.sse`'s own docstring) — success or failure alike, since the hook is
-    # generic ("first item", not "first `token` event") — and records the elapsed time under
-    # `app.state.latency_tracker`'s reserved `"public_chat"` key, logging the greppable
+    # yielded (`app.routes.sse`'s own docstring), and is passed that first block's raw formatted
+    # text. Fix round 1, finding I-2: only a genuine `token` event records anything — a stream
+    # whose first (and, on the failure path, only) block is an `error` event no longer lands a
+    # sample in the reserved "public_chat" first-TOKEN bucket, which PRD §9.1 defines as
+    # time-to-first-token specifically, not time-to-first-SSE-block-of-any-kind. A refusal (no
+    # matching content) is unaffected: `_generate_chat_stream` still streams real `token` events
+    # for a refusal, so it still belongs in the metric. When it does fire, it records the elapsed
+    # time under `app.state.latency_tracker`'s reserved `"public_chat"` key, logging the greppable
     # `chat_latency ...` line every 100 samples (`app.routes.metrics.
     # observe_and_maybe_log_chat_latency`, §9.1's phase-7-consumed metric).
     _start = time.monotonic()
 
-    def _on_first_event() -> None:
+    def _on_first_event(first_item: str) -> None:
+        if not first_item.startswith(_FIRST_TOKEN_EVENT_PREFIX):
+            return
         observe_and_maybe_log_chat_latency(latency_tracker, time.monotonic() - _start)
 
     client_ip = request.client.host if request.client is not None else "unknown"

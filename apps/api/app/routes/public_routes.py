@@ -38,6 +38,7 @@ started") and a dead connection.
 from __future__ import annotations
 
 import logging
+import time
 import uuid
 from collections.abc import Iterator
 from datetime import datetime
@@ -55,7 +56,15 @@ from app.models.schemas.public import PublicContentDetail, PublicContentSummary
 from app.rag.embeddings import Embedder
 from app.rag.retrieval import retrieve
 from app.rag.synthesis import SYSTEM_PROMPT, ChatLLM, dedupe_citations
-from app.routes.deps import get_chat_llm, get_embedder, get_rate_limiter, get_session, get_settings
+from app.routes.deps import (
+    get_chat_llm,
+    get_embedder,
+    get_latency_tracker,
+    get_rate_limiter,
+    get_session,
+    get_settings,
+)
+from app.routes.metrics import LatencyTracker, observe_and_maybe_log_chat_latency
 from app.routes.ratelimit import RateLimiter
 from app.routes.sse import sse_event, sse_response
 from app.services import content as content_service
@@ -273,6 +282,7 @@ def public_chat(
     chat_llm: ChatLLM = Depends(get_chat_llm),
     embedder: Embedder = Depends(get_embedder),
     rate_limiter: RateLimiter = Depends(get_rate_limiter),
+    latency_tracker: LatencyTracker = Depends(get_latency_tracker),
 ) -> StreamingResponse:
     """PRD §5.3: retrieval -> grounded synthesis -> typed SSE stream -> persistence.
 
@@ -338,6 +348,24 @@ def public_chat(
     never fires); the `responses=` override then supplies the real media type both frontend
     codegens read.
     """
+    # Phase-6 task-01 (PRD §9.1) first-token latency. NOT documented in this function's own
+    # docstring (deliberately — that docstring's TEXT is FastAPI's own OpenAPI `description` for
+    # this route, and the §5 surface is frozen; a comment here changes no wire-visible baseline).
+    # `_start` is captured before either rate-limit check, so a rejected request (which never
+    # reaches `sse_response`/`_on_first_event` at all) never skews the metric — the reference
+    # point is meant to reflect what a client actually experiences waiting for its first byte of
+    # answer, not just the retrieval/synthesis portion. `_on_first_event` (passed to
+    # `sse_response` below) fires once, right before `_generate_chat_stream`'s first SSE block is
+    # yielded (`app.routes.sse`'s own docstring) — success or failure alike, since the hook is
+    # generic ("first item", not "first `token` event") — and records the elapsed time under
+    # `app.state.latency_tracker`'s reserved `"public_chat"` key, logging the greppable
+    # `chat_latency ...` line every 100 samples (`app.routes.metrics.
+    # observe_and_maybe_log_chat_latency`, §9.1's phase-7-consumed metric).
+    _start = time.monotonic()
+
+    def _on_first_event() -> None:
+        observe_and_maybe_log_chat_latency(latency_tracker, time.monotonic() - _start)
+
     client_ip = request.client.host if request.client is not None else "unknown"
 
     existing_session = (
@@ -352,4 +380,7 @@ def public_chat(
     if will_mint:
         rate_limiter.reserve_session_create(client_ip)
 
-    return sse_response(_generate_chat_stream(session, chat_llm, embedder, settings, body))
+    return sse_response(
+        _generate_chat_stream(session, chat_llm, embedder, settings, body),
+        on_first_event=_on_first_event,
+    )

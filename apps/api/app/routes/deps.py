@@ -17,6 +17,7 @@ from app.auth.oauth import GoogleOAuthClient
 from app.config import Settings
 from app.rag.embeddings import Embedder
 from app.rag.synthesis import ChatLLM
+from app.routes.metrics import LatencyTracker
 from app.routes.ratelimit import RateLimiter
 from app.services.lifecycle import ChunkPipeline
 
@@ -166,3 +167,14 @@ def get_rate_limiter(request: Request) -> RateLimiter:
     gets a real, working default.
     """
     return cast(RateLimiter, request.app.state.rate_limiter)
+
+
+def get_latency_tracker(request: Request) -> LatencyTracker:
+    """Return the `LatencyTracker` `create_app` stored on `app.state` (phase-6 task-01, PRD §9.1).
+
+    `create_app` always resolves this to a concrete `LatencyTracker` — never `None` — same
+    always-resolved contract as `get_rate_limiter`/`get_chunk_pipeline`: nothing external can
+    fail at construction time, so every app, including every pre-phase-6 test that never touches
+    this seam at all, gets a real, working instance.
+    """
+    return cast(LatencyTracker, request.app.state.latency_tracker)

@@ -83,12 +83,12 @@ from dataclasses import dataclass
 from typing import Literal
 
 import pytest
-from app.routes.metrics import LatencyTracker
 from fastapi.testclient import TestClient
 from sqlalchemy import Engine
 
 from app.db import make_session_factory
 from app.factory import create_app
+from app.routes.metrics import LatencyTracker
 
 # ---------------------------------------------------------------------------
 # Fakes: `Callable[[], float]` clock, `Embedder`, and `ChatLLM` seams (defined

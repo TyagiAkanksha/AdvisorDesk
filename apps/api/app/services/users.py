@@ -98,14 +98,27 @@ def get_active_user(session: Session, user_id: uuid.UUID) -> User | None:
     return session.execute(active_select(User).where(User.id == user_id)).scalar_one_or_none()
 
 
-def bump_session_epoch(session: Session, user_id: uuid.UUID) -> None:
-    """Increment `User.session_epoch` by 1 for `user_id`, revoking every outstanding cookie.
+def bump_session_epoch(session: Session, user_id: uuid.UUID, cookie_epoch: int) -> None:
+    """Increment `User.session_epoch` by 1 for `user_id`, but ONLY if `cookie_epoch` is CURRENT.
 
     Phase-6 task-05 (PRD §9 logout revocation, review finding t01-M6): every session cookie is
     signed with the `session_epoch` value in effect at issuance
     (`app.auth.sessions.issue_cookie`); once this row moves to N+1, `app.auth.deps.require_admin`
     rejects any cookie still signed at N — including a captured/stolen one — without needing a
     server-side session-store table.
+
+    Fix round 1 (review finding I-1) — WHY the `cookie_epoch == user.session_epoch` guard exists:
+    before this fix, `app.routes.auth_routes.auth_logout` bumped the epoch for ANY cookie that
+    merely passed `read_session`'s shape/signature checks, with no comparison against the row's
+    live epoch at all. That let an already-revoked cookie — one `require_admin` already rejects
+    everywhere else as a 401 — retain exactly one privileged, destructive server-side effect: POST
+    it to `/auth/logout` again and it silently kills whatever session the admin is CURRENTLY
+    using, for the remainder of the stale cookie's 30-day signed lifetime (no browser needed, since
+    the cookie value is sent directly and `SameSite=Lax` is not an obstacle to a same-site POST
+    replay). A revoked cookie must be as inert here as it is everywhere else. The guard makes that
+    literal: only a cookie whose `epoch` still equals the row's CURRENT `session_epoch` — i.e. a
+    cookie that is still a live, currently-valid session — is allowed to advance the counter; a
+    stale/already-revoked cookie is silently ignored, same as a missing or malformed one.
 
     A no-op if `user_id` matches no row: `app.routes.auth_routes.auth_logout` calls this
     best-effort from a cookie that already passed `read_session`'s shape checks but whose
@@ -122,9 +135,12 @@ def bump_session_epoch(session: Session, user_id: uuid.UUID) -> None:
     Args:
         session: the request-scoped `Session` (`/auth/logout`'s `Depends(get_session)`).
         user_id: the `User.id` read from the (already shape-verified) session cookie.
+        cookie_epoch: the `epoch` read from that SAME cookie (`read_session`'s second tuple
+            element) — the bump is skipped unless this still equals the row's live
+            `session_epoch`.
     """
     user = session.execute(select(User).where(User.id == user_id)).scalar_one_or_none()
-    if user is None:
+    if user is None or user.session_epoch != cookie_epoch:
         return
     user.session_epoch += 1
     user.updated_at = datetime.now(UTC)

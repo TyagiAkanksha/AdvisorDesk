@@ -171,16 +171,25 @@ def auth_logout(
 
     Phase-6 task-05 (PRD §9 logout revocation, review finding t01-M6): a bare cookie clear only
     ever protected the calling browser — a captured/stolen cookie kept working for the rest of
-    its 30-day signed lifetime. `read_session` reads the (already shape-verified) cookie's owner;
-    if present, `bump_session_epoch` revokes every outstanding cookie for that user (a no-op if
-    the row no longer exists). A missing or malformed cookie is simply skipped — best-effort,
-    never surfaced as an error — so the idempotent-200 contract holds unconditionally, same as
-    before this task.
+    its 30-day signed lifetime. `read_session` reads the (already shape-verified) cookie's owner
+    and epoch; if present, `bump_session_epoch` revokes every outstanding cookie for that user (a
+    no-op if the row no longer exists). A missing or malformed cookie is simply skipped —
+    best-effort, never surfaced as an error — so the idempotent-200 contract holds unconditionally,
+    same as before this task.
+
+    Fix round 1 (review finding I-1) — WHY the epoch equality guard exists: `bump_session_epoch`
+    only bumps when the cookie's `epoch` still equals the row's CURRENT `session_epoch`. Without
+    that guard, an already-revoked cookie (one `require_admin` already rejects as a 401
+    everywhere else) retained one privileged server-side effect: replaying it here would bump the
+    epoch again, silently killing whatever session the admin logged back into since. A revoked
+    cookie must not retain ANY server-side effect — it must be as inert here as it is everywhere
+    else — so only a CURRENTLY-valid cookie is allowed to advance the counter. This route's own
+    response is unaffected either way: 200 with the cookie cleared, unconditionally.
     """
     session_data = read_session(request, settings)
     if session_data is not None:
-        user_id, _cookie_epoch = session_data
-        bump_session_epoch(session, user_id)
+        user_id, cookie_epoch = session_data
+        bump_session_epoch(session, user_id, cookie_epoch)
 
     response = Response(status_code=200)
     clear_cookie(response)

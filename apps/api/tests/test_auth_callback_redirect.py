@@ -12,10 +12,12 @@ importing only `FakeGoogleOAuthClient` and `login_as` from `auth_helpers`.
 
 from __future__ import annotations
 
+from app.auth.state import mint_state
 from auth_helpers import FakeGoogleOAuthClient, login_as
 from fastapi.testclient import TestClient
 from sqlalchemy import Engine
 
+from app.auth.sessions import COOKIE_NAME
 from app.config import Settings
 from app.db import make_session_factory
 from app.factory import create_app
@@ -23,6 +25,10 @@ from app.factory import create_app
 _CALLBACK_PATH = "/api/v1/auth/callback"
 _ME_PATH = "/api/v1/auth/me"
 _ADMIN_APP_URL = "http://localhost:3001"
+
+# Phase-6 task-05 (PRD §9 OAuth state CSRF) — brief-pinned literal, not assumed to be an
+# `app.auth.state` export, so defined locally (mirrors `tests/test_auth_hardening.py`).
+_STATE_COOKIE_NAME = "advisordesk_oauth_state"
 
 
 def _build_settings(*, admin_emails: str = "admin@example.com") -> Settings:
@@ -66,14 +72,24 @@ def test_callback_success_redirects_303_to_admin_app_url_with_cookie_set(
         "name": "Ada Admin",
         "avatar_url": None,
     }
+    # Phase-6 task-05: a direct (non-login_as) callback call needs a validly minted state +
+    # matching double-submit cookie, or it 403s on the state check before ever reaching here.
+    state = mint_state(client.app.state.settings)  # type: ignore[attr-defined]
+    client.cookies.set(_STATE_COOKIE_NAME, state)
 
     response = client.get(
-        _CALLBACK_PATH, params={"code": code, "state": "test-state"}, follow_redirects=False
+        _CALLBACK_PATH, params={"code": code, "state": state}, follow_redirects=False
     )
 
     assert response.status_code == 303
     assert response.headers["location"] == _ADMIN_APP_URL
-    assert response.headers.get("set-cookie") is not None
+    # CHANGED (phase-6 task-05): a successful callback now emits a SECOND Set-Cookie header
+    # too — deleting the now-consumed oauth state cookie (Interfaces §ii: "On success, delete
+    # the state cookie on the redirect response") — so a bare "is not None" check would still
+    # pass even if session-cookie issuance itself regressed, since the state-deletion header
+    # alone satisfies it. `get_list` + a name-prefix match pins the SESSION cookie specifically.
+    set_cookies = response.headers.get_list("set-cookie")
+    assert any(c.startswith(f"{COOKIE_NAME}=") for c in set_cookies)
 
 
 def test_callback_unlisted_email_403_has_no_cookie_and_no_redirect(tmp_engine: Engine) -> None:
@@ -85,9 +101,14 @@ def test_callback_unlisted_email_403_has_no_cookie_and_no_redirect(tmp_engine: E
         "name": "Outsider",
         "avatar_url": None,
     }
+    # Phase-6 task-05: a validly minted + matching state is required so this 403 is caused by
+    # the UNLISTED EMAIL this test means to exercise, not by the (now-checked-first) state CSRF
+    # guard.
+    state = mint_state(client.app.state.settings)  # type: ignore[attr-defined]
+    client.cookies.set(_STATE_COOKIE_NAME, state)
 
     response = client.get(
-        _CALLBACK_PATH, params={"code": code, "state": "test-state"}, follow_redirects=False
+        _CALLBACK_PATH, params={"code": code, "state": state}, follow_redirects=False
     )
 
     assert response.status_code == 403

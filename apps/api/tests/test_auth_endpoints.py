@@ -19,6 +19,7 @@ and must run either way.
 
 from __future__ import annotations
 
+from app.auth.state import mint_state
 from auth_helpers import FakeGoogleOAuthClient, login_as
 from fastapi.testclient import TestClient
 from sqlalchemy import Engine, select
@@ -28,6 +29,10 @@ from app.config import Settings
 from app.db import make_session_factory
 from app.factory import create_app
 from app.models import User
+
+# Phase-6 task-05 (PRD §9 OAuth state CSRF) — brief-pinned literal, not assumed to be an
+# `app.auth.state` export, so defined locally (mirrors `tests/test_auth_hardening.py`).
+_STATE_COOKIE_NAME = "advisordesk_oauth_state"
 
 
 def _build_settings(admin_emails: str = "admin@example.com") -> Settings:
@@ -171,10 +176,15 @@ def test_callback_unlisted_email_rejected_with_403_and_no_row_created(
         "name": "Outsider",
         "avatar_url": "https://example.com/outsider.png",
     }
+    # Phase-6 task-05: a direct (non-login_as) callback call now needs a validly minted state
+    # + matching double-submit cookie, or it 403s on the state check BEFORE ever reaching the
+    # allowlist check this test actually means to exercise.
+    state = mint_state(client.app.state.settings)  # type: ignore[attr-defined]
+    client.cookies.set(_STATE_COOKIE_NAME, state)
 
     response = client.get(
         "/api/v1/auth/callback",
-        params={"code": code, "state": "test-state"},
+        params={"code": code, "state": state},
         follow_redirects=False,
     )
 

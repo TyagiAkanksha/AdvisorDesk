@@ -13,6 +13,7 @@ not touched here — this module follows the same fake-OAuth-seam pattern
 
 from __future__ import annotations
 
+from app.auth.state import mint_state
 from auth_helpers import FakeGoogleOAuthClient, login_as
 from fastapi.testclient import TestClient
 from sqlalchemy import Engine, func, select
@@ -26,6 +27,10 @@ from app.models import User
 
 _CALLBACK_PATH = "/api/v1/auth/callback"
 _ME_PATH = "/api/v1/auth/me"
+
+# Phase-6 task-05 (PRD §9 OAuth state CSRF) — brief-pinned literal, not assumed to be an
+# `app.auth.state` export, so defined locally (mirrors `tests/test_auth_hardening.py`).
+_STATE_COOKIE_NAME = "advisordesk_oauth_state"
 
 
 def _build_settings(
@@ -96,17 +101,26 @@ def test_callback_sets_httponly_lax_non_secure_cookie_in_development(tmp_engine:
         "name": "Ada Admin",
         "avatar_url": None,
     }
+    # Phase-6 task-05: a direct (non-login_as) callback call needs a validly minted state +
+    # matching double-submit cookie, or it 403s on the state check before ever reaching here.
+    state = mint_state(client.app.state.settings)  # type: ignore[attr-defined]
+    client.cookies.set(_STATE_COOKIE_NAME, state)
 
     response = client.get(
-        _CALLBACK_PATH, params={"code": code, "state": "test-state"}, follow_redirects=False
+        _CALLBACK_PATH, params={"code": code, "state": state}, follow_redirects=False
     )
 
-    set_cookie = response.headers.get("set-cookie")
-    assert set_cookie is not None
-    assert set_cookie.startswith(f"{COOKIE_NAME}=")
-    assert "HttpOnly" in set_cookie
-    assert "SameSite=lax" in set_cookie
-    assert "; Secure" not in set_cookie
+    # CHANGED (phase-6 task-05): a successful callback now emits a SECOND Set-Cookie header
+    # too — deleting the now-consumed oauth state cookie on the same response (Interfaces §ii)
+    # — so a single combined `.headers.get("set-cookie")` string and a `.startswith()` check
+    # would depend on implementation-detail header ordering. `get_list` + selecting the entry
+    # by name prefix isolates the SESSION cookie specifically, regardless of ordering.
+    set_cookies = response.headers.get_list("set-cookie")
+    session_cookie = next((c for c in set_cookies if c.startswith(f"{COOKIE_NAME}=")), None)
+    assert session_cookie is not None
+    assert "HttpOnly" in session_cookie
+    assert "SameSite=lax" in session_cookie
+    assert "; Secure" not in session_cookie
 
 
 def test_callback_sets_secure_cookie_in_production(tmp_engine: Engine) -> None:
@@ -118,16 +132,27 @@ def test_callback_sets_secure_cookie_in_production(tmp_engine: Engine) -> None:
         "name": "Ada Admin",
         "avatar_url": None,
     }
+    # Phase-6 task-05: mint the state directly and inject it via `client.cookies.set` rather
+    # than driving a real `/auth/login` round trip — in production the state cookie itself
+    # carries `Secure`, and httpx's cookie jar (like a real browser) will not echo a `Secure`
+    # cookie back over the plain-HTTP `TestClient` transport, so a natural login->callback
+    # round trip would silently drop it and this test would 403 on the state check instead of
+    # reaching the cookie-flags assertion below. Direct injection bypasses that scheme check.
+    state = mint_state(client.app.state.settings)  # type: ignore[attr-defined]
+    client.cookies.set(_STATE_COOKIE_NAME, state)
 
     response = client.get(
-        _CALLBACK_PATH, params={"code": code, "state": "test-state"}, follow_redirects=False
+        _CALLBACK_PATH, params={"code": code, "state": state}, follow_redirects=False
     )
 
-    set_cookie = response.headers.get("set-cookie")
-    assert set_cookie is not None
-    assert "HttpOnly" in set_cookie
-    assert "SameSite=lax" in set_cookie
-    assert "Secure" in set_cookie
+    # CHANGED (phase-6 task-05): same header-ordering reasoning as the dev-mode cookie test
+    # above — `get_list` + name-prefix selection isolates the SESSION cookie specifically.
+    set_cookies = response.headers.get_list("set-cookie")
+    session_cookie = next((c for c in set_cookies if c.startswith(f"{COOKIE_NAME}=")), None)
+    assert session_cookie is not None
+    assert "HttpOnly" in session_cookie
+    assert "SameSite=lax" in session_cookie
+    assert "Secure" in session_cookie
 
 
 def test_me_returns_401_when_cookie_is_a_plaintext_user_id(tmp_engine: Engine) -> None:

@@ -7,14 +7,21 @@ below just delegate to `app.mcp.runtime.list_tool_schemas`/`call_tool`, so
 this module never needs to change as tools are added.
 
 `mount_mcp_http()` is `factory.py`'s only hook into this module: gated
-behind the same `require_admin` dependency every REST admin route uses
-(PRD §3 exposure rule — "the MCP route requires the same admin session auth
-as §5.2"), mounting the official `mcp` SDK's streamable-HTTP transport, not
-a stub.
+behind `require_admin` OR a resolvable `Authorization: Bearer` token (PRD
+§3 exposure rule — "the MCP route requires the same admin session auth as
+§5.2", extended by phase-6 task-04 so a deployed Claude connector, which
+can send a bearer header but never a cookie, can also reach it), mounting
+the official `mcp` SDK's streamable-HTTP transport, not a stub.
 
 Fix round 1 (Opus review of commit 08dd82a, findings C1/C2/I1/I2/I3): see
 `_execute_tool_call`, `_AdminGatedMcpApp.__call__`, and `mount_mcp_http` for
 the specifics of each fix.
+
+Phase-6 task-04: `_AdminGatedMcpApp.__call__` gained the bearer-token gate
+(`_extract_bearer_token`/`_resolve_bearer_principal`, both new here), and
+`mount_mcp_http`'s bare-path `Route` gained `methods=["POST"]` so an
+unauthenticated `GET` answers 405 at the routing layer instead of 401 from
+`require_admin` (phase-5 final-review t01-M8 fix).
 """
 
 from __future__ import annotations
@@ -36,9 +43,10 @@ from starlette.requests import Request
 from starlette.routing import Route
 from starlette.types import Receive, Scope, Send
 
-from app.auth.deps import require_admin
+from app.auth.deps import AdminPrincipal, require_admin
+from app.auth.tokens import resolve_bearer_token
 from app.mcp.runtime import call_tool, list_tool_schemas
-from app.services.errors import AppError
+from app.services.errors import AppError, AuthRequiredError
 from app.services.lifecycle import ChunkPipeline
 
 _SERVER_NAME = "advisordesk-mcp"
@@ -196,9 +204,73 @@ async def _handle_call_tool(
     )
 
 
+def _extract_bearer_token(request: Request) -> str | None:
+    """Return the raw token from an `Authorization: Bearer <token>` header, or `None`.
+
+    `None` covers both "no `Authorization` header at all" and "an `Authorization` header present
+    but not the `Bearer` scheme" (e.g. `Basic ...`) — either way `_AdminGatedMcpApp.__call__`
+    treats it as "no bearer offered" and falls back to the unchanged `require_admin` cookie path.
+    Only a header that actually carries a `Bearer` value routes into the bearer-first,
+    no-fall-through gate (task-04 brief).
+    """
+    header = request.headers.get("authorization")
+    if header is None:
+        return None
+    scheme, _, value = header.partition(" ")
+    if scheme.lower() != "bearer" or not value:
+        return None
+    return value
+
+
+def _resolve_bearer_principal(request: Request, raw_token: str) -> AdminPrincipal:
+    """Resolve `raw_token` to its owning `AdminPrincipal`, or raise `AuthRequiredError`.
+
+    Opens/closes its OWN short-lived session from `app.state.session_factory` — mirrors
+    `require_admin`'s own session lifecycle (`app.auth.deps`'s module docstring: "a second, ad
+    hoc, read-only session per admin request") rather than reusing the request-scoped
+    `sessionmaker` `_request_context` later binds for tool execution. Runs synchronously;
+    `_AdminGatedMcpApp.__call__` offloads it to a worker thread via `anyio.to_thread.run_sync`,
+    exactly like `require_admin` itself.
+
+    Task-04 brief: a present-but-unresolvable bearer token must 401 WITHOUT falling through to
+    the cookie path — this is that "resolve or raise" seam; the caller never re-tries
+    `require_admin` after this raises.
+
+    Args:
+        request: the incoming request; reads `app.state.session_factory` directly (see
+            `app.auth.deps.require_admin`'s identical read for why this layer doesn't go through
+            `app.routes.deps.get_session`).
+        raw_token: the bearer value, already stripped of its `"Bearer "` scheme prefix by
+            `_extract_bearer_token`.
+
+    Raises:
+        AuthRequiredError: `raw_token` doesn't resolve to an active user (unknown, garbage, or a
+            soft-deleted account's token).
+        RuntimeError: the app was built without a `session_factory` (a DB-less `create_app()`) —
+            mirrors `require_admin`'s own guard.
+    """
+    session_factory = getattr(request.app.state, "session_factory", None)
+    if session_factory is None:
+        raise RuntimeError(
+            "_resolve_bearer_principal() requires app.state.session_factory, but none was "
+            "configured — this app was built by create_app() without a session_factory "
+            "(DB-less mode)."
+        )
+
+    session = session_factory()
+    try:
+        principal = resolve_bearer_token(session, raw_token)
+    finally:
+        session.close()
+
+    if principal is None:
+        raise AuthRequiredError("Sign in required.")
+    return principal
+
+
 class _AdminGatedMcpApp:
-    """ASGI app mounted at the MCP HTTP path: `require_admin` gate + a per-request streamable
-    HTTP transport.
+    """ASGI app mounted at the MCP HTTP path: bearer-or-cookie admin gate + a per-request
+    streamable HTTP transport.
 
     A fresh `StreamableHTTPSessionManager` is built and `.run()` per call, scoped to exactly
     this one request, rather than one long-lived manager started once at mount time. Judgment
@@ -218,9 +290,19 @@ class _AdminGatedMcpApp:
         self._server = server
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
-        """Gate on `require_admin`, bind a request-scoped session factory + actor, then dispatch.
+        """Gate on a bearer token (if offered) or `require_admin`'s cookie, bind a request-scoped
+        session factory + actor, then dispatch.
 
-        `require_admin` runs first, so an unauthenticated call never binds a session factory or
+        Phase-6 task-04: `_extract_bearer_token` checks for an `Authorization: Bearer <token>`
+        header FIRST. When one is present, it must resolve via `_resolve_bearer_principal` or the
+        whole request 401s right there — no fall-through to `require_admin`'s cookie check, even
+        when a valid cookie also happens to be present on the same request (task-04 brief's
+        explicit no-fall-through pin: offering a bearer header commits the caller to the bearer
+        path). Only when NO bearer header is present at all does this fall back to the unchanged
+        `require_admin` cookie path — everything below this auth step is exactly as it was before
+        task-04, for either path.
+
+        Either way, auth runs first, so an unauthenticated call never binds a session factory or
         starts the transport (§3 pin: state 2 stays DB-less, mirroring every REST admin route). A
         raised `AuthRequiredError` propagates out of this ASGI callable uncaught, through the app's
         normal exception-handling middleware (`app.routes.errors.register_error_handlers`), the
@@ -231,12 +313,17 @@ class _AdminGatedMcpApp:
         Fix round 1, finding C1: `require_admin` itself runs a synchronous DB query
         (`app/auth/deps.py`) — offloaded to a worker thread the same way tool execution is
         (`_handle_call_tool`), so this coroutine never blocks the event loop either.
+        Phase-6 task-04: `_resolve_bearer_principal` is offloaded to a worker thread the same way,
+        for the same reason — it also runs a synchronous DB query.
 
         Fix round 1, finding C1 (session scoping): no `Session` is opened here at all — only a
         `sessionmaker` reference is bound to `_request_context`. `tools/list`/`initialize`
         HTTP requests (which touch no database) now never open a connection; a `tools/call`
         request opens one only for the duration of `_execute_tool_call`'s worker-thread span,
-        never held across an `await`.
+        never held across an `await`. (The bearer path's own auth-time lookup, if taken, opens
+        and closes ITS OWN separate session inside `_resolve_bearer_principal` — same "ad hoc,
+        short-lived" shape `require_admin` already uses for the cookie path, never the
+        `_request_context` sessionmaker.)
 
         Phase-5 task-02: also binds `request.app.state.chunk_pipeline` — the same resolved
         `ChunkPipeline` `app.routes.deps.get_chunk_pipeline` hands every REST route (`create_app`
@@ -245,7 +332,14 @@ class _AdminGatedMcpApp:
         chunks for real, not through a request-local `NoopChunkPipeline`.
         """
         request = Request(scope, receive=receive)
-        principal = await anyio.to_thread.run_sync(require_admin, request)
+        bearer_token = _extract_bearer_token(request)
+        principal: AdminPrincipal
+        if bearer_token is not None:
+            principal = await anyio.to_thread.run_sync(
+                _resolve_bearer_principal, request, bearer_token
+            )
+        else:
+            principal = await anyio.to_thread.run_sync(require_admin, request)
 
         session_factory = cast(sessionmaker[Session], request.app.state.session_factory)
         pipeline = cast(ChunkPipeline, request.app.state.chunk_pipeline)
@@ -261,7 +355,8 @@ class _AdminGatedMcpApp:
 
 
 def mount_mcp_http(app: FastAPI, *, path: str) -> None:
-    """Mount the streamable-HTTP MCP transport at `path`, behind `require_admin` (PRD §3).
+    """Mount the streamable-HTTP MCP transport at `path`, behind the bearer-or-cookie admin gate
+    (PRD §3).
 
     Called by `factory.py` only when `settings.mcp_http_enabled` is `True` — when it's `False`
     (the default), this is never called and `path` simply doesn't exist (§3 exposure rule,
@@ -270,20 +365,35 @@ def mount_mcp_http(app: FastAPI, *, path: str) -> None:
     Fix round 1, finding I1: Starlette's `Mount` compiles its match regex as
     `path + "/{path:path}"` (`starlette.routing.Mount.__init__`), which requires a literal `/`
     immediately after `path` — a bare request to `path` itself (no trailing segment) never matches
-    `Mount`, so Starlette's router 307-redirects it to `path + "/"` before `require_admin` ever
+    `Mount`, so Starlette's router 307-redirects it to `path + "/"` before the auth gate ever
     runs. An external client that doesn't auto-follow redirects (plain `httpx`/`requests`
     defaults, `curl` without `-L`, a browser `fetch`) gets a bodyless 307 instead of the MCP
     endpoint the controller pinned at exactly `path`. Registering an exact-match `Route` at `path`
     too closes the gap: Starlette treats a non-function/-method `endpoint` as already ASGI-shaped
     (`Route.__init__`: `self.app = endpoint` when `endpoint` isn't `inspect.isfunction`/
-    `inspect.ismethod`), so the same `_AdminGatedMcpApp` instance is called the same way, with no
-    method restriction (`methods=None`, matching `Mount`'s own no-method-restriction behavior) —
-    `path` now answers directly, and `path + "/..."` still goes through `Mount` exactly as before.
+    `inspect.ismethod`), so the same `_AdminGatedMcpApp` instance is called the same way — `path`
+    now answers directly, and `path + "/..."` still goes through `Mount` exactly as before.
+
+    Phase-6 task-04 (phase-5 final-review t01-M8 fix): the bare-path `Route` now also declares
+    `methods=["POST"]` (`Mount`'s own sub-path matching is untouched — still no method
+    restriction there). Starlette's router treats a path match with a disallowed method as a
+    "partial match" (`starlette.routing.Route.matches`) and answers 405 with an `Allow` header
+    BEFORE `Route.app` (this mount's `_AdminGatedMcpApp.__call__`, i.e. the whole auth gate) is
+    ever invoked — so an unauthenticated `GET /api/v1/mcp` is a routing-layer 405, not a 401 from
+    `require_admin`/`_resolve_bearer_principal`. (This surfaced a pre-existing gap in
+    `app.routes.errors._http_exception_handler` — it rebuilt the §9 envelope from a caught
+    `StarletteHTTPException` but dropped `exc.headers`, which would have silently discarded this
+    very `Allow: POST` header; fixed alongside this change since nothing about a 405 with no
+    `Allow` header would have satisfied PRD §9's general "framework-native errors still carry
+    their real HTTP semantics" intent, even though no route raised a header-bearing
+    `HTTPException` before this task.)
 
     Args:
         app: the `FastAPI` app under construction.
         path: the full path to mount at (`factory.py` passes `/api/v1/mcp`).
     """
     gated_app = _AdminGatedMcpApp(build_mcp_server())
-    app.router.routes.append(Route(path, endpoint=gated_app, name="mcp_http_bare_path"))
+    app.router.routes.append(
+        Route(path, endpoint=gated_app, name="mcp_http_bare_path", methods=["POST"])
+    )
     app.mount(path, gated_app)

@@ -13,13 +13,13 @@ not touched here — this module follows the same fake-OAuth-seam pattern
 
 from __future__ import annotations
 
-from app.auth.state import mint_state
 from auth_helpers import FakeGoogleOAuthClient, login_as
 from fastapi.testclient import TestClient
 from sqlalchemy import Engine, func, select
 from sqlalchemy.orm import Session
 
 from app.auth.sessions import COOKIE_NAME
+from app.auth.state import mint_state
 from app.config import Settings
 from app.db import make_session_factory
 from app.factory import create_app

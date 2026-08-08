@@ -33,7 +33,6 @@ import urllib.parse
 
 import pytest
 import sqlalchemy as sa
-from app.auth.state import mint_state, verify_state
 from auth_helpers import FakeGoogleOAuthClient, begin_login, login_as
 from fastapi.testclient import TestClient
 from itsdangerous import URLSafeTimedSerializer
@@ -41,6 +40,7 @@ from sqlalchemy import Engine
 from sqlalchemy.orm import Session
 
 from app.auth.sessions import COOKIE_NAME
+from app.auth.state import mint_state, verify_state
 from app.config import Settings
 from app.db import make_session_factory
 from app.factory import create_app

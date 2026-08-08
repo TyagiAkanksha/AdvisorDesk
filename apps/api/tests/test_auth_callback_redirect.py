@@ -12,12 +12,12 @@ importing only `FakeGoogleOAuthClient` and `login_as` from `auth_helpers`.
 
 from __future__ import annotations
 
-from app.auth.state import mint_state
 from auth_helpers import FakeGoogleOAuthClient, login_as
 from fastapi.testclient import TestClient
 from sqlalchemy import Engine
 
 from app.auth.sessions import COOKIE_NAME
+from app.auth.state import mint_state
 from app.config import Settings
 from app.db import make_session_factory
 from app.factory import create_app

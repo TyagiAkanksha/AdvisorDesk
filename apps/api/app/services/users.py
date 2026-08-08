@@ -5,6 +5,10 @@ CONVENTIONS.md §2: `app.services` is the only layer that touches the ORM —
 `app.routes.auth_routes.auth_me` (the two call sites that used to run
 `active_select` directly) go through the service layer instead
 (phase-2 task-01 review round 1, finding I4).
+
+`bump_session_epoch` (phase-6 task-05, PRD §9 logout revocation) is the write side of the same
+pattern: `app.routes.auth_routes.auth_logout` calls it instead of touching `User.session_epoch`
+directly, keeping the ORM confined to this layer.
 """
 
 from __future__ import annotations
@@ -92,3 +96,36 @@ def get_active_user(session: Session, user_id: uuid.UUID) -> User | None:
         The `User` row if it exists and is not soft-deleted, else `None`.
     """
     return session.execute(active_select(User).where(User.id == user_id)).scalar_one_or_none()
+
+
+def bump_session_epoch(session: Session, user_id: uuid.UUID) -> None:
+    """Increment `User.session_epoch` by 1 for `user_id`, revoking every outstanding cookie.
+
+    Phase-6 task-05 (PRD §9 logout revocation, review finding t01-M6): every session cookie is
+    signed with the `session_epoch` value in effect at issuance
+    (`app.auth.sessions.issue_cookie`); once this row moves to N+1, `app.auth.deps.require_admin`
+    rejects any cookie still signed at N — including a captured/stolen one — without needing a
+    server-side session-store table.
+
+    A no-op if `user_id` matches no row: `app.routes.auth_routes.auth_logout` calls this
+    best-effort from a cookie that already passed `read_session`'s shape checks but whose
+    referenced user may since have been hard-deleted or never existed (e.g. a forged-but-validly-
+    shaped cookie for an id that never had a row) — logout must stay idempotent-200 either way,
+    so this function absorbs that case rather than pushing an existence check onto every caller.
+    Deliberately queries by `User.id` with no `active_select` filter (like
+    `upsert_from_google`'s lookup): a soft-deleted user's outstanding cookies should still be
+    revoked, not silently skipped because the row is hidden from normal reads.
+
+    CONVENTIONS.md §3: `updated_at` is application-maintained, not a DB trigger — touched here
+    alongside the epoch bump, same as every other row mutation in this module.
+
+    Args:
+        session: the request-scoped `Session` (`/auth/logout`'s `Depends(get_session)`).
+        user_id: the `User.id` read from the (already shape-verified) session cookie.
+    """
+    user = session.execute(select(User).where(User.id == user_id)).scalar_one_or_none()
+    if user is None:
+        return
+    user.session_epoch += 1
+    user.updated_at = datetime.now(UTC)
+    session.flush()

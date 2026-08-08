@@ -22,6 +22,17 @@ Two layers of coverage:
 
 `tests/auth_helpers.py` and `tests/test_auth_endpoints.py` are
 test-author-pinned files and are not touched here (CONVENTIONS.md §10).
+
+Phase-6 task-05 (PRD §9 OAuth state CSRF) note: `test_callback_oauth_exchange_failure_
+returns_enveloped_502_not_plain_text` now mints a real, signed `state` and injects a matching
+`advisordesk_oauth_state` double-submit cookie before calling `/auth/callback` directly — the
+same fix `tests/test_auth_hardening.py`'s test-author report applied to every other direct
+(non-`login_as`) callback call across the suite, so this test reaches the `exchange_code` call
+(and its `OAuthExchangeError`) it actually means to exercise, rather than 403ing on the
+(now-checked-first) state CSRF guard. This file predates task-05's RED phase (`git log` shows
+it last touched 2026-07-30, before the task-05 RED commit) and was missed by that phase's
+caller audit — a pre-existing test broken as a mechanical side effect of the interface change,
+not a task-05-authored test; only the input construction below changed, no assertion did.
 """
 
 from __future__ import annotations
@@ -34,6 +45,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import Engine
 
 from app.auth.oauth import GoogleIdentity, HttpxGoogleOAuthClient
+from app.auth.state import mint_state
 from app.config import Settings
 from app.db import make_session_factory
 from app.factory import create_app
@@ -41,6 +53,9 @@ from app.services.errors import OAuthExchangeError
 
 _CALLBACK_PATH = "/api/v1/auth/callback"
 _TOKEN_HOST = "oauth2.googleapis.com"
+# Phase-6 task-05 (PRD §9 OAuth state CSRF) — brief-pinned literal, not assumed to be an
+# `app.auth.state` export, so defined locally (mirrors `tests/test_auth_hardening.py`).
+_STATE_COOKIE_NAME = "advisordesk_oauth_state"
 
 
 def _build_oauth_client(monkeypatch: pytest.MonkeyPatch, handler) -> HttpxGoogleOAuthClient:
@@ -188,10 +203,15 @@ def test_callback_oauth_exchange_failure_returns_enveloped_502_not_plain_text(
     """A reused/expired code (or any Google-side exchange failure) 502s with the §9 envelope —
     not FastAPI/Starlette's plain-text/traceback default for an unhandled exception."""
     client = _build_client(tmp_engine)
+    # Phase-6 task-05: a direct (non-login_as) callback call needs a validly minted state +
+    # matching double-submit cookie, or it 403s on the state check before ever reaching
+    # `exchange_code` — the OAuthExchangeError -> 502 mapping this test actually exercises.
+    state = mint_state(client.app.state.settings)  # type: ignore[attr-defined]
+    client.cookies.set(_STATE_COOKIE_NAME, state)
 
     response = client.get(
         _CALLBACK_PATH,
-        params={"code": "reused-code", "state": "test-state"},
+        params={"code": "reused-code", "state": state},
         follow_redirects=False,
     )
 

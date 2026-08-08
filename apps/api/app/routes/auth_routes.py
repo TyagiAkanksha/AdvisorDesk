@@ -8,21 +8,20 @@ envelope; routes never construct error responses themselves.
 
 from __future__ import annotations
 
-import secrets
-
-from fastapi import APIRouter, Depends, Response
+from fastapi import APIRouter, Depends, Request, Response
 from fastapi.responses import RedirectResponse
 from sqlalchemy.orm import Session
 
 from app.auth.deps import AdminPrincipal, require_admin
 from app.auth.oauth import GoogleOAuthClient
-from app.auth.sessions import clear_cookie, issue_cookie
+from app.auth.sessions import clear_cookie, issue_cookie, read_session
+from app.auth.state import STATE_COOKIE_NAME, STATE_MAX_AGE_SECONDS, mint_state, verify_state
 from app.config import Settings
 from app.models.schemas.auth import GoogleIdentity, MeResponse
 from app.models.schemas.common import ErrorEnvelope
 from app.routes.deps import get_oauth_client, get_session, get_settings
 from app.services.errors import AuthRequiredError, ForbiddenError
-from app.services.users import get_active_user, upsert_from_google
+from app.services.users import bump_session_epoch, get_active_user, upsert_from_google
 
 router = APIRouter()
 
@@ -30,10 +29,28 @@ router = APIRouter()
 @router.get("/auth/login", operation_id="auth_login")
 def auth_login(
     oauth_client: GoogleOAuthClient = Depends(get_oauth_client),
+    settings: Settings = Depends(get_settings),
 ) -> RedirectResponse:
-    """PRD §5.1: redirect (307) to Google's OAuth consent screen."""
-    state = secrets.token_urlsafe(16)
-    return RedirectResponse(oauth_client.authorization_url(state), status_code=307)
+    """PRD §5.1: redirect (307) to Google's OAuth consent screen.
+
+    Phase-6 task-05 (PRD §9 OAuth state CSRF, review finding t01-M7): `state` is now a signed,
+    timestamped token (`app.auth.state.mint_state`) instead of an unsigned random string, AND is
+    set as a double-submit cookie (`advisordesk_oauth_state`) on this SAME redirect response.
+    The signature alone would not stop login-CSRF — an attacker can mint their own validly-signed
+    state from their own `/auth/login` call — so `/auth/callback` requires BOTH the signature and
+    an exact match against this cookie, which only THIS browser received.
+    """
+    state = mint_state(settings)
+    response = RedirectResponse(oauth_client.authorization_url(state), status_code=307)
+    response.set_cookie(
+        STATE_COOKIE_NAME,
+        state,
+        max_age=STATE_MAX_AGE_SECONDS,
+        httponly=True,
+        samesite="lax",
+        secure=not settings.is_dev,
+    )
+    return response
 
 
 @router.get(
@@ -53,6 +70,7 @@ def auth_login(
     },
 )
 def auth_callback(
+    request: Request,
     code: str,
     state: str,
     oauth_client: GoogleOAuthClient = Depends(get_oauth_client),
@@ -61,10 +79,11 @@ def auth_callback(
 ) -> RedirectResponse:
     """PRD §5.1: exchange `code`, reject non-allowlisted emails, upsert, set the session cookie.
 
-    `state` is accepted (Google always sends back what `/auth/login`
-    generated) but not cryptographically verified against a stored value —
-    PRD §9 pins the allowlist/session-cookie/soft-delete behaviors, not a
-    CSRF `state` round-trip, so this stays minimal.
+    OAuth state CSRF (phase-6 task-05, PRD §9, review finding t01-M7): `state` is now
+    cryptographically verified — BOTH a valid `app.auth.state.verify_state` signature/age AND an
+    exact match against the `advisordesk_oauth_state` double-submit cookie `/auth/login` set —
+    BEFORE `exchange_code` is ever called, so a forged or replayed-cross-browser callback never
+    even reaches Google.
 
     Email normalization (phase-2 task-01 review round 1, finding I3):
     `identity["email"]` is normalized (`strip().lower()`) exactly once, here,
@@ -104,8 +123,15 @@ def auth_callback(
 
     Raises:
         ForbiddenError: the normalized email is not in `ADMIN_EMAILS` — the
-            check runs before any row write (PRD §5.1/§9).
+            check runs before any row write (PRD §5.1/§9); OR `state` fails
+            `verify_state` (bad signature/expired) or does not match the
+            `advisordesk_oauth_state` cookie (phase-6 task-05, PRD §9
+            login-CSRF) — checked first, before `exchange_code`.
     """
+    state_cookie = request.cookies.get(STATE_COOKIE_NAME)
+    if not verify_state(state, settings) or state != state_cookie:
+        raise ForbiddenError("OAuth state verification failed — restart sign-in.")
+
     identity = oauth_client.exchange_code(code)
     normalized_email = identity["email"].strip().lower()
     if normalized_email not in settings.admin_email_set:
@@ -119,7 +145,11 @@ def auth_callback(
     user = upsert_from_google(session, normalized_identity)
 
     response = RedirectResponse(settings.admin_app_url, status_code=303)
-    issue_cookie(response, user.id, settings)
+    issue_cookie(response, user.id, user.session_epoch, settings)
+    # The state cookie is single-use: delete it on the same response that lands the session
+    # cookie (Interfaces §ii) so a captured/replayed callback URL can't be re-submitted with a
+    # still-valid double-submit cookie sitting in the browser's jar.
+    response.delete_cookie(STATE_COOKIE_NAME, httponly=True, samesite="lax")
     return response
 
 
@@ -127,14 +157,31 @@ def auth_callback(
     "/auth/logout",
     operation_id="auth_logout",
 )
-def auth_logout() -> Response:
-    """PRD §5.1: clear the session cookie.
+def auth_logout(
+    request: Request,
+    settings: Settings = Depends(get_settings),
+    session: Session = Depends(get_session),
+) -> Response:
+    """PRD §5.1: clear the session cookie; best-effort revoke it server-side too.
 
     No error responses are declared: this route has no `require_admin`
     dependency and no request fields — logout intentionally clears the
     cookie regardless of whether the caller has a valid session, returning
     200 idempotently (re-review ruling on the task-03 round-1 baseline).
+
+    Phase-6 task-05 (PRD §9 logout revocation, review finding t01-M6): a bare cookie clear only
+    ever protected the calling browser — a captured/stolen cookie kept working for the rest of
+    its 30-day signed lifetime. `read_session` reads the (already shape-verified) cookie's owner;
+    if present, `bump_session_epoch` revokes every outstanding cookie for that user (a no-op if
+    the row no longer exists). A missing or malformed cookie is simply skipped — best-effort,
+    never surfaced as an error — so the idempotent-200 contract holds unconditionally, same as
+    before this task.
     """
+    session_data = read_session(request, settings)
+    if session_data is not None:
+        user_id, _cookie_epoch = session_data
+        bump_session_epoch(session, user_id)
+
     response = Response(status_code=200)
     clear_cookie(response)
     return response

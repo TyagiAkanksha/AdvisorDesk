@@ -37,34 +37,34 @@ section is "Image configuration":
 
 - **Port**: `8000` — matches `infra/Dockerfile.api`'s `EXPOSE 8000` and its `CMD`'s
   `uvicorn ... --port 8000`.
-- **Start command** — **override the image's default CMD** with:
+- **Start command**: leave EMPTY — the image's own `CMD` is correct as shipped. No override is
+  needed for forwarded-IP handling: when `--forwarded-allow-ips` is not passed on the command
+  line (and the image's `CMD` does not pass it), uvicorn's `Config.__init__` reads the
+  `FORWARDED_ALLOW_IPS` **environment variable** natively, falling back to `127.0.0.1`
+  (verified against the pinned uvicorn 0.51.0:
+  `os.environ.get("FORWARDED_ALLOW_IPS", "127.0.0.1")`). Setting the env var in step 3 is
+  sufficient; the image keeps its `DATABASE_URL_SHELL_OVERRIDE` shim (harmless here — the
+  variable is simply unset in App Runner).
 
-  ```sh
-  sh -c 'exec uvicorn app.main:app --host 0.0.0.0 --port 8000 --proxy-headers --forwarded-allow-ips "$FORWARDED_ALLOW_IPS"'
-  ```
+  **What value to give `FORWARDED_ALLOW_IPS` — decided empirically at deploy time, not here.**
+  `infra/Dockerfile.api`'s `CMD` comment records a real earlier finding: trusting `"*"` lets a
+  caller forge `X-Forwarded-For` and mint a fresh rate-limit bucket per request **if the proxy
+  in front APPENDS to a client-supplied chain** (uvicorn walks the chain right-to-left and,
+  when every hop is trusted, returns the leftmost — i.e. attacker-controlled — entry). Whether
+  that bites depends on how App Runner's ingress connects to the container and how it treats
+  inbound `X-Forwarded-For`, which we verify live rather than assume:
 
-  **Why this override is necessary** (read this before skipping it): `infra/Dockerfile.api`'s
-  own `CMD` deliberately does **not** pass `--forwarded-allow-ips` at all — its own comment
-  explains that uvicorn's proxy-headers middleware, if told to trust `"*"`, would let a caller
-  forge its own `X-Forwarded-For` and pick a fresh rate-limit bucket on every request (a real
-  finding from an earlier review). The image leaves this unset so it defaults to trusting only
-  `127.0.0.1`, and says explicitly: *"phase-6 task-02 ... is where a real proxy's actual egress
-  range gets set explicitly, once one exists to trust."* That real proxy is App Runner's own
-  ingress now — but the image's `CMD` has no mechanism to read a `FORWARDED_ALLOW_IPS`
-  environment variable (nothing in `app/config.py` reads it either; it is not an application
-  setting, it is a pure `uvicorn` CLI flag). This service-level **Start command** override is
-  where that env var actually takes effect: App Runner injects every environment variable you
-  set in step 3 into the container's shell environment before running the start command, so
-  `"$FORWARDED_ALLOW_IPS"` expands to whatever you set `FORWARDED_ALLOW_IPS` to below (`*` —
-  see `env-checklist.md`; safe specifically because the container is only ever reachable through
-  App Runner's own ingress, never directly from the internet).
-
-  This override is intentionally a **simplified** rewrite of the image's `CMD` — it drops the
-  `DATABASE_URL_SHELL_OVERRIDE → DATABASE_URL` promotion shim the image's own `CMD` does. That
-  shim exists solely for `infra/docker-compose.yml`'s local shell-export dev workflow (see that
-  file's own `environment:` comment); it has no purpose here since a deployed App Runner service
-  sets `DATABASE_URL` directly as a plain environment variable (step 3) — there's no "shell
-  export" concept for App Runner to promote from.
+  1. **First deploy with `FORWARDED_ALLOW_IPS` unset** (uvicorn trusts only `127.0.0.1`). If
+     App Runner's request path reaches the app from localhost, the rate limiter already sees
+     real client IPs — run `VERIFY.md`'s distinct-IP check.
+  2. If distinct real IPs share one bucket, the ingress connects from a non-local address: set
+     `FORWARDED_ALLOW_IPS` to that observed peer address/range (visible in the structured
+     request log's route/client fields, or temporarily via `aws logs tail`) and re-run the
+     check.
+  3. Only if no stable peer range exists fall back to `*` — and then `VERIFY.md`'s
+     **spoof-resistance check is mandatory**: a forged `X-Forwarded-For` must NOT move the
+     caller into a fresh bucket. If it does, `*` is unacceptable; pin the observed range
+     instead.
 
 - **CPU / memory**: the smallest size (1 vCPU / 2 GB) is plenty for a portfolio-scale
   deployment; increase later from the console with zero code changes if needed.
@@ -95,7 +95,7 @@ brief pins these **non-secret** values verbatim — set them exactly as written:
 | `GOOGLE_REDIRECT_URI` | `https://api.advisordesk.tyagiakanksha.com/api/v1/auth/callback` |
 | `CORS_ORIGINS` | `https://advisordesk.tyagiakanksha.com,https://admin.advisordesk.tyagiakanksha.com` |
 | `MCP_HTTP_ENABLED` | `true` |
-| `FORWARDED_ALLOW_IPS` | `*` (only takes effect via the Start command override in step 2 above) |
+| `FORWARDED_ALLOW_IPS` | start UNSET; then per the step-2 escalation ladder (observed peer range preferred; `*` only if spoof-check passes) |
 | `ADMIN_APP_URL` | `https://admin.advisordesk.tyagiakanksha.com` |
 | `ENVIRONMENT` | `production` |
 
@@ -139,8 +139,8 @@ App Runner is the default here because it needs zero additional infrastructure t
 custom domain, and autoscaling for a single container — exactly the shape of this deployment. If
 the owner instead wants the ECS Fargate path: push the same `advisordesk/api` ECR image (no
 Dockerfile changes) into a Fargate **task definition** (container port 8000, the same environment
-variables and the same Start command override as above — Fargate task definitions support a
-`command` override the same way), run it as a **Fargate service** with `awsvpc` networking behind
+variables as above — including `FORWARDED_ALLOW_IPS`, which uvicorn reads from the environment
+natively), run it as a **Fargate service** with `awsvpc` networking behind
 an **Application Load Balancer** (the ALB is what terminates TLS and does the health check against
 `/api/v1/healthz` here — Fargate itself has no built-in custom-domain/certificate flow the way
 App Runner does), and point the same Cloudflare custom-domain CNAME at the ALB's DNS name instead

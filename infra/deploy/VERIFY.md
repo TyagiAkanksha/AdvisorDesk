@@ -72,11 +72,34 @@ for i in $(seq 1 3); do curl -s -o /dev/null -w "%{http_code} " -X POST \
 ```
 
 Expected: device B gets its own fresh run of `200`s — device A hitting `429` must NOT make
-device B 429 too. If device B also 429s immediately, `FORWARDED_ALLOW_IPS`/the Start command
-override in `apprunner-api.md` isn't taking effect and every visitor is sharing one bucket.
+device B 429 too. If device B also 429s immediately, `FORWARDED_ALLOW_IPS` isn't taking effect
+(see `apprunner-api.md` step 2's escalation ladder) and every visitor is sharing one bucket.
 
 ```text
 (recorded during deployment — device B, e.g. phone on cellular data)
+```
+
+## 2b. Spoof-resistance check (MANDATORY if `FORWARDED_ALLOW_IPS` was set to `*`)
+
+The inverse property of check 2: a caller must NOT be able to escape its bucket by forging
+`X-Forwarded-For`. From ONE device, first exhaust the bucket (the 12-POST loop from check 1),
+then immediately retry with forged headers:
+
+```sh
+for i in $(seq 1 3); do curl -s -o /dev/null -w "%{http_code} " -X POST \
+  $API/api/v1/public/chat -H 'content-type: application/json' \
+  -H "X-Forwarded-For: 198.51.100.$i" \
+  -d '{"message":"hi"}'; done; echo
+```
+
+Expected: still `429 429 429` — the forged header must be ignored (the trusted proxy's own
+appended entry wins). If any of these return `200`, the forged chain is being honored: an
+attacker can mint a fresh rate-limit bucket per request, which defeats §9's rate limiting
+entirely. STOP and pin `FORWARDED_ALLOW_IPS` to the observed peer range instead of `*`, then
+re-run checks 2 and 2b.
+
+```text
+(recorded during deployment — forged-XFF retries after exhausting the bucket)
 ```
 
 ## 3. SSE streams unbuffered through the custom domain
@@ -242,9 +265,9 @@ each, plus the SSE check, contributes toward that count).
 `apps/api/app/main.py`'s `_configure_logging()` calls `logging.basicConfig(level=logging.INFO)`
 at import time, but that call is a documented no-op whenever the root logger already has a
 handler attached (Python's own `logging.basicConfig` behavior, not passing `force=True`). This
-deployment's App Runner Start command (`apprunner-api.md` step 2) only *adds*
-`--forwarded-allow-ips`, so it should not introduce a competing log configuration — but if the
-Start command is ever changed further (e.g. a future `uvicorn --log-config <file>` addition),
+deployment uses the image's own `CMD` unmodified (`apprunner-api.md` step 2 — no Start command
+override), so nothing introduces a competing log configuration — but if a Start command
+override is ever added later (e.g. a future `uvicorn --log-config <file>` addition),
 that could pre-configure the root logger with a level/handler that silently swallows this
 module's `logger.info(...)` calls, and `_configure_logging()`'s own guard would then leave it
 that way rather than fixing it. If this check ever comes back empty despite real chat traffic,

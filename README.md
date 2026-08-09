@@ -125,6 +125,21 @@ pnpm -C apps/client type-check
 pnpm -C apps/client test
 ```
 
+## Deployment
+
+AWS deployment scripts and step-by-step console walkthroughs live in `infra/deploy/`:
+
+- `infra/deploy/push_ecr.sh` — builds, tags, and pushes the three images (`api`, `admin`,
+  `client`) to Amazon ECR.
+- `infra/deploy/apprunner-api.md` — API on AWS App Runner (env vars, health check, custom
+  domain), plus the ECS Fargate alternative.
+- `infra/deploy/frontends.md` — both frontends on App Runner, including the build-time-vs-runtime
+  distinction between `NEXT_PUBLIC_API_URL` (admin) and `API_URL` (client).
+- `infra/deploy/env-checklist.md` — every production env var, which service needs it, whether
+  it's a secret, and where its value comes from (no secret values are ever committed).
+- `infra/deploy/VERIFY.md` — the deployed verification checklist (rate limiting, SSE, CORS, MCP
+  auth, logout revocation, latency metrics) — see PRD §10 Phase 6.
+
 ## Implementation notes
 
 - **Build contexts.** Both `infra/Dockerfile.api` and `infra/Dockerfile.web` build with the repo

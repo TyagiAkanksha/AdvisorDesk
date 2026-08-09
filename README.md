@@ -131,6 +131,10 @@ AWS deployment scripts and step-by-step console walkthroughs live in `infra/depl
 
 - `infra/deploy/push_ecr.sh` — builds, tags, and pushes the three images (`api`, `admin`,
   `client`) to Amazon ECR.
+- `infra/deploy/database.md` — apply Alembic migrations and seed the sample corpus against the
+  deployed Supabase database. **Run this before the API service (below) is expected to serve
+  real traffic** — the API's health check has no DB dependency, so an un-migrated database fails
+  silently until real requests arrive.
 - `infra/deploy/apprunner-api.md` — API on AWS App Runner (env vars, health check, custom
   domain), plus the ECS Fargate alternative.
 - `infra/deploy/frontends.md` — both frontends on App Runner, including the build-time-vs-runtime
@@ -209,8 +213,9 @@ AWS deployment scripts and step-by-step console walkthroughs live in `infra/depl
   belongs inside a browser-served Next.js image. Each frontend service gets only the API-base
   value(s) it actually needs, passed explicitly rather than inherited wholesale: `admin` takes
   `NEXT_PUBLIC_API_URL` as a build `arg` (inlined into its browser bundle); `client` takes both
-  `NEXT_PUBLIC_API_URL` as a build `arg` (harmless/unused — apps/client has no client-rendered
-  fetch today) and `API_URL` as **both** a build `arg` and an `environment:` entry (final review,
+  `NEXT_PUBLIC_API_URL` as a build `arg` (inlined into its browser bundle too, same mechanism as
+  admin's — `apps/client/src/components/chat/useChatStream.ts` reads it for the browser-side
+  chat POST, so it is load-bearing, not unused) and `API_URL` as **both** a build `arg` and an `environment:` entry (final review,
   F1) — `API_URL` backs apps/client's server-only `src/lib/publicApi.ts`, which `next build`
   itself calls during prerendering (build-time) and which also runs per-request after the
   container starts (runtime), so a build arg alone isn't enough. Both point at the compose

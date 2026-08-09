@@ -40,9 +40,18 @@ configure each App Runner service:
      ever want to point a running container at a different API origin without a full rebuild.
   `infra/docker-compose.yml`'s `client` service sets `API_URL` both ways (`build.args` AND
   `environment:`) for exactly this reason — mirror that split here.
-- `client`'s image also carries a harmless, unused `NEXT_PUBLIC_API_URL` build arg
-  (`push_ecr.sh` sets it for consistency) — nothing in `apps/client` reads it today (no
-  client-rendered fetch yet).
+- **`client` ALSO needs `NEXT_PUBLIC_API_URL` at BUILD TIME — it is NOT unused.**
+  `apps/client/src/components/chat/useChatStream.ts`'s `resolveApiBaseUrl()` reads
+  `process.env.NEXT_PUBLIC_API_URL` at module load, exactly like `apps/admin/src/lib/apiBase.ts`
+  does — this hook runs client-side (in the browser), so it needs the same
+  `NEXT_PUBLIC_`-prefixed, build-time-baked mechanism as admin, not the server-only `API_URL`
+  above. It backs the browser's `fetch(`${resolveApiBaseUrl()}/api/v1/public/chat`)` POST — the
+  entire client chat feature. **The same one-image-per-environment rule as admin applies to this
+  value on the client image too**: if the API's public origin ever changes, updating only the
+  client service's runtime `API_URL` env var (below) gets you a working SSR page whose chat box
+  still silently POSTs to the OLD origin, because `NEXT_PUBLIC_API_URL` was already baked into
+  the JS bundle at the old build. Rebuild+repush the client image (`push_ecr.sh`'s
+  `API_PUBLIC_URL`) whenever the API origin changes, same as admin.
 
 ## Create each service
 

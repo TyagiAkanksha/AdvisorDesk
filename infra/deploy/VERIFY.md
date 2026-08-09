@@ -14,6 +14,35 @@ CLIENT=https://advisordesk.tyagiakanksha.com
 ADMIN=https://admin.advisordesk.tyagiakanksha.com
 ```
 
+## Before you start: the three §9 caps, and a recommended run order
+
+Sections 1, 2, and 2b below are deliberately designed to trip rate limits — read this first so a
+correctly-working deploy doesn't get misread as broken.
+
+- **`RATE_LIMIT_PER_MIN`** — default **10**, a SLIDING **60-second** window, keyed per IP
+  (`apps/api/app/routes/ratelimit.py`). Section 1's 12-POST loop is what trips this: the first
+  ~10 requests admit, the rest 429. The window is sliding, not fixed — if the 12 requests are
+  spread out (e.g. `-o /dev/null` on a slow connection lets a full SSE stream drain before the
+  next `curl` starts), the loop can take long enough that early requests fall out of the trailing
+  60s and the cap never trips on an otherwise-healthy deploy. Every command below adds
+  `--max-time 3` for exactly this reason — it bounds each request so 12 sequential POSTs stay
+  comfortably inside one 60-second window.
+- **`SESSION_CREATE_PER_DAY`** — default **20**, a fixed UTC-midnight-bucketed window, keyed per
+  IP. Every POST below omits `session_id`, so **every admitted request also charges one
+  session-create slot** (`apps/api/app/routes/public_routes.py`'s `will_mint` →
+  `rate_limiter.reserve_session_create(client_ip)`), regardless of whether it also tripped the
+  per-minute cap. Section 1 (~10 admitted) plus device A in section 2 (up to 10 more) can exhaust
+  this cap for your laptop's IP for the rest of the UTC day — after that, **every** request from
+  that IP 429s with the session-create message, not the per-minute message, for an unrelated
+  reason.
+- **Run section 3 (SSE) before sections 1, 2, and 2b.** Those three sections intentionally
+  exhaust both caps above; running SSE afterward risks a 429 that looks like broken streaming
+  rather than a healthy rate limiter. Doing SSE first costs only one admitted request.
+- **Escape hatch:** both caps are pure in-memory, per-process state
+  (`ratelimit.py`'s own docstring) — restarting or redeploying the App Runner service clears
+  every bucket if you need a clean slate to re-run these checks. Otherwise, space re-runs across
+  UTC days (session-create budget) or at least 60 seconds apart (per-minute window).
+
 ## 0. Health check
 
 ```sh
@@ -28,17 +57,22 @@ Expected: `{"status":"ok"}`
 
 ## 1. Rate limiting — the PRD's explicit deployed check (§10 Phase 6)
 
+**Run section 3 (SSE) first if you haven't already** — see "Before you start" above.
+
 11+ rapid chat POSTs from one IP must start returning `429` with the standard error envelope
-(`{"error":{"code":"rate_limited","message":"..."}}`) once `RATE_LIMIT_PER_MIN` (default 10) is
-exceeded:
+(`{"error":{"code":"rate_limited","message":"..."}}`) once `RATE_LIMIT_PER_MIN` (default **10**,
+sliding 60s window) is exceeded. `--max-time 3` bounds each request so the loop stays inside one
+window — the 429 slot itself is charged at admission, so a fast-failing request still counts
+correctly:
 
 ```sh
-for i in $(seq 1 12); do curl -s -o /dev/null -w "%{http_code}\n" -X POST \
+for i in $(seq 1 12); do curl -s -o /dev/null -w "%{http_code}\n" --max-time 3 -X POST \
   $API/api/v1/public/chat -H 'content-type: application/json' \
   -d '{"message":"hi"}'; done
 ```
 
-Expected: the first ~10 responses `200`, the rest `429`.
+Expected: the first ~10 responses `200`, the rest `429`. **This loop also spends up to ~10 of
+your IP's `SESSION_CREATE_PER_DAY` (default 20) budget** — see "Before you start" above.
 
 ```text
 (recorded during deployment)
@@ -51,10 +85,12 @@ client IP rather than App Runner's single proxy address (which would rate-limit 
 as one). Run the SAME loop from **two genuinely distinct real client IPs** — e.g. your laptop on
 home wifi, then your phone on cellular data (not the same wifi/NAT) — one right after the other:
 
-**Device A** (drive it into its own 429s first):
+**Device A** (drive it into its own 429s first — this burns up to ~10 more of device A's
+`SESSION_CREATE_PER_DAY` budget, on top of section 1's if device A is the same laptop/IP as
+above; see "Before you start"):
 
 ```sh
-for i in $(seq 1 12); do curl -s -o /dev/null -w "%{http_code} " -X POST \
+for i in $(seq 1 12); do curl -s -o /dev/null -w "%{http_code} " --max-time 3 -X POST \
   $API/api/v1/public/chat -H 'content-type: application/json' \
   -d '{"message":"hi"}'; done; echo
 ```
@@ -66,14 +102,18 @@ for i in $(seq 1 12); do curl -s -o /dev/null -w "%{http_code} " -X POST \
 **Device B**, immediately after, from a genuinely different network path:
 
 ```sh
-for i in $(seq 1 3); do curl -s -o /dev/null -w "%{http_code} " -X POST \
+for i in $(seq 1 3); do curl -s -o /dev/null -w "%{http_code} " --max-time 3 -X POST \
   $API/api/v1/public/chat -H 'content-type: application/json' \
   -d '{"message":"hi"}'; done; echo
 ```
 
 Expected: device B gets its own fresh run of `200`s — device A hitting `429` must NOT make
 device B 429 too. If device B also 429s immediately, `FORWARDED_ALLOW_IPS` isn't taking effect
-(see `apprunner-api.md` step 2's escalation ladder) and every visitor is sharing one bucket.
+(see `apprunner-api.md` step 2's escalation ladder) and every visitor is sharing one bucket. (On
+a re-run later the same UTC day, a `429` on device B's very first request can also mean device
+B's own IP already exhausted its `SESSION_CREATE_PER_DAY` budget from earlier testing — that's
+the session-create message, not the per-minute one; check the response body if you need to tell
+the two apart, or just wait for UTC midnight / redeploy to clear it.)
 
 ```text
 (recorded during deployment — device B, e.g. phone on cellular data)
@@ -83,10 +123,11 @@ device B 429 too. If device B also 429s immediately, `FORWARDED_ALLOW_IPS` isn't
 
 The inverse property of check 2: a caller must NOT be able to escape its bucket by forging
 `X-Forwarded-For`. From ONE device, first exhaust the bucket (the 12-POST loop from check 1),
-then immediately retry with forged headers:
+then immediately retry with forged headers. Like the loops above, this also spends a few more of
+this IP's `SESSION_CREATE_PER_DAY` budget — see "Before you start":
 
 ```sh
-for i in $(seq 1 3); do curl -s -o /dev/null -w "%{http_code} " -X POST \
+for i in $(seq 1 3); do curl -s -o /dev/null -w "%{http_code} " --max-time 3 -X POST \
   $API/api/v1/public/chat -H 'content-type: application/json' \
   -H "X-Forwarded-For: 198.51.100.$i" \
   -d '{"message":"hi"}'; done; echo
@@ -103,6 +144,12 @@ re-run checks 2 and 2b.
 ```
 
 ## 3. SSE streams unbuffered through the custom domain
+
+**Run this section before sections 1, 2, and 2b above** if you haven't already — see "Before you
+start" at the top of this file. Those sections deliberately exhaust both the per-minute and (over
+a session) the daily session-create caps; running this check afterward risks a `429` here that
+looks like broken streaming rather than a healthy rate limiter doing its job. This check itself
+only spends one admitted request either way.
 
 Tokens must arrive incrementally, not all at once at the end (which would indicate Cloudflare or
 some other hop buffered the response — the reason the custom-domain DNS records must be

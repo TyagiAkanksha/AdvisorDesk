@@ -152,13 +152,18 @@ build_tag_push "advisordesk/admin" "infra/Dockerfile.web" \
   --build-arg "APP=admin" \
   --build-arg "NEXT_PUBLIC_API_URL=${API_PUBLIC_URL}"
 
-# client: needs BOTH build args. NEXT_PUBLIC_API_URL is harmless/unused today (apps/client has
-# no client-rendered fetch yet) but the Dockerfile always accepts it. API_URL backs
-# apps/client/src/lib/publicApi.ts's server-only fetches — `next build` itself calls that code
-# during its "Generating static pages" step, so API_URL needs a real value at BUILD time here,
-# same as NEXT_PUBLIC_API_URL. (The deployed App Runner client service ALSO needs API_URL set as
-# a plain runtime environment variable, for the same module's per-request calls after the
-# container starts — that's a separate step, not this script's job; see frontends.md.)
+# client: needs BOTH build args, and NEITHER is optional. NEXT_PUBLIC_API_URL is a BUILD-TIME
+# bake exactly like admin's — apps/client/src/components/chat/useChatStream.ts's
+# resolveApiBaseUrl() reads process.env.NEXT_PUBLIC_API_URL at module load and uses it for the
+# browser-side fetch(`${...}/api/v1/public/chat`) that drives the entire client chat feature; it
+# is load-bearing, not unused. API_URL backs apps/client/src/lib/publicApi.ts's server-only
+# fetches — `next build` itself calls that code during its "Generating static pages" step, so
+# API_URL needs a real value at BUILD time here too, same as NEXT_PUBLIC_API_URL. (The deployed
+# App Runner client service ALSO needs API_URL set as a plain runtime environment variable, for
+# the same module's per-request calls after the container starts — that's a separate step, not
+# this script's job; see frontends.md.) Because NEXT_PUBLIC_API_URL is baked at build time same
+# as admin's, changing the API's public origin later requires rebuilding+repushing THIS image
+# too — updating only the client service's runtime API_URL is not enough; see frontends.md.
 build_tag_push "advisordesk/client" "infra/Dockerfile.web" \
   --build-arg "APP=client" \
   --build-arg "NEXT_PUBLIC_API_URL=${API_PUBLIC_URL}" \

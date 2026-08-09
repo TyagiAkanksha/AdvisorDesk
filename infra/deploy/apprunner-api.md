@@ -8,6 +8,12 @@ calls) — nothing in this repo runs it for you. Push the image first:
 AWS_ACCOUNT_ID=<your account id> ./infra/deploy/push_ecr.sh
 ```
 
+**Before creating the service: apply migrations and seed the database — see
+`infra/deploy/database.md`.** Do that first, against the same Supabase pooler string you'll
+paste into step 3 below. The health check in step 2 has no database dependency at all, so the
+service will come up "healthy" against an un-migrated, unseeded database and only then fail on
+every real content/chat/auth request — `database.md` explains why and gives the exact commands.
+
 Then follow the steps below. See `infra/deploy/env-checklist.md` for the full env var roster
 (names, which are secrets, and where each value comes from) — this doc only repeats the
 non-secret values the task-02 brief pins verbatim.
@@ -58,9 +64,20 @@ section is "Image configuration":
      App Runner's request path reaches the app from localhost, the rate limiter already sees
      real client IPs — run `VERIFY.md`'s distinct-IP check.
   2. If distinct real IPs share one bucket, the ingress connects from a non-local address: set
-     `FORWARDED_ALLOW_IPS` to that observed peer address/range (visible in the structured
-     request log's route/client fields, or temporarily via `aws logs tail`) and re-run the
-     check.
+     `FORWARDED_ALLOW_IPS` to that observed peer address/range. **Find it from uvicorn's own
+     access log, not the app's structured log line** — `apps/api/app/routes/metrics.py`'s
+     `LatencyMiddleware` logs exactly `route=... status=... duration_ms=...` per request
+     (`metrics.py:310-312`), with no client-address field at all. Uvicorn's access log is on by
+     default under the image's unmodified `CMD` and prints the raw peer for every request, in
+     the form `<client_addr> - "<request_line>" <status_code>`, e.g.:
+     ```
+     10.0.4.213:54321 - "POST /api/v1/public/chat HTTP/1.1" 200
+     ```
+     It lands in the same CloudWatch application log group as the structured lines above — App
+     Runner service → **Logs** tab, or `aws logs tail /aws/apprunner/<service>/<id>/application
+     --since 15m --region us-east-1`. The numeric address before the first ` - ` is the peer
+     uvicorn saw; that's what to set `FORWARDED_ALLOW_IPS` to. Re-run the distinct-IP check once
+     it's set.
   3. Only if no stable peer range exists fall back to `*` — and then `VERIFY.md`'s
      **spoof-resistance check is mandatory**: a forged `X-Forwarded-For` must NOT move the
      caller into a fresh bucket. If it does, `*` is unacceptable; pin the observed range
@@ -68,10 +85,16 @@ section is "Image configuration":
 
 - **CPU / memory**: the smallest size (1 vCPU / 2 GB) is plenty for a portfolio-scale
   deployment; increase later from the console with zero code changes if needed.
-- **Auto scaling**: leave the default configuration (min 1 instance) — a single instance is
-  enough to demo this app, and PRD §9's rate limiter is explicitly documented as in-memory /
-  single-container (see `apps/api/app/routes/ratelimit.py`'s own docstring) — running more than
-  one instance would split each cap's state per-instance, silently multiplying every limit.
+- **Auto scaling**: App Runner's *default* auto-scaling configuration is min **1** / max **25**
+  — it guarantees a floor, not a ceiling, so "leave the default" silently permits up to 25
+  concurrent instances. **Create (or select) a custom auto-scaling configuration and pin Max
+  size = 1 (min 1 / max 1)** before creating the service — do not accept the default here. Why:
+  PRD §9's rate limiter (`apps/api/app/routes/ratelimit.py`'s own docstring) and the
+  `chat_latency` `LatencyTracker` (`apps/api/app/routes/metrics.py`) are both pure in-memory,
+  per-process state — more than one instance splits each cap's/tracker's state per-instance,
+  silently multiplying every §9 limit, and can turn `VERIFY.md` check 2 (the distinct-IP bucket
+  check) into a **false pass**: if device A and device B land on different instances, device B
+  gets a fresh bucket regardless of whether `FORWARDED_ALLOW_IPS` is even working.
 - **Health check**: Protocol HTTP, **Path `/api/v1/healthz`** (PRD §9 / the task-02 brief) — a
   no-auth, no-DB liveness probe (`apps/api/app/routes/health_routes.py`) that always answers
   `{"status": "ok"}`. Leave interval/timeout/threshold at the console defaults unless you

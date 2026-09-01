@@ -26,6 +26,7 @@ dev = [
     "mypy",
     "import-linter",
     "types-pyyaml>=6.0.12.20260724",
+    "pytest-cov>=7.1.0",
 ]
 
 [build-system]

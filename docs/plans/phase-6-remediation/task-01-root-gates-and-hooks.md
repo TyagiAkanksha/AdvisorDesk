@@ -19,10 +19,26 @@ and a pre-commit hook.
    Note: `gates:api`'s pytest leg needs `TEST_DATABASE_URL` exported by the caller (unset ⇒ DB tests
    skip by design); do NOT bake the URL into the script.
 2. **`lefthook.yml` (root, new)** + `lefthook` as a root devDependency (pinned) — pre-commit only,
-   convenience not enforcement (CI in task-02 is the backstop):
-   - staged `apps/api/**/*.py` → `cd apps/api && uv run ruff check --fix {staged_files} && uv run ruff format {staged_files}`, `stage_fixed: true`
-   - staged `apps/{admin,client}/**/*.{ts,tsx}` → the owning app's prettier via `pnpm -C apps/<app> exec prettier --write`, `stage_fixed: true`
+   convenience not enforcement (CI in task-02 is the backstop).
+   > **AMENDED 2026-08-31 (controller, after implementer NEEDS_CONTEXT):** the original literal YAML
+   > here was defective — gobwas-glob `apps/api/**/*.py` cannot match direct children of `apps/api/`,
+   > and `cd apps/api && … {staged_files}` double-prefixes repo-root-relative paths. The spec is now
+   > REQUIREMENT-DRIVEN; use lefthook's `root:` key per command (which chdirs and re-roots
+   > `{staged_files}`) or whatever shape empirically satisfies ALL of:
+   > (a) a staged `.py` directly under `apps/api/` AND one nested (e.g. `apps/api/app/x.py`) both
+   >     trigger ruff `check --fix` + `format` and get re-staged (`stage_fixed: true`);
+   > (b) a staged `.ts`/`.tsx` anywhere under each frontend app triggers that app's own prettier
+   >     (`--write`) and is re-staged;
+   > (c) non-matching files (e.g. `.md`) trigger nothing.
+   > Prove (a)–(c) empirically with scratch probe files, then remove every probe (never committed).
    - Add a `"prepare": "lefthook install"` root script so the hook self-installs on `pnpm install`.
+   - **Also authorized:** add `lefthook: false` to `pnpm-workspace.yaml`'s existing `allowBuilds`
+     denial block with a one-line rationale comment (hook install is handled explicitly by the
+     `prepare` script; postinstall not needed) — silences `ERR_PNPM_IGNORED_BUILDS` consistently
+     with the repo's existing supply-chain convention. `pnpm-workspace.yaml` joins the path-scoped
+     `git add` list in Constraints.
+   - Ratified implementer judgment calls: `--no-frozen-lockfile` install (TTY prompt workaround),
+     reverting pnpm's unrelated auto-edit, pinning lefthook `2.1.12`.
 3. **`.gitignore` (root)** — add `.coverage`, `.coverage.*`, `htmlcov/` (a stray `apps/api/.coverage`
    from the review's baseline run currently sits untracked; after the gitignore change confirm
    `git status` no longer lists it — do not delete it).

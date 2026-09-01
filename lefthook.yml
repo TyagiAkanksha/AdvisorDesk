@@ -1,0 +1,18 @@
+pre-commit:
+  parallel: true
+  commands:
+    api-format:
+      root: "apps/api/"
+      glob: "*.py"
+      run: uv run ruff check --fix {staged_files} && uv run ruff format {staged_files}
+      stage_fixed: true
+    admin-format:
+      root: "apps/admin/"
+      glob: "*.{ts,tsx}"
+      run: pnpm exec prettier --write {staged_files}
+      stage_fixed: true
+    client-format:
+      root: "apps/client/"
+      glob: "*.{ts,tsx}"
+      run: pnpm exec prettier --write {staged_files}
+      stage_fixed: true

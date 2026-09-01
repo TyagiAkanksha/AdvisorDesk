@@ -2,5 +2,15 @@
   "name": "advisordesk",
   "version": "0.1.0",
   "private": true,
-  "packageManager": "pnpm@11.17.0"
+  "packageManager": "pnpm@11.17.0",
+  "scripts": {
+    "prepare": "lefthook install",
+    "gates:api": "cd apps/api && uv run ruff check . && uv run ruff format --check . && uv run mypy && uv run lint-imports && uv run pytest -q",
+    "gates:admin": "pnpm -C apps/admin lint && pnpm -C apps/admin type-check && pnpm -C apps/admin format:check && pnpm -C apps/admin test",
+    "gates:client": "pnpm -C apps/client lint && pnpm -C apps/client type-check && pnpm -C apps/client format:check && pnpm -C apps/client test",
+    "gates": "pnpm gates:api && pnpm gates:admin && pnpm gates:client"
+  },
+  "devDependencies": {
+    "lefthook": "2.1.12"
+  }
 }

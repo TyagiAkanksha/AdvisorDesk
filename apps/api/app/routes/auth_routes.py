@@ -8,6 +8,8 @@ envelope; routes never construct error responses themselves.
 
 from __future__ import annotations
 
+import logging
+
 from fastapi import APIRouter, Depends, Request, Response
 from fastapi.responses import RedirectResponse
 from sqlalchemy.orm import Session
@@ -22,6 +24,8 @@ from app.models.schemas.common import ErrorEnvelope
 from app.routes.deps import get_oauth_client, get_session, get_settings
 from app.services.errors import AuthRequiredError, ForbiddenError
 from app.services.users import bump_session_epoch, get_active_user, upsert_from_google
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -128,13 +132,22 @@ def auth_callback(
             `advisordesk_oauth_state` cookie (phase-6 task-05, PRD §9
             login-CSRF) — checked first, before `exchange_code`.
     """
+    # Audit logging (phase-6 remediation task-03, WR-05, kept OUT of this docstring so
+    # CONVENTIONS.md §8's openapi.json baseline — which embeds this docstring verbatim as the
+    # operation's `description` — stays byte-stable): a successful login logs INFO with the
+    # email; a state-verification failure and a non-allowlisted email each log WARNING (the
+    # latter with reason `allowlist`) — never the `code`/`state` values themselves.
     state_cookie = request.cookies.get(STATE_COOKIE_NAME)
     if not verify_state(state, settings) or state != state_cookie:
+        # Phase-6 remediation task-03 (WR-05): WARNING only — never `state`/`state_cookie`
+        # themselves (a forged/replayed state value must never reach any log line).
+        logger.warning("OAuth state verification failed")
         raise ForbiddenError("OAuth state verification failed — restart sign-in.")
 
     identity = oauth_client.exchange_code(code)
     normalized_email = identity["email"].strip().lower()
     if normalized_email not in settings.admin_email_set:
+        logger.warning("Login rejected: email=%s reason=allowlist", normalized_email)
         raise ForbiddenError(f"{identity['email']} is not an allowlisted admin.")
 
     normalized_identity: GoogleIdentity = {
@@ -143,6 +156,7 @@ def auth_callback(
         "avatar_url": identity["avatar_url"],
     }
     user = upsert_from_google(session, normalized_identity)
+    logger.info("Login succeeded: email=%s", user.email)
 
     response = RedirectResponse(settings.admin_app_url, status_code=303)
     issue_cookie(response, user.id, user.session_epoch, settings)
@@ -186,10 +200,17 @@ def auth_logout(
     else — so only a CURRENTLY-valid cookie is allowed to advance the counter. This route's own
     response is unaffected either way: 200 with the cookie cleared, unconditionally.
     """
+    # Audit logging (phase-6 remediation task-03, WR-05, kept OUT of the docstring above so
+    # CONVENTIONS.md §8's openapi.json baseline — which embeds that docstring verbatim as the
+    # operation's `description` — stays byte-stable): when a session cookie was present, logs
+    # INFO with the user id and whether the epoch was actually bumped (`bump_session_epoch`'s
+    # own return value — `True` for a live cookie, `False` for a stale/already-revoked one). A
+    # missing or malformed cookie logs nothing, same as it triggers no revocation.
     session_data = read_session(request, settings)
     if session_data is not None:
         user_id, cookie_epoch = session_data
-        bump_session_epoch(session, user_id, cookie_epoch)
+        bumped = bump_session_epoch(session, user_id, cookie_epoch)
+        logger.info("Logout: user_id=%s epoch_bumped=%s", user_id, bumped)
 
     response = Response(status_code=200)
     clear_cookie(response)

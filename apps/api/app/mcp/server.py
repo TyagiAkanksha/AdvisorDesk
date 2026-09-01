@@ -230,6 +230,10 @@ def _extract_bearer_token(request: Request) -> str | None:
         is no header value that is silently ignored and falls through to the cookie. Previously
         this branch returned `None` like the absent-header case, which let a malformed bearer
         header authenticate via a coincidentally-present valid session cookie.
+
+    Phase-6 remediation task-03 (WR-05, audit logging): the malformed-header rejection branch
+    logs WARNING with reason `malformed` — never the header's value (the presented credential is
+    never well-formed enough to be a real secret, but it is never logged regardless).
     """
     header = request.headers.get("authorization")
     if header is None:
@@ -237,6 +241,7 @@ def _extract_bearer_token(request: Request) -> str | None:
     scheme, sep, value = header.partition(" ")
     if sep == " " and scheme.lower() == "bearer" and value and " " not in value:
         return value
+    logger.warning("Bearer token rejected: reason=malformed")
     raise AuthRequiredError("Sign in required.")
 
 

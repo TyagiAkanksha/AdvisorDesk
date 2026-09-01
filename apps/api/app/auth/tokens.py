@@ -13,6 +13,7 @@ came in on.
 from __future__ import annotations
 
 import hashlib
+import logging
 import secrets
 
 from sqlalchemy import select
@@ -21,6 +22,8 @@ from sqlalchemy.orm import Session
 from app.auth.deps import AdminPrincipal
 from app.models.api_tokens import ApiToken
 from app.services.users import get_active_user
+
+logger = logging.getLogger(__name__)
 
 _TOKEN_PREFIX = "adk_"
 
@@ -53,7 +56,20 @@ def resolve_bearer_token(session: Session, raw_token: str) -> AdminPrincipal | N
     on every request from a cookie, so a soft-deleted admin's tokens stop authenticating the
     instant the account is deactivated, not just at next login (PRD §9).
 
-    Never raises on an unknown/garbage/malformed token, and does the same amount of work
+    Phase-6 remediation task-03 (WR-02, migration 0005): also rejects (returns `None`, exactly
+    like an unknown token — see below) a well-formed, known token whose `session_epoch` no longer
+    matches its owner's CURRENT `User.session_epoch` — i.e. one revoked by a since-run
+    `/auth/logout` (`app.services.users.bump_session_epoch`). The epoch compare stays INSIDE this
+    function's existing "never raises, returns `None`" contract rather than raising directly, so
+    the caller (`app.mcp.server._resolve_bearer_principal`'s existing `if principal is None: raise
+    AuthRequiredError(...)`) produces the byte-identical 401 envelope for "revoked" as it already
+    does for "unknown" — no new wire surface, no oracle distinguishing the two from outside.
+
+    Phase-6 remediation task-03 (WR-05, audit logging): logs exactly one line per call — INFO with
+    the token row id ONLY on success, WARNING with a reason keyword (`unknown` / `revoked` /
+    `inactive-user`) on rejection. Never logs `raw_token`, `token_hash`, or the owner's email.
+
+    Never raises on an unknown/garbage/malformed/revoked token, and does the same amount of work
     (hash + one indexed lookup, short-circuiting only once a real row is or isn't found) whether
     `raw_token` matches a row or not — there is no separate "is this even shaped like a token"
     pre-check to skip.
@@ -66,17 +82,25 @@ def resolve_bearer_token(session: Session, raw_token: str) -> AdminPrincipal | N
 
     Returns:
         The owning user's `AdminPrincipal`, or `None` if `raw_token` doesn't match any
-        `ApiToken.token_hash`, or matches one whose owning `User` is missing or soft-deleted.
+        `ApiToken.token_hash`, matches one whose owning `User` is missing or soft-deleted, or
+        matches one whose `session_epoch` is stale relative to the owner's current one.
     """
     token_hash = hashlib.sha256(raw_token.encode()).hexdigest()
     token = session.execute(
         select(ApiToken).where(ApiToken.token_hash == token_hash)
     ).scalar_one_or_none()
     if token is None:
+        logger.warning("Bearer token rejected: reason=unknown")
         return None
 
     user = get_active_user(session, token.user_id)
     if user is None:
+        logger.warning("Bearer token rejected: token_id=%s reason=inactive-user", token.id)
         return None
 
+    if token.session_epoch != user.session_epoch:
+        logger.warning("Bearer token rejected: token_id=%s reason=revoked", token.id)
+        return None
+
+    logger.info("Bearer token resolved: token_id=%s", token.id)
     return AdminPrincipal(user_id=user.id, email=user.email, name=user.name)

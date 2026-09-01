@@ -10,13 +10,17 @@ Task-04 brief, design ruling: composes ONLY `TimestampMixin`, like the append-on
 to `users`/`content`/`tags` specifically, and revocation here is an honest hard `DELETE` via
 `scripts/mint_mcp_token.py --revoke`, with no restore path (unlike a soft-deleted `User`/
 `Content`/`Tag` row, a revoked token is gone for good).
+
+Phase-6 remediation task-03 (WR-02, migration 0005): `session_epoch` is a SECOND revocation path,
+independent of the hard-delete one above — a bulk one, keyed off the owning `User` row rather than
+this row's own id.
 """
 
 from __future__ import annotations
 
 import uuid
 
-from sqlalchemy import ForeignKey, Text
+from sqlalchemy import ForeignKey, Integer, Text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -40,3 +44,18 @@ class ApiToken(Base, TimestampMixin):
     )
     token_hash: Mapped[str] = mapped_column(Text, unique=True, nullable=False)
     name: Mapped[str] = mapped_column(Text, nullable=False)
+    # Per-token revocation stamp (PRD §9; phase-6 remediation task-03, WR-02, migration 0005):
+    # stamped with the owner's CURRENT `users.session_epoch` at mint time
+    # (`scripts/mint_mcp_token.py::mint`). `app.auth.tokens.resolve_bearer_token` rejects a token
+    # whose `session_epoch` no longer matches the owner's LIVE `session_epoch` — so
+    # `/auth/logout`'s epoch bump (`app.services.users.bump_session_epoch`) revokes every
+    # outstanding bearer token for that user in the same stroke it already revokes every
+    # outstanding session cookie. `default=0` (client-side) exists ONLY for backward compatibility
+    # with pre-task-03 call sites that construct `ApiToken(...)` without a `session_epoch` kwarg
+    # (several sha256-pinned tests in `tests/test_mcp_bearer_auth.py`/`tests/test_mcp_gate_fixes
+    # .py` predate this column and cannot be edited) — it mirrors `User.session_epoch`'s own
+    # `default=0` for a freshly-created owner, so those unmodified call sites keep resolving
+    # (epoch 0 == a fresh owner's epoch 0), exactly as they did before this task. The real mint
+    # path (`scripts/mint_mcp_token.py::mint`) always stamps the value explicitly and never relies
+    # on this default.
+    session_epoch: Mapped[int] = mapped_column(Integer, nullable=False, default=0)

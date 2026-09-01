@@ -9,6 +9,11 @@ CONVENTIONS.md §2: `app.services` is the only layer that touches the ORM —
 `bump_session_epoch` (phase-6 task-05, PRD §9 logout revocation) is the write side of the same
 pattern: `app.routes.auth_routes.auth_logout` calls it instead of touching `User.session_epoch`
 directly, keeping the ORM confined to this layer.
+
+`get_user_by_id` (phase-6 remediation task-03, WR-05 audit logging) exists so
+`app.auth.deps.require_admin` can recover the email of a row `get_active_user` just excluded
+(soft-deleted rows are invisible to `active_select`) without reaching into the ORM itself — the
+one piece of new plumbing this task's "login rejected (soft-deleted)" audit event needs.
 """
 
 from __future__ import annotations
@@ -98,7 +103,28 @@ def get_active_user(session: Session, user_id: uuid.UUID) -> User | None:
     return session.execute(active_select(User).where(User.id == user_id)).scalar_one_or_none()
 
 
-def bump_session_epoch(session: Session, user_id: uuid.UUID, cookie_epoch: int) -> None:
+def get_user_by_id(session: Session, user_id: uuid.UUID) -> User | None:
+    """Return the `User` row for `user_id` regardless of soft-delete state, or `None` if no row
+    exists with that id at all.
+
+    Phase-6 remediation task-03 (WR-05 audit logging): `app.auth.deps.require_admin` calls this
+    ONLY after `get_active_user` has already returned `None` for the same `user_id`, to recover
+    the email of a row that's soft-deleted (not one that never existed) so the "login rejected"
+    WARNING can name who was rejected. Deliberately queries with no `active_select` filter — like
+    `bump_session_epoch`'s own lookup below — since the whole point is to see the row
+    `active_select` was built to hide.
+
+    Args:
+        session: the caller's `Session`.
+        user_id: the `User.id` to look up.
+
+    Returns:
+        The `User` row whether active or soft-deleted, or `None` if no row with this id exists.
+    """
+    return session.execute(select(User).where(User.id == user_id)).scalar_one_or_none()
+
+
+def bump_session_epoch(session: Session, user_id: uuid.UUID, cookie_epoch: int) -> bool:
     """Increment `User.session_epoch` by 1 for `user_id`, but ONLY if `cookie_epoch` is CURRENT.
 
     Phase-6 task-05 (PRD §9 logout revocation, review finding t01-M6): every session cookie is
@@ -132,16 +158,26 @@ def bump_session_epoch(session: Session, user_id: uuid.UUID, cookie_epoch: int) 
     CONVENTIONS.md §3: `updated_at` is application-maintained, not a DB trigger — touched here
     alongside the epoch bump, same as every other row mutation in this module.
 
+    Phase-6 remediation task-03 (WR-05 audit logging): now returns whether the epoch was actually
+    bumped, so `app.routes.auth_routes.auth_logout` can log the outcome (`epoch_bumped=True` /
+    `epoch_bumped=False`) without re-deriving the guard's own decision itself.
+
     Args:
         session: the request-scoped `Session` (`/auth/logout`'s `Depends(get_session)`).
         user_id: the `User.id` read from the (already shape-verified) session cookie.
         cookie_epoch: the `epoch` read from that SAME cookie (`read_session`'s second tuple
             element) — the bump is skipped unless this still equals the row's live
             `session_epoch`.
+
+    Returns:
+        `True` if `user_id` matched a row whose `session_epoch` was still `cookie_epoch` (the
+        bump happened); `False` if there was no such row, or its epoch had already moved past
+        `cookie_epoch` (a stale/already-revoked cookie — the bump is skipped).
     """
-    user = session.execute(select(User).where(User.id == user_id)).scalar_one_or_none()
+    user = get_user_by_id(session, user_id)
     if user is None or user.session_epoch != cookie_epoch:
-        return
+        return False
     user.session_epoch += 1
     user.updated_at = datetime.now(UTC)
     session.flush()
+    return True

@@ -12,6 +12,7 @@ session per admin request (distinct from the route handler's own
 
 from __future__ import annotations
 
+import logging
 import uuid
 from dataclasses import dataclass
 from typing import cast
@@ -21,7 +22,9 @@ from fastapi import Request
 from app.auth.sessions import read_session
 from app.config import Settings
 from app.services.errors import AuthRequiredError
-from app.services.users import get_active_user
+from app.services.users import get_active_user, get_user_by_id
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -50,6 +53,13 @@ def require_admin(request: Request) -> AdminPrincipal:
     signed `epoch` no longer matches `User.session_epoch` — `/auth/logout` bumps that counter
     (`app.services.users.bump_session_epoch`), so every cookie signed before the bump is dead
     on its very next use, not just cleared from the browser that logged out.
+
+    Phase-6 remediation task-03 (WR-05, audit logging): when `get_active_user` excludes a row
+    (the "soft-deleted" branch below — an UNKNOWN user id has no row to look up at all, so it
+    logs nothing), a second, non-`active_select` lookup (`app.services.users.get_user_by_id`)
+    recovers that row's email so the WARNING can name who was rejected — `get_active_user` alone
+    cannot, since it excludes the very row this needs. The cookie-epoch-stale branch below is not
+    one of this task's six pinned audit events and is deliberately left unlogged.
 
     Args:
         request: the incoming request; reads `app.state.settings` and
@@ -80,6 +90,15 @@ def require_admin(request: Request) -> AdminPrincipal:
     session = session_factory()
     try:
         user = get_active_user(session, user_id)
+        if user is None:
+            # `get_active_user` excludes soft-deleted rows — recover the email straight from the
+            # (still-open) session before it closes, so the audit line below can name who was
+            # rejected. `stale_user is None` means the id never had a row at all (nothing to
+            # attribute the rejection to); `stale_user` present means it exists but is
+            # soft-deleted (the only way `get_active_user` could have excluded it).
+            stale_user = get_user_by_id(session, user_id)
+            if stale_user is not None:
+                logger.warning("Login rejected: email=%s reason=soft-deleted", stale_user.email)
     finally:
         session.close()
 

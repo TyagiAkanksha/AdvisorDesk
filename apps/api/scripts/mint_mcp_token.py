@@ -41,6 +41,11 @@ from app.services.queries import active_select
 def mint(session: Session, *, email: str, name: str) -> str:
     """Mint a new bearer token for the ACTIVE `User` matching `email`, and insert its hashed row.
 
+    Phase-6 remediation task-03 (WR-02, migration 0005): the new row is stamped with the owner's
+    CURRENT `session_epoch` — a subsequent `/auth/logout` (which bumps that counter) revokes this
+    token exactly as it already revokes every outstanding session cookie
+    (`app.auth.tokens.resolve_bearer_token`).
+
     Args:
         session: an open `Session` the caller owns — flushed (to surface constraint errors and
             assign the new row's id eagerly) but never committed here; the caller commits.
@@ -65,7 +70,14 @@ def mint(session: Session, *, email: str, name: str) -> str:
         raise LookupError(f"No active user found for email {email!r}.")
 
     raw_token, token_hash = mint_token()
-    session.add(ApiToken(user_id=user.id, token_hash=token_hash, name=name))
+    session.add(
+        ApiToken(
+            user_id=user.id,
+            token_hash=token_hash,
+            name=name,
+            session_epoch=user.session_epoch,
+        )
+    )
     session.flush()
     return raw_token
 

@@ -22,6 +22,12 @@ jobs:
       # this is the form `.env`/`.env.example` already use, so CI stays consistent with local
       # dev rather than introducing a second convention.
       TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/advisordesk_test
+      # Fix round 1 (review I2): `uv run` without `--locked`/`--frozen` silently re-resolves and
+      # rewrites uv.lock when it disagrees with pyproject.toml — but infra/Dockerfile.api's image
+      # build uses `uv sync --frozen` and fails hard on that same disagreement. UV_LOCKED makes
+      # every `uv run` step below behave like `--locked` (env var per `uv run --help`), closing
+      # the gap so lockfile drift fails in CI instead of only at image build.
+      UV_LOCKED: "1"
     services:
       postgres:
         image: pgvector/pgvector:pg16
@@ -58,6 +64,18 @@ jobs:
         run: uv run mypy
       - name: lint-imports
         run: uv run lint-imports
+
+      # Fix round 1 (review I3, controller-adjudicated into scope): the codegen-drift step (web
+      # job, below) only proves generated TS types ⟷ the committed openapi.json — nothing proved
+      # committed openapi.json/mcp-tools.json ⟷ the actual app (CONVENTIONS.md §8's gate, until
+      # now enforced only by human memory). Regenerate both deterministic wire-surface baselines
+      # via the repo's own export scripts and fail if that changes anything.
+      - name: wire-surface baseline drift
+        run: |
+          uv run python scripts/export_openapi.py
+          uv run python scripts/export_mcp_tools.py
+          git diff --exit-code -- openapi.json mcp-tools.json
+
       - name: pytest
         run: uv run pytest -q
 
@@ -72,8 +90,18 @@ jobs:
       # file to hash. `--no-emit-project` drops it — verified locally, the shape isn't the
       # brief's originally-assumed `uv export --format requirements-txt | uvx pip-audit -r
       # /dev/stdin` (that exact pipeline fails for the reason above).
+      #
+      # Fix round 1 (review I1): `shell: bash` is required here, not just for-consistency — the
+      # step's default shell (`bash -e {0}`, no `-o pipefail`) makes the pipeline's exit status
+      # `pip-audit`'s alone. If `uv export` ever breaks (e.g. a future uv drops
+      # `--no-emit-project`), it exits non-zero and writes nothing, but `pip-audit` reads an empty
+      # stdin, prints "No known vulnerabilities found", and exits 0 — a false-green with no
+      # signal to investigate. `shell: bash` opts into GitHub's `-o pipefail` variant so a broken
+      # `uv export` fails the step instead (still harmless: `continue-on-error: true` still means
+      # it can never fail the job, only stop lying about what it audited).
       - name: pip-audit # tighten after baseline triage
         continue-on-error: true
+        shell: bash
         run: uv export --format requirements-txt --no-emit-project | uvx pip-audit -r /dev/stdin
 
   web:

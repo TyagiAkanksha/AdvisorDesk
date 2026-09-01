@@ -72,15 +72,25 @@ moves that IP to the most-recently-used end, and inserting a never-seen IP when 
 evicts exactly the least-recently-touched entry first (`OrderedDict.popitem(last=False)`, O(1) —
 never a scan of the whole store, per design pin 1's "O(evicted), not O(all-keys), per request").
 Under real traffic the least-recently-touched entry usually IS the stalest one (idle > 60s means
-untouched > 60s, which sorts it to the front), so this reads as stale-first eviction; it degrades
-to "evict the oldest-touched among many concurrently-active IPs" only in the pathological case of
-more distinct legitimately-active IPs than `_MAX_TRACKED_IPS` at once — a cap chosen generously
-above any realistic legitimate load, so no existing rate-limit test (`test_ratelimit.py`,
-`test_ratelimit_guards.py`, both using at most a handful of distinct IPs) ever reaches it. The
-per-day counters (`_session_day_counts`, `_session_create_counts`) are untouched by this cap — they
-remain frozen mid-day, evicted only at day rollover exactly as before (design pin 2 / brief bullet
-2): an evicted-then-returning IP gets a genuinely fresh *per-minute* window but never regains any
-exhausted *per-day* allowance.
+untouched > 60s, which sorts it to the front), so this reads as stale-first eviction; it never
+evicts a still-being-touched IP ahead of a genuinely quiet one, because every touch — including a
+*rejected* `check_message` call — refreshes that IP's recency (`move_to_end`, below), so a
+throttled IP pins itself at the most-recently-used end for as long as it keeps retrying. Cap
+degradation is NOT purely a legitimate-load pathology, though: it also occurs under an adversarial
+flood of more than `_MAX_TRACKED_IPS` distinct IPs — exactly the threat this cap exists to blunt.
+Review round 1 (finding M-1) measured the concrete cost: a throttled IP that goes completely
+silent while >20,000 fresh IPs flood in gets its per-minute window evicted and is readmitted with a
+fresh cap inside the same 60s window, at a cost of ~2,000 flood requests (from ~2,000 additional
+distinct source IPs) per extra admitted message. That bypass is strictly dominated ~2,000:1 by
+simply sending messages from those flood IPs directly — no allowlisted or higher-value IP exists
+for this cap to protect — which is why an unbounded-memory DoS traded for this bounded, dominated
+throttle bypass is the right direction, not merely a legitimate-load edge case. No existing
+rate-limit test (`test_ratelimit.py`, `test_ratelimit_guards.py`, both using at most a handful of
+distinct IPs) reaches `_MAX_TRACKED_IPS` at all, so behavior for legitimate traffic is unaffected
+either way. The per-day counters (`_session_day_counts`, `_session_create_counts`) are untouched by
+this cap — they remain frozen mid-day, evicted only at day rollover exactly as before (design pin 2
+/ brief bullet 2): an evicted-then-returning IP gets a genuinely fresh *per-minute* window but never
+regains any exhausted *per-day* allowance.
 """
 
 from __future__ import annotations

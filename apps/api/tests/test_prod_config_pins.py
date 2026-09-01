@@ -34,20 +34,36 @@ def _skip_if_absent() -> None:
         pytest.skip(f"infra/deploy/prod files not present on this checkout: {names}")
 
 
+def _strip_caddyfile_comments(text: str) -> str:
+    """Strip Caddyfile `#`-to-end-of-line comments from every line.
+
+    Caddy treats `#` as a comment marker to end-of-line, so a commented-out directive is
+    inert in the real proxy. Stripping comments before matching keeps a disabled
+    `header_up` line (fix round 1, review Important finding) from satisfying a check that
+    is meant to pin an *active* directive.
+    """
+    return "\n".join(line.split("#", 1)[0] for line in text.splitlines())
+
+
 def test_caddyfile_overwrites_forwarded_for_on_api_block() -> None:
     """The api host block must overwrite (not append) X-Forwarded-For with {remote_host}.
 
     This is the spoof-proofing half of WR-03: Caddy faces the internet directly, so
     `{remote_host}` is the true end-user IP, and overwriting discards any client-forged
-    X-Forwarded-For before the api's rate limiter ever keys on it.
+    X-Forwarded-For before the api's rate limiter ever keys on it. The match is
+    comment-aware and line-anchored (not a raw substring test) so a `header_up` line that
+    has been commented out — disabled in real Caddy — fails this check rather than
+    passing it.
     """
     _skip_if_absent()
     text = _CADDYFILE_PATH.read_text()
     match = re.search(r"^api\.\S+\s*\{(.*?)^\}", text, re.DOTALL | re.MULTILINE)
     assert match, "no api.<host> block found in the committed Caddyfile"
-    api_block = match.group(1)
-    assert "header_up X-Forwarded-For {remote_host}" in api_block, (
-        "api host block must overwrite X-Forwarded-For with {remote_host}"
+    api_block = _strip_caddyfile_comments(match.group(1))
+    directive = re.search(r"(?m)^\s*header_up\s+X-Forwarded-For\s+\{remote_host\}\s*$", api_block)
+    assert directive, (
+        "api host block must have an active (uncommented) "
+        "'header_up X-Forwarded-For {remote_host}' line"
     )
 
 

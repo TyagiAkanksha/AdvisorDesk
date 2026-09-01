@@ -11,7 +11,7 @@ and MUST NOT be touched by any task here — path-scoped `git add` only, per CON
 
 | Batch | Task file | WR-ids | Status |
 |---|---|---|---|
-| B0 credential rotation | owner-executed runbook (remediation plan Batch 0) — no task file | WR-01 | ⏳ owner |
+| B0 credential rotation | owner-executed runbook (remediation plan Batch 0) — no task file | WR-01 | ❎ DECLINED by owner 2026-08-31 ("dev project") — accepted risk, runbook stands if revisited |
 | B2 process backstop | `task-01-root-gates-and-hooks.md` | WR-16 (scripts limb), WR-74 | planned |
 | B2 process backstop | `task-02-ci-workflow.md` | WR-16, WR-17, WR-50, WR-51, WR-52 | planned |
 | B1 security | `task-03-bearer-lifecycle-and-audit-log.md` (to be authored) | WR-02, WR-05 | pending |

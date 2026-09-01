@@ -110,8 +110,10 @@ def get_user_by_id(session: Session, user_id: uuid.UUID) -> User | None:
     Phase-6 remediation task-03 (WR-05 audit logging): `app.auth.deps.require_admin` calls this
     ONLY after `get_active_user` has already returned `None` for the same `user_id`, to recover
     the email of a row that's soft-deleted (not one that never existed) so the "login rejected"
-    WARNING can name who was rejected. Deliberately queries with no `active_select` filter — like
-    `bump_session_epoch`'s own lookup below — since the whole point is to see the row
+    WARNING can name who was rejected. Deliberately queries with no `active_select` filter —
+    mirroring the reasoning `bump_session_epoch` below has always applied to its own lookup
+    (which this same change made `bump_session_epoch` delegate to this function, rather than
+    running a second, separate copy of the query) — since the whole point is to see the row
     `active_select` was built to hide.
 
     Args:

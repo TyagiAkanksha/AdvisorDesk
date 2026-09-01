@@ -267,8 +267,9 @@ def _resolve_bearer_principal(request: Request, raw_token: str) -> AdminPrincipa
             `_extract_bearer_token`.
 
     Raises:
-        AuthRequiredError: `raw_token` doesn't resolve to an active user (unknown, garbage, or a
-            soft-deleted account's token).
+        AuthRequiredError: `raw_token` doesn't resolve to an active user (unknown, garbage, a
+            soft-deleted account's token, or — phase-6 remediation task-03, WR-02 — one revoked
+            by a since-run `/auth/logout` epoch bump).
         RuntimeError: the app was built without a `session_factory` (a DB-less `create_app()`) —
             mirrors `require_admin`'s own guard.
     """

@@ -39,8 +39,8 @@ Thread-safety (review round 1, finding I-1): a single `threading.Lock` guards ev
 read-modify-write across all three stores — `starlette.testclient.TestClient` (this repo's test
 surface) drives requests single-threaded, but a real `uvicorn` deployment runs `public_chat` (a
 sync `def` route) in FastAPI's threadpool, concurrently by default. `check_message` was always
-correctly atomic (its check-then-record for a message happens inside one lock acquisition,
-`:210-227` below). The session-create cap's two-step public API
+correctly atomic (its check-then-record for a message happens inside one lock acquisition, in the
+method's own body below). The session-create cap's two-step public API
 (`check_session_create`/`note_session_created`, pinned by the brief's Interfaces block and by
 `tests/test_ratelimit.py`'s unit tests) is NOT atomic on its own — a caller doing
 "check, do other work, note" across two separate lock acquisitions leaves a TOCTOU window a
@@ -60,13 +60,34 @@ minting when it reserved, and un-reserving on a downstream failure would need a 
 route never makes (mirrors `check_message`'s existing per-minute/per-day slots, which are burned
 by admission, not by successful persistence — `app/routes/public_routes.py`'s own docstring, probe
 P-K in the review report).
+
+Within-day memory bound (task 6R-06, WR-06): `_prune_stale_entries` above only reclaims
+`_minute_windows` once per *observed UTC day-bucket advance* — within a single day nothing bounded
+its growth. A verifier `tracemalloc` probe measured ~874 B/distinct IP (~834 MiB per 1M IPs), with
+5,001 entries still resident same-day even after every deque had gone fully stale — a 404-scan
+botnet hitting a 2 GiB box is the realistic threat. `_MAX_TRACKED_IPS` (below) is a hard cap on
+`_minute_windows`'s size, enforced by `_touch_minute_window`: `_minute_windows` is now an
+`OrderedDict` ordered oldest-touched-first; every touch (`check_message`, admitted or rejected)
+moves that IP to the most-recently-used end, and inserting a never-seen IP when already at the cap
+evicts exactly the least-recently-touched entry first (`OrderedDict.popitem(last=False)`, O(1) —
+never a scan of the whole store, per design pin 1's "O(evicted), not O(all-keys), per request").
+Under real traffic the least-recently-touched entry usually IS the stalest one (idle > 60s means
+untouched > 60s, which sorts it to the front), so this reads as stale-first eviction; it degrades
+to "evict the oldest-touched among many concurrently-active IPs" only in the pathological case of
+more distinct legitimately-active IPs than `_MAX_TRACKED_IPS` at once — a cap chosen generously
+above any realistic legitimate load, so no existing rate-limit test (`test_ratelimit.py`,
+`test_ratelimit_guards.py`, both using at most a handful of distinct IPs) ever reaches it. The
+per-day counters (`_session_day_counts`, `_session_create_counts`) are untouched by this cap — they
+remain frozen mid-day, evicted only at day rollover exactly as before (design pin 2 / brief bullet
+2): an evicted-then-returning IP gets a genuinely fresh *per-minute* window but never regains any
+exhausted *per-day* allowance.
 """
 
 from __future__ import annotations
 
 import threading
 import time
-from collections import deque
+from collections import OrderedDict, deque
 from collections.abc import Callable
 
 from app.config import Settings
@@ -76,6 +97,15 @@ __all__ = ["RateLimiter"]
 
 _MINUTE_SECONDS = 60.0
 _DAY_SECONDS = 86400.0
+
+_MAX_TRACKED_IPS = 20_000
+"""Hard cap on distinct IPs held in `_minute_windows` at once (task 6R-06 / WR-06 — module
+docstring's "Within-day memory bound" section has the full rationale). Chosen generously above any
+realistic legitimate concurrent-within-a-minute load for this app while still bounding worst-case
+memory to a small, fixed multiple of one IP's overhead (~874 B/IP measured — this cap bounds
+`_minute_windows` to roughly 20,000 * 874 B =~ 17 MiB, regardless of how many distinct IPs a
+botnet floods in a single day).
+"""
 
 _PER_MIN_MESSAGE = "Too many messages from this IP in the last minute. Please slow down."
 _PER_DAY_MESSAGE = "This session has reached its daily message limit. Please try again tomorrow."
@@ -114,7 +144,11 @@ class RateLimiter:
         # Sliding one-minute window, per IP: admission timestamps, oldest first. Pruned from the
         # left in `check_message` (every call) and swept for full eviction of empty entries in
         # `_prune_stale_entries` (once per observed day-bucket advance — module docstring, M-3).
-        self._minute_windows: dict[str, deque[float]] = {}
+        # An `OrderedDict` keyed oldest-touched-first (task 6R-06): `_touch_minute_window` moves an
+        # IP to the most-recently-used end on every touch and enforces `_MAX_TRACKED_IPS` by
+        # evicting the least-recently-touched entry first when a never-seen IP would exceed the
+        # cap (module docstring's "Within-day memory bound" section).
+        self._minute_windows: OrderedDict[str, deque[float]] = OrderedDict()
 
         # Fixed UTC-midnight-bucketed counters. Keys are (identity, day_bucket); a day bucket only
         # needs a count, never individual timestamps, since the whole bucket resets together.
@@ -171,6 +205,27 @@ class RateLimiter:
             del self._minute_windows[ip]
         self._last_pruned_day_bucket = current_day_bucket
 
+    def _touch_minute_window(self, ip: str) -> deque[float]:
+        """Return `ip`'s per-minute deque, creating it if needed, and refresh its LRU position.
+
+        Caller must hold `self._lock`. Task 6R-06 / WR-06 (module docstring's "Within-day memory
+        bound" section): `_minute_windows` is an `OrderedDict` kept ordered oldest-touched-first.
+        An existing IP is moved to the most-recently-used end on every touch (`move_to_end`, O(1)).
+        A never-seen IP is a new entry; if the store is already at `_MAX_TRACKED_IPS`, the single
+        least-recently-touched entry is evicted first (`popitem(last=False)`, O(1)) to make room —
+        never a scan of the whole store, so this stays O(evicted) per request (design pin 1),
+        exactly one eviction at most per call, regardless of how large `_minute_windows` has grown.
+        """
+        window = self._minute_windows.get(ip)
+        if window is not None:
+            self._minute_windows.move_to_end(ip)
+            return window
+        if len(self._minute_windows) >= _MAX_TRACKED_IPS:
+            self._minute_windows.popitem(last=False)
+        window = deque()
+        self._minute_windows[ip] = window
+        return window
+
     def _session_create_full_locked(self, ip: str, day_bucket: int) -> bool:
         """Whether `ip` has already used its `SESSION_CREATE_PER_DAY` budget for `day_bucket`.
 
@@ -225,7 +280,7 @@ class RateLimiter:
         with self._lock:
             self._prune_stale_entries(now, day_bucket)
 
-            window = self._minute_windows.setdefault(ip, deque())
+            window = self._touch_minute_window(ip)
             while window and now - window[0] >= _MINUTE_SECONDS:
                 window.popleft()
             if len(window) >= self._settings.rate_limit_per_min:

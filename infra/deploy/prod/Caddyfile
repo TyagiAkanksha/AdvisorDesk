@@ -1,4 +1,18 @@
 api.advisordesk.tyagiakanksha.com {
+	# Security response headers (WR-04, 6R-05). Design-pin rationale (CORRECTED — the
+	# cross-site-iframe clickjacking scenario was refuted by the verifier: Lax cookies
+	# aren't sent on cross-site iframe loads). Real drivers: the first-visit HTTP->HTTPS
+	# downgrade window before a client has ever seen an HSTS response, and
+	# same-registrable-domain framing. Applied here (not in Next) because Next can't set
+	# edge headers for the API origin; the frame-defense pair is included on this host too
+	# since nothing legitimate frames a JSON API.
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		X-Frame-Options "DENY"
+		Content-Security-Policy "frame-ancestors 'none'"
+	}
 	reverse_proxy api:8000 {
 		# Overwrite (not append) X-Forwarded-For with the real client IP.
 		# Caddy faces the internet directly (Cloudflare grey-cloud), so {remote_host}
@@ -9,9 +23,30 @@ api.advisordesk.tyagiakanksha.com {
 }
 
 admin.advisordesk.tyagiakanksha.com {
+	# Security response headers (WR-04, 6R-05) — see the api block above for the full
+	# design-pin rationale (corrected: downgrade window + same-registrable-domain framing,
+	# not the refuted cross-site-iframe clickjacking scenario). The frame-defense pair
+	# guards against a sibling host under the same registrable domain framing this app.
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		X-Frame-Options "DENY"
+		Content-Security-Policy "frame-ancestors 'none'"
+	}
 	reverse_proxy admin:3000
 }
 
 advisordesk.tyagiakanksha.com {
+	# Security response headers (WR-04, 6R-05) — see the api block above for the full
+	# design-pin rationale (corrected: downgrade window + same-registrable-domain framing,
+	# not the refuted cross-site-iframe clickjacking scenario).
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		X-Frame-Options "DENY"
+		Content-Security-Policy "frame-ancestors 'none'"
+	}
 	reverse_proxy client:3000
 }

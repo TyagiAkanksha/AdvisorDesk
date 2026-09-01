@@ -1,0 +1,66 @@
+name: advisordesk
+
+services:
+  api:
+    image: 181040156847.dkr.ecr.us-east-1.amazonaws.com/advisordesk/api:ba2a8e3
+    env_file:
+      - /opt/advisordesk/.env
+    environment:
+      ENVIRONMENT: production
+      CORS_ORIGINS: https://advisordesk.tyagiakanksha.com,https://admin.advisordesk.tyagiakanksha.com
+      GOOGLE_REDIRECT_URI: https://api.advisordesk.tyagiakanksha.com/api/v1/auth/callback
+      ADMIN_APP_URL: https://admin.advisordesk.tyagiakanksha.com
+      MCP_HTTP_ENABLED: "true"
+      LLM_BASE_URL: https://integrate.api.nvidia.com/v1
+      EMBEDDING_MODEL: nvidia/nv-embedqa-e5-v5
+      EMBEDDING_DIMENSIONS: "1024"
+      CHAT_MODEL: meta/llama-3.1-8b-instruct
+      SIMILARITY_THRESHOLD: "0.35"
+      RATE_LIMIT_PER_MIN: "10"
+      RATE_LIMIT_PER_DAY: "50"
+      SESSION_CREATE_PER_DAY: "20"
+      # api is never published to the host — only Caddy (same network) reaches it,
+      # and Caddy overwrites X-Forwarded-For with the real client IP (see Caddyfile),
+      # so trusting the forwarded header here is safe and spoof-proof.
+      FORWARDED_ALLOW_IPS: "*"
+    expose:
+      - "8000"
+    restart: unless-stopped
+
+  admin:
+    image: 181040156847.dkr.ecr.us-east-1.amazonaws.com/advisordesk/admin:ba2a8e3
+    environment:
+      HOSTNAME: 0.0.0.0
+      PORT: "3000"
+    expose:
+      - "3000"
+    restart: unless-stopped
+
+  client:
+    image: 181040156847.dkr.ecr.us-east-1.amazonaws.com/advisordesk/client:ba2a8e3
+    environment:
+      HOSTNAME: 0.0.0.0
+      PORT: "3000"
+      API_URL: https://api.advisordesk.tyagiakanksha.com
+    expose:
+      - "3000"
+    restart: unless-stopped
+
+  caddy:
+    image: caddy:2
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - /opt/advisordesk/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - api
+      - admin
+      - client
+    restart: unless-stopped
+
+volumes:
+  caddy_data:
+  caddy_config:

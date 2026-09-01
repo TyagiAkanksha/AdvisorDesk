@@ -1,0 +1,17 @@
+api.advisordesk.tyagiakanksha.com {
+	reverse_proxy api:8000 {
+		# Overwrite (not append) X-Forwarded-For with the real client IP.
+		# Caddy faces the internet directly (Cloudflare grey-cloud), so {remote_host}
+		# is the true end-user IP — this discards any client-forged XFF, so the API's
+		# rate limiter keys on a single trustworthy address.
+		header_up X-Forwarded-For {remote_host}
+	}
+}
+
+admin.advisordesk.tyagiakanksha.com {
+	reverse_proxy admin:3000
+}
+
+advisordesk.tyagiakanksha.com {
+	reverse_proxy client:3000
+}

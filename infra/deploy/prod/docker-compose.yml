@@ -2,7 +2,7 @@ name: advisordesk
 
 services:
   api:
-    image: 181040156847.dkr.ecr.us-east-1.amazonaws.com/advisordesk/api:ba2a8e3
+    image: 181040156847.dkr.ecr.us-east-1.amazonaws.com/advisordesk/api:9e18e82
     env_file:
       - /opt/advisordesk/.env
     environment:
@@ -11,10 +11,15 @@ services:
       GOOGLE_REDIRECT_URI: https://api.advisordesk.tyagiakanksha.com/api/v1/auth/callback
       ADMIN_APP_URL: https://admin.advisordesk.tyagiakanksha.com
       MCP_HTTP_ENABLED: "true"
-      LLM_BASE_URL: https://integrate.api.nvidia.com/v1
-      EMBEDDING_MODEL: nvidia/nv-embedqa-e5-v5
+      # LLM provider — switched to OpenAI 2026-09-06 (NVIDIA NIM embedding + chat
+      # models both reached end-of-life Aug 2026). text-embedding-3-small@1024 dims
+      # is a drop-in for the existing vector(1024) schema; gpt-4o-mini handles chat
+      # + agent tool-calling. Boot guard (app/main.py) validates OPENAI_API_KEY.
+      LLM_PROVIDER: openai
+      LLM_BASE_URL: https://api.openai.com/v1
+      EMBEDDING_MODEL: text-embedding-3-small
       EMBEDDING_DIMENSIONS: "1024"
-      CHAT_MODEL: meta/llama-3.1-8b-instruct
+      CHAT_MODEL: gpt-4o-mini
       SIMILARITY_THRESHOLD: "0.35"
       RATE_LIMIT_PER_MIN: "10"
       RATE_LIMIT_PER_DAY: "50"

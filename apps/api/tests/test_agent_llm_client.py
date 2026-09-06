@@ -452,8 +452,11 @@ def test_from_settings_falls_back_to_unset_api_key_when_nvidia_api_key_is_empty(
     now resolves its API key via `settings.llm_api_key` (openai when `llm_provider="openai"`,
     the new default), so this test must pin the NVIDIA branch explicitly to keep testing what
     its name says: an empty `nvidia_api_key` under the `nvidia` provider still boot-safes to
-    `"unset"`. The `provider="openai"` empty-key case is covered separately, in
-    `tests/test_openai_embeddings_wire.py`'s/the new chat-wire file's own boot-safety pins.
+    `"unset"`. The `provider="openai"` empty-key case for THIS class is covered separately, in
+    `tests/test_openai_agent_llm_client.py` (P7 remediation R3-2/I-2 — a prior version of this
+    docstring incorrectly pointed here at `tests/test_openai_embeddings_wire.py`/the chat-wire
+    file, which cover the embedding and synthesis-chat clients respectively, neither of which is
+    `OpenAICompatibleAgentLLM`).
     """
     settings = Settings(llm_provider="nvidia", nvidia_api_key="")
 

@@ -100,8 +100,11 @@ jobs:
       # signal to investigate. `shell: bash` opts into GitHub's `-o pipefail` variant so a broken
       # `uv export` fails the step instead (still harmless: `continue-on-error: true` still means
       # it can never fail the job, only stop lying about what it audited).
-      - name: pip-audit # tighten after baseline triage
-        continue-on-error: true
+      # Baseline triaged 2026-09-06: pip-audit reports zero known vulnerabilities on the
+      # current lockfile, so this now BLOCKS the job (no continue-on-error) — a new backend
+      # vulnerability fails CI. `shell: bash` keeps GitHub's pipefail so a broken `uv export`
+      # can't false-green. If a future advisory needs a temporary allow, add an --ignore-vuln.
+      - name: pip-audit
         shell: bash
         run: uv export --format requirements-txt --no-emit-project | uvx pip-audit -r /dev/stdin
 
@@ -168,6 +171,11 @@ jobs:
       - run: pnpm install --frozen-lockfile
       # WR-17. Runs once (not per web-job matrix leg) — `pnpm audit` at the workspace root
       # covers both apps/admin and apps/client through the one shared pnpm-lock.yaml.
-      - name: pnpm audit # tighten after baseline triage
+      # Stays ADVISORY (continue-on-error): the current baseline has ~13 high/moderate
+      # advisories, all transitive in the Next 16 / vitest toolchain and not directly
+      # fixable without upstream bumps — Dependabot (.github/dependabot.yml) opens the
+      # update PRs. Blocking here would keep CI permanently red. Backend pip-audit above
+      # DOES block. Revisit making this block once Dependabot has drained the transitive set.
+      - name: pnpm audit
         continue-on-error: true
         run: pnpm audit --audit-level=high

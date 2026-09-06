@@ -6,10 +6,23 @@ configuration through `Settings` rather than `os.environ` directly.
 
 from __future__ import annotations
 
+import logging
 from typing import Literal
 
-from pydantic import SecretStr
+from pydantic import SecretStr, model_validator
 from pydantic_settings import BaseSettings
+
+logger = logging.getLogger(__name__)
+
+# P7 remediation (fresh-review F2): each provider's own well-known default `llm_base_url` —
+# used ONLY to detect the one unambiguous misconfiguration shape (an operator flipped
+# `llm_provider` but left `llm_base_url` at the OTHER provider's default), never to validate a
+# legitimate custom/self-hosted OpenAI-compatible endpoint. Mirrors the literal values already
+# documented on `llm_base_url`'s own field docstring below.
+_PROVIDER_DEFAULT_BASE_URLS: dict[str, str] = {
+    "openai": "https://api.openai.com/v1",
+    "nvidia": "https://integrate.api.nvidia.com/v1",
+}
 
 
 class Settings(BaseSettings):
@@ -174,6 +187,36 @@ class Settings(BaseSettings):
     # (PRD §3) without being effectively permanent; `MCP_TOKEN_TTL_DAYS` overrides it per
     # deployment.
     mcp_token_ttl_days: int = 90
+
+    @model_validator(mode="after")
+    def _warn_on_provider_base_url_mismatch(self) -> Settings:
+        """P7 remediation (fresh-review F2): the provider "switch" is five independently-settable
+        fields (`llm_provider`, `llm_base_url`, `embedding_model`, `chat_model`,
+        `embedding_dimensions`) with nothing tying them together — flipping `llm_provider` alone
+        does not touch the other four, so `llm_provider="nvidia"` with `llm_base_url` left at its
+        OpenAI default boots clean and only fails opaquely at the first real request (a
+        same-shape auth/format error from the wrong endpoint, task 6R-14's own outage class).
+
+        Deliberately a WARNING, never a validation error: `llm_base_url`'s own field docstring
+        allows an arbitrary OpenAI-compatible endpoint (a self-hosted proxy, a third-party
+        gateway), so raising here would block a legitimate custom config this field explicitly
+        supports — exactly the "don't block valid custom configs" constraint this check must
+        respect. It fires ONLY when `llm_base_url` equals the OTHER provider's own well-known
+        default (`_PROVIDER_DEFAULT_BASE_URLS`) — the one shape that is unambiguously a mistake
+        (an operator flipped `llm_provider` and forgot the companion fields) — never for a
+        custom/self-hosted URL, which by construction matches neither literal default.
+        """
+        other_provider = "nvidia" if self.llm_provider == "openai" else "openai"
+        if self.llm_base_url == _PROVIDER_DEFAULT_BASE_URLS[other_provider]:
+            logger.warning(
+                "Settings: llm_provider=%s but llm_base_url=%s is the %s provider's own "
+                "default — a provider swap usually also needs LLM_BASE_URL (and "
+                "EMBEDDING_MODEL/CHAT_MODEL) updated to match llm_provider.",
+                self.llm_provider,
+                self.llm_base_url,
+                other_provider,
+            )
+        return self
 
     @property
     def llm_api_key(self) -> SecretStr:

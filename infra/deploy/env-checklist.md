@@ -13,18 +13,20 @@ a file in this repo.
 
 | Variable | Secret? | Production value / source |
 |---|---|---|
-| `NVIDIA_API_KEY` | **Y** | Your NVIDIA NIM API key — build.nvidia.com → API Keys. |
+| `OPENAI_API_KEY` | **Y** | Your OpenAI API key — platform.openai.com → API keys. Required for `LLM_PROVIDER=openai` (the default) — every embedding and chat call fails without it. |
+| `NVIDIA_API_KEY` | N — legacy/optional | Your NVIDIA NIM API key — build.nvidia.com → API Keys. Only needed if `LLM_PROVIDER` is explicitly set to `nvidia` (back-compat/future-re-enable branch); not used in the current deployed configuration. |
 | `DATABASE_URL` | **Y** | Supabase pooler connection string — Supabase dashboard → your project (`qfsknrtxibdtjyxxeykv`) → Connect → "Connection string" (pooled/session mode is recommended for a serverless-style container workload). |
 | `GOOGLE_CLIENT_ID` | N (not marked secret in code — see note below) | Google Cloud Console → APIs & Services → Credentials → your OAuth 2.0 Client ID. |
 | `GOOGLE_CLIENT_SECRET` | **Y** | Same Google Cloud Console credential page as `GOOGLE_CLIENT_ID`, "Client secret". |
 | `SESSION_SECRET` | **Y** | Generate: `python3 -c "import secrets; print(secrets.token_urlsafe(48))"` (README's own quickstart command — reuse it here, run it fresh for production; never reuse the local-dev value). |
 | `ADMIN_EMAILS` | N (personal, not a credential) | Comma-separated allowlist — the real Google account email(s) you'll sign into the admin app with. |
-| `LLM_BASE_URL` | N | `https://integrate.api.nvidia.com/v1` (`.env.example` default — keep as-is unless swapping providers). |
-| `EMBEDDING_MODEL` | N | `nvidia/nv-embedqa-e5-v5` (`.env.example` default). |
-| `EMBEDDING_DIMENSIONS` | N | `1024` (`.env.example` default — must match the `chunks.embedding` column width, migration `0002`). |
+| `LLM_PROVIDER` | N | `openai` (`.env.example` default — selects which credential field/`.env.example` block `llm_api_key` resolves to; set to `nvidia` only to fall back to the legacy NVIDIA NIM path). |
+| `LLM_BASE_URL` | N | `https://api.openai.com/v1` (`.env.example` default — the NVIDIA equivalent, `https://integrate.api.nvidia.com/v1`, only applies when `LLM_PROVIDER=nvidia`). |
+| `EMBEDDING_MODEL` | N | `text-embedding-3-small` (`.env.example` default; was `nvidia/nv-embedqa-e5-v5` before the 2026-09-06 OpenAI switch). |
+| `EMBEDDING_DIMENSIONS` | N | `1024` (`.env.example` default — must match the `chunks.embedding` column width, migration `0002`; unchanged by the OpenAI switch since `text-embedding-3-small` is requested at 1024 dims). |
 | `EMBEDDING_TIMEOUT_SECONDS` | N | `30.0` (`.env.example` default). |
 | `EMBEDDING_MAX_RETRIES` | N | `2` (`.env.example` default). |
-| `CHAT_MODEL` | N | `meta/llama-3.1-8b-instruct` (`.env.example` default). |
+| `CHAT_MODEL` | N | `gpt-4o-mini` (`.env.example` default; was `meta/llama-3.1-8b-instruct` before the 2026-09-06 OpenAI switch). |
 | `GOOGLE_REDIRECT_URI` | N — **pinned** | `https://api.advisordesk.tyagiakanksha.com/api/v1/auth/callback` — must ALSO be registered as an authorized redirect URI on the same Google OAuth client (Google Cloud Console → Credentials → your client → "Authorized redirect URIs"). |
 | `ENVIRONMENT` | N — **pinned** | `production` (see the Secure-cookie note below — this is what turns it on). |
 | `ADMIN_APP_URL` | N — **pinned** | `https://admin.advisordesk.tyagiakanksha.com` |
@@ -36,8 +38,8 @@ a file in this repo.
 | `MCP_HTTP_ENABLED` | N — **pinned** | `true` — owner decision 2026-08-08 supersedes the task-02 brief's original `false` pin: the MCP endpoint is exposed for Claude connectors at the deployed site, gated by bearer auth (task-04) behind the 401 checks in `VERIFY.md`. |
 | `FORWARDED_ALLOW_IPS` | N — **`*` in this topology** | Not an `app/config.py` setting; uvicorn itself reads this env var natively when `--forwarded-allow-ips` isn't on the command line (verified, uvicorn 0.51.0 `Config.__init__`). Purpose: make the rate limiter (`apps/api/app/routes/ratelimit.py`) key on the real client IP from `X-Forwarded-For` instead of the reverse proxy's address. In the deployed single-host topology `*` is safe **because of two properties together** (see `ec2-single-host.md`): the Caddyfile *overwrites* `X-Forwarded-For` with `{remote_host}` (client-supplied chains are discarded, not appended to), and the api container is not host-published (only Caddy can reach it). Verified live by `VERIFY.md` check 2b (forged XFF stays 429). If either property ever changes, re-derive the value — `apprunner-api.md` step 2's escalation ladder explains the appending-ingress hazard that makes blind `*` unsafe elsewhere. |
 
-`GOOGLE_CLIENT_ID` note: `apps/api/app/config.py`'s `Settings` class marks `nvidia_api_key`,
-`database_url`, `google_client_secret`, and `session_secret` as `SecretStr` (so a stray
+`GOOGLE_CLIENT_ID` note: `apps/api/app/config.py`'s `Settings` class marks `openai_api_key`,
+`nvidia_api_key`, `database_url`, `google_client_secret`, and `session_secret` as `SecretStr` (so a stray
 `repr(settings)`/structured log line can never leak them) but leaves `google_client_id` a plain
 `str` — OAuth client IDs are routinely embedded in public URLs/HTML in normal web-OAuth flows.
 Still treat it as a credential you copy carefully (same console page as the real secret) rather

@@ -50,7 +50,7 @@ def mint_token() -> tuple[str, str]:
 
 
 def resolve_bearer_token(
-    session: Session, raw_token: str, settings: Settings | None = None
+    session: Session, raw_token: str, settings: Settings
 ) -> AdminPrincipal | None:
     """Resolve a raw bearer token to the `AdminPrincipal` of the `User` who owns it, or `None`.
 
@@ -78,14 +78,19 @@ def resolve_bearer_token(
     `settings.admin_email_set` property `app.routes.auth_routes.auth_callback` consults at login,
     recomputed from `settings.admin_emails` on every access rather than cached, so an operator who
     edits `ADMIN_EMAILS` and the running process picks it up kills a since-offboarded admin's
-    outstanding bearer tokens on their very next call, not just at next login. `settings` is
-    OPTIONAL and defaults to `None`, which SKIPS this check entirely — needed so this function's
-    pre-existing 2-arg call shape (`session, raw_token`), which `tests/test_bearer_revocation.py`
-    already pins with an owner email that belongs to no allowlist at all, keeps resolving exactly
-    as before. The one real caller with a live `Settings` to offer,
+    outstanding bearer tokens on their very next call, not just at next login. The one real caller,
     `app.mcp.server._resolve_bearer_principal`, always passes `request.app.state.settings` — the
     LIVE instance, not one captured at process/request-factory-build time — so this check is
     accurate the instant `ADMIN_EMAILS` changes underneath a running process.
+
+    P7 remediation (fresh-review M2): `settings` is now REQUIRED (no default) — it used to default
+    to `None`, which SKIPPED the allowlist re-check entirely, a fail-OPEN default on the highest-
+    value gate in this module (WR-02's actual revocation mechanism). Today's one production caller
+    already always passed a live `Settings`, so this was latent, not live — but a fail-open default
+    is a foot-gun for any FUTURE caller (a new script, a test copied as a template, a second MCP
+    mount) that might call the 2-arg form and silently lose allowlist revocation while keeping full
+    write access. Every caller must now supply the live `Settings` explicitly; there is no way to
+    opt out of the allowlist re-check.
 
     Phase-6 remediation task-03/task-09 (WR-05, audit logging): logs exactly one line per call —
     INFO with the token row id ONLY on success, WARNING with a reason keyword (`unknown` /
@@ -103,15 +108,15 @@ def resolve_bearer_token(
         raw_token: the bearer value as sent on the wire (no `"Bearer "` scheme prefix — the
             caller, `app.mcp.server`, strips that before calling this).
         settings: the live `Settings` instance to re-check the resolved user's email against
-            (`settings.admin_email_set`), or `None` (the default) to skip the allowlist re-check
-            entirely — see the allowlist paragraph above for why this is optional.
+            (`settings.admin_email_set`) — required (P7 remediation M2); see the allowlist
+            paragraph above.
 
     Returns:
         The owning user's `AdminPrincipal`, or `None` if `raw_token` doesn't match any
         `ApiToken.token_hash`, matches one whose owning `User` is missing or soft-deleted, matches
         one whose `session_epoch` is stale relative to the owner's current one, matches one whose
-        `expires_at` has passed, or (when `settings` is given) matches one whose owner's email is
-        no longer in `settings.admin_email_set`.
+        `expires_at` has passed, or matches one whose owner's email is no longer in
+        `settings.admin_email_set`.
     """
     token_hash = hashlib.sha256(raw_token.encode()).hexdigest()
     token = session.execute(
@@ -134,7 +139,7 @@ def resolve_bearer_token(
         logger.warning("Bearer token rejected: token_id=%s reason=expired", token.id)
         return None
 
-    if settings is not None and user.email.strip().lower() not in settings.admin_email_set:
+    if user.email.strip().lower() not in settings.admin_email_set:
         logger.warning("Bearer token rejected: token_id=%s reason=not-allowlisted", token.id)
         return None
 

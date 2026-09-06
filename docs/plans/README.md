@@ -54,15 +54,16 @@ separate reviewer.)
 
 | Phase | Folder | Scope | Depends on | Status |
 |---|---|---|---|---|
-| 1 | [`phase-1-skeleton/`](phase-1-skeleton/00-INDEX.md) | Monorepo scaffold, tooling gates, schema + Alembic, app factory + healthz, MUI frontend scaffolds + codegen, compose (incl. `--profile local-db`) | — | planned |
-| 2 | [`phase-2-auth-cms-crud/`](phase-2-auth-cms-crud/00-INDEX.md) | Google OAuth + allowlist + sessions, content/tag/stats services, all §5.2 admin routes, admin shell + dashboard + editor | 1 | planned |
-| 3 | [`phase-3-publish-client-content/`](phase-3-publish-client-content/00-INDEX.md) | Chunking, embeddings + transactional publish/re-embed/remove lifecycle, public content API, client content pages | 2 | planned |
-| 4 | [`phase-4-rag-assistant/`](phase-4-rag-assistant/00-INDEX.md) | Retrieval (similarity convention), `/public/chat` SSE + persistence + refusal, rate limiting, seed articles + eval set, client chat UI | 3 | planned |
-| 5 | [`phase-5-mcp-agent/`](phase-5-mcp-agent/00-INDEX.md) | In-process MCP server + 8 core tools, agent loop + stateless `/agent/chat`, admin agent panel | 4 | planned |
-| 6 | [`phase-6-deployment/`](phase-6-deployment/00-INDEX.md) | Metrics middleware, AWS deployment (single-host EC2 + Caddy + Supabase; App Runner plan superseded at execution — see 00-INDEX amendment), README + demo script | 5 | planned |
+| 1 | [`phase-1-skeleton/`](phase-1-skeleton/00-INDEX.md) | Monorepo scaffold, tooling gates, schema + Alembic, app factory + healthz, MUI frontend scaffolds + codegen, compose (incl. `--profile local-db`) | — | merged |
+| 2 | [`phase-2-auth-cms-crud/`](phase-2-auth-cms-crud/00-INDEX.md) | Google OAuth + allowlist + sessions, content/tag/stats services, all §5.2 admin routes, admin shell + dashboard + editor | 1 | merged |
+| 3 | [`phase-3-publish-client-content/`](phase-3-publish-client-content/00-INDEX.md) | Chunking, embeddings + transactional publish/re-embed/remove lifecycle, public content API, client content pages | 2 | merged |
+| 4 | [`phase-4-rag-assistant/`](phase-4-rag-assistant/00-INDEX.md) | Retrieval (similarity convention), `/public/chat` SSE + persistence + refusal, rate limiting, seed articles + eval set, client chat UI | 3 | merged |
+| 5 | [`phase-5-mcp-agent/`](phase-5-mcp-agent/00-INDEX.md) | In-process MCP server + 8 core tools, agent loop + stateless `/agent/chat`, admin agent panel | 4 | merged |
+| 6 | [`phase-6-deployment/`](phase-6-deployment/00-INDEX.md) | Metrics middleware, AWS deployment (single-host EC2 + Caddy + Supabase; App Runner plan superseded at execution — see 00-INDEX amendment), README + demo script | 5 | merged |
 | 7 | [`phase-7-evaluation/`](phase-7-evaluation/00-INDEX.md) | `report_content_gaps` tool (#9), groundedness harness, §9.1 metrics + definition-of-done walk | 6 (tasks 01–02 only need 4–5) | planned |
 
-Statuses here and in each INDEX are a snapshot; **git history is authoritative**.
+Statuses here and in each INDEX are a snapshot; **git history is authoritative**. As of this
+writing, phases 1–6 are merged to `main` (PRs #1–#6); phase 7 has not started.
 
 ## Standing gates (from the moment they exist)
 

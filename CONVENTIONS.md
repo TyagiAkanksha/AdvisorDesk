@@ -141,8 +141,10 @@ no contract forbids the import.
 ## 7. Config & secrets
 
 - `app/config.py::Settings(BaseSettings)` (pydantic-settings) is the single config surface — the
-  full PRD §9 env roster with PRD defaults (`SIMILARITY_THRESHOLD=0.35`, `RATE_LIMIT_PER_MIN=10`,
-  `RATE_LIMIT_PER_DAY=50`, `SESSION_CREATE_PER_DAY=20`, `MCP_HTTP_ENABLED=false`, ...).
+  full PRD §9 env roster with PRD defaults (`SIMILARITY_THRESHOLD=0.5` — retuned from the earlier
+  NVIDIA-embedding-era `0.35` for the OpenAI `text-embedding-3-small` embedding model,
+  `RATE_LIMIT_PER_MIN=10`, `RATE_LIMIT_PER_DAY=50`, `SESSION_CREATE_PER_DAY=20`,
+  `MCP_HTTP_ENABLED=false`, ...).
 - Secrets only via env. Tracked file: `.env.example` (every var, commented). Real `.env` files are
   gitignored. **Never commit secrets.**
 

@@ -19,6 +19,11 @@ _ENV_ROSTER = [
     "LLM_BASE_URL",
     "EMBEDDING_MODEL",
     "EMBEDDING_DIMENSIONS",
+    # P7 remediation (fresh-review R3-1/I-1): `CHAT_MODEL` was the one task-6R-14 env var missing
+    # from this roster — empirically reproduced (a stray `CHAT_MODEL` in the environment made
+    # `test_defaults_match_prd_with_empty_env` read that instead of the code default, a false
+    # pass that only `.env`'s own coincidentally-matching value was masking locally).
+    "CHAT_MODEL",
     "EMBEDDING_TIMEOUT_SECONDS",
     "EMBEDDING_MAX_RETRIES",
     "DATABASE_URL",

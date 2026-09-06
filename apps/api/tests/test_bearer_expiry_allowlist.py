@@ -325,7 +325,11 @@ def test_resolve_bearer_token_rejects_token_past_expiry(db_session: Session) -> 
     explicit past `expires_at` (bypassing `mint()`, which always stamps a FUTURE expiry) so this
     test isolates purely the expiry compare. RED today: `ApiToken(..., expires_at=...)` raises
     `TypeError` (an unexpected keyword argument) — a clean behavioral failure, not a collection
-    error."""
+    error.
+
+    P7 remediation (fresh-review M2): `resolve_bearer_token`'s `settings` parameter is now
+    REQUIRED — passes an explicit `Settings` allowlisting the owner's own email, so the expiry
+    check (not an incidental allowlist mismatch) is what this test isolates."""
     owner = User(email="past-expiry@example.com", name="Past Expiry Owner")
     db_session.add(owner)
     db_session.flush()
@@ -341,7 +345,9 @@ def test_resolve_bearer_token_rejects_token_past_expiry(db_session: Session) -> 
     )
     db_session.flush()
 
-    principal = resolve_bearer_token(db_session, raw)
+    principal = resolve_bearer_token(
+        db_session, raw, Settings(admin_emails="past-expiry@example.com")
+    )
 
     assert principal is None
 
@@ -350,7 +356,10 @@ def test_resolve_bearer_token_accepts_token_with_null_expires_at(db_session: Ses
     """Design pin #1's 'NULL = no expiry' contract: a legacy (pre-migration-0006-equivalent)
     token with an explicit `expires_at=None` must still authenticate — this is the backward
     compatibility guarantee that keeps every already-deployed connector token alive across the
-    migration. RED today: `ApiToken(..., expires_at=None)` raises `TypeError`."""
+    migration. RED today: `ApiToken(..., expires_at=None)` raises `TypeError`.
+
+    P7 remediation (fresh-review M2): `resolve_bearer_token`'s `settings` parameter is now
+    REQUIRED — passes an explicit `Settings` allowlisting the owner's own email."""
     owner = User(email="null-expiry@example.com", name="Null Expiry Owner")
     db_session.add(owner)
     db_session.flush()
@@ -366,7 +375,9 @@ def test_resolve_bearer_token_accepts_token_with_null_expires_at(db_session: Ses
     )
     db_session.flush()
 
-    principal = resolve_bearer_token(db_session, raw)
+    principal = resolve_bearer_token(
+        db_session, raw, Settings(admin_emails="null-expiry@example.com")
+    )
 
     assert principal is not None
     assert principal.user_id == owner.id
@@ -375,7 +386,10 @@ def test_resolve_bearer_token_accepts_token_with_null_expires_at(db_session: Ses
 def test_resolve_bearer_token_accepts_token_with_future_expires_at(db_session: Session) -> None:
     """Symmetry check for design pin #2(a)'s boundary: a token whose `expires_at` is still in the
     FUTURE must resolve normally — the expiry check must not reject a token merely for HAVING an
-    `expires_at` value. RED today: `ApiToken(..., expires_at=...)` raises `TypeError`."""
+    `expires_at` value. RED today: `ApiToken(..., expires_at=...)` raises `TypeError`.
+
+    P7 remediation (fresh-review M2): `resolve_bearer_token`'s `settings` parameter is now
+    REQUIRED — passes an explicit `Settings` allowlisting the owner's own email."""
     owner = User(email="future-expiry@example.com", name="Future Expiry Owner")
     db_session.add(owner)
     db_session.flush()
@@ -391,7 +405,9 @@ def test_resolve_bearer_token_accepts_token_with_future_expires_at(db_session: S
     )
     db_session.flush()
 
-    principal = resolve_bearer_token(db_session, raw)
+    principal = resolve_bearer_token(
+        db_session, raw, Settings(admin_emails="future-expiry@example.com")
+    )
 
     assert principal is not None
     assert principal.user_id == owner.id

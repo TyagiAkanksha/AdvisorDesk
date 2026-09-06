@@ -186,7 +186,11 @@ describe('useChatStream — M-5 AbortController wired to unmount', () => {
     });
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
-    const init = fetchMock.mock.calls[0][1] as RequestInit;
+    const call = fetchMock.mock.calls[0];
+    if (!call) {
+      throw new Error('expected fetch to have been called');
+    }
+    const init = call[1] as RequestInit;
     expect(init.signal).toBeInstanceOf(AbortSignal);
     expect(init.signal?.aborted).toBe(false);
 

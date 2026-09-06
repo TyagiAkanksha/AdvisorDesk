@@ -130,7 +130,11 @@ describe('useAgentStream — I-1 empty-done fallback turn', () => {
     // Exactly two turns: the user turn, and ONE assistant turn carrying the tool events — no
     // extra fallback turn tacked on just because `text` happens to be empty.
     expect(result.current.turns).toHaveLength(2);
-    expect(result.current.turns[1].role).toBe('assistant');
-    expect(result.current.turns[1].events).toHaveLength(2);
+    const assistantTurn = result.current.turns[1];
+    if (!assistantTurn) {
+      throw new Error('expected a second (assistant) turn');
+    }
+    expect(assistantTurn.role).toBe('assistant');
+    expect(assistantTurn.events).toHaveLength(2);
   });
 });

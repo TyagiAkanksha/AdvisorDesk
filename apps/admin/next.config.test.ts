@@ -18,9 +18,13 @@ describe('next.config.ts', () => {
     const headerGroups = await headersFn();
 
     expect(headerGroups).toHaveLength(1);
-    expect(headerGroups[0].source).toBe('/(.*)');
-    expect(headerGroups[0].headers).toHaveLength(3);
-    expect(headerGroups[0].headers).toEqual(
+    const [group] = headerGroups;
+    if (!group) {
+      throw new Error('expected exactly one header group');
+    }
+    expect(group.source).toBe('/(.*)');
+    expect(group.headers).toHaveLength(3);
+    expect(group.headers).toEqual(
       expect.arrayContaining([
         { key: 'Strict-Transport-Security', value: 'max-age=31536000; includeSubDomains' },
         { key: 'X-Content-Type-Options', value: 'nosniff' },

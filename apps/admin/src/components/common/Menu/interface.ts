@@ -10,4 +10,6 @@ export interface MenuProps {
   open: boolean;
   onClose: () => void;
   options: MenuOption[];
+  // WR-13 (6R task-11): lets the trigger's `aria-controls` reference this popup's DOM id.
+  id?: string;
 }

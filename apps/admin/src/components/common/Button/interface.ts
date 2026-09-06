@@ -15,4 +15,9 @@ export interface ButtonProps {
   disabled?: boolean;
   fullWidth?: boolean;
   type?: 'button' | 'submit' | 'reset';
+  // WR-13 (6R task-11): aria-* passthrough so disclosure buttons (menu/panel triggers) can
+  // expose their expanded/popup state — this interface was closed before, blocking the fix.
+  'aria-expanded'?: boolean;
+  'aria-haspopup'?: boolean | 'true' | 'false' | 'menu' | 'listbox' | 'tree' | 'grid' | 'dialog';
+  'aria-controls'?: string;
 }

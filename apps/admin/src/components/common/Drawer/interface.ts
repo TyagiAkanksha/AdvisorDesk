@@ -15,4 +15,6 @@ export interface DrawerProps {
    * `variant="persistent"` drawer. */
   open?: boolean;
   onClose?: () => void;
+  // WR-13 (6R task-11): lets a toggle button's `aria-controls` reference this panel's DOM id.
+  id?: string;
 }

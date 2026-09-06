@@ -30,6 +30,19 @@ Files:
    `/opt/advisordesk/`, then (via SSM): `./fetch-secrets.sh` → ECR login → `docker compose up -d`.
    Caddy obtains Let's Encrypt certs once DNS resolves. Then run `../VERIFY.md`.
 
+## Monitoring (WR-15)
+
+CloudWatch alarms on the instance (created 2026-09-06, region us-east-1):
+- `advisordesk-ec2-system-status-recover` — `StatusCheckFailed_System` ≥ 1 for 3 min → **auto-recovers**
+  the instance (`arn:aws:automate:us-east-1:ec2:recover`); no notification target needed.
+- `advisordesk-ec2-instance-status` — `StatusCheckFailed` ≥ 1 for 3 min → visibility of instance-level
+  failures.
+These catch host-down. **App-level uptime** (an HTTP ping of `https://api.advisordesk.tyagiakanksha.com/api/v1/healthz`)
+is a 5-minute owner setup at a free external monitor (UptimeRobot / healthchecks.io) — it needs the
+owner's own account, so it is not scripted here. Note: neither host-status nor a `/healthz` ping would
+have caught the 2026-08 chat outage (the host was healthy and `/healthz` is DB/provider-free) — a
+functional check (e.g. a periodic scripted `/public/chat` probe) is the only thing that would; deferred.
+
 ## Not yet automated (deferred)
 
 Full Terraform/CDK is out of scope for this single-host dev deployment. If the host churns often,

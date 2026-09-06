@@ -58,8 +58,16 @@ def require_admin(request: Request) -> AdminPrincipal:
     (the "soft-deleted" branch below — an UNKNOWN user id has no row to look up at all, so it
     logs nothing), a second, non-`active_select` lookup (`app.services.users.get_user_by_id`)
     recovers that row's email so the WARNING can name who was rejected — `get_active_user` alone
-    cannot, since it excludes the very row this needs. The cookie-epoch-stale branch below is not
-    one of this task's six pinned audit events and is deliberately left unlogged.
+    cannot, since it excludes the very row this needs.
+
+    P7 remediation (fresh-review M1): the cookie-epoch-stale branch below now ALSO logs a WARNING
+    (`reason=revoked-cookie`) — this task's own six pinned audit events predate WR-02's bearer-side
+    epoch revocation (`app.auth.tokens.resolve_bearer_token`'s `reason=revoked` line), which left
+    the cookie path as the one authentication-failure branch with no audit trail at all: a
+    captured/stolen admin cookie replayed after `/auth/logout` correctly 401s but previously left
+    zero trace in `docker logs`. The WARNING carries `user.id` only — never the raw cookie value or
+    its signature — mirroring the bearer path's log hygiene (`resolve_bearer_token` never logs
+    `raw_token`/`token_hash`).
 
     Args:
         request: the incoming request; reads `app.state.settings` and
@@ -106,6 +114,7 @@ def require_admin(request: Request) -> AdminPrincipal:
         raise AuthRequiredError("Sign in required.")
 
     if cookie_epoch != user.session_epoch:
+        logger.warning("Login rejected: user_id=%s reason=revoked-cookie", user.id)
         raise AuthRequiredError("Sign in required.")
 
     return AdminPrincipal(user_id=user.id, email=user.email, name=user.name)

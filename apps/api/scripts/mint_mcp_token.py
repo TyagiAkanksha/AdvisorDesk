@@ -49,7 +49,14 @@ from app.models.users import User
 from app.services.queries import active_select
 
 
-def mint(session: Session, *, email: str, name: str, ttl_days: int | None = None) -> str:
+def mint(
+    session: Session,
+    *,
+    email: str,
+    name: str,
+    ttl_days: int | None = None,
+    settings: Settings | None = None,
+) -> str:
     """Mint a new bearer token for the ACTIVE `User` matching `email`, and insert its hashed row.
 
     Phase-6 remediation task-03 (WR-02, migration 0005): the new row is stamped with the owner's
@@ -61,6 +68,14 @@ def mint(session: Session, *, email: str, name: str, ttl_days: int | None = None
     `expires_at = now() + ttl_days` — `app.auth.tokens.resolve_bearer_token` rejects it once that
     passes.
 
+    P7 remediation (fresh-review M4): also rejects (before ever inserting a row) an active user
+    whose email is NOT in the CURRENT `ADMIN_EMAILS` allowlist — `resolve_bearer_token`
+    (`app.auth.tokens`) already re-checks the SAME allowlist at every resolve, so minting for a
+    non-allowlisted email used to create a working-*looking* credential that would never actually
+    authenticate (dead-on-arrival, and confusing to an operator: mint succeeds, token never
+    resolves). This check only runs when `settings` is explicitly given — see the `settings`
+    arg's own docstring for why it is optional rather than defaulting to a bare `Settings()`.
+
     Args:
         session: an open `Session` the caller owns — flushed (to surface constraint errors and
             assign the new row's id eagerly) but never committed here; the caller commits.
@@ -69,17 +84,27 @@ def mint(session: Session, *, email: str, name: str, ttl_days: int | None = None
         name: a human-readable label for the token (e.g. `"ci-connector"`), stored verbatim.
         ttl_days: how many days from now the new token should live. `None` (the default — every
             pre-task-09 call site, including `tests/test_bearer_revocation.py`'s pinned 3-arg
-            calls, keeps this OPTIONAL) falls back to `Settings().mcp_token_ttl_days` (90 by
-            default; `MCP_TOKEN_TTL_DAYS`-overridable).
+            calls, keeps this OPTIONAL) falls back to `settings.mcp_token_ttl_days` (90 by
+            default; `MCP_TOKEN_TTL_DAYS`-overridable) — or a bare `Settings()`'s value when
+            `settings` is also omitted.
+        settings: the live `Settings` to re-check `email` against
+            (`settings.admin_email_set`) before minting. `None` (the default) SKIPS the
+            allowlist check entirely — needed so this function's pre-existing call shape
+            (`session, email=..., name=...`), which several pinned test files already use for
+            arbitrary test emails belonging to no allowlist at all, keeps minting exactly as
+            before. `main()` (the real CLI entry point) always builds and passes a live
+            `Settings()`, so a real operator invocation is always allowlist-gated; only a direct,
+            lower-level `mint()` call (tests, or a future script) can opt out.
 
     Returns:
         The raw token string (`"adk_" + secrets.token_urlsafe(32)`) — the ONLY time it is ever
         available; only its sha256 hash is persisted.
 
     Raises:
-        LookupError: no active (non-soft-deleted) `User` row matches `email` — covers both an
+        LookupError: no active (non-soft-deleted) `User` row matches `email` (covers both an
             unknown email and a soft-deleted one identically, since neither should ever be
-            allowed to mint a working token.
+            allowed to mint a working token), or (when `settings` is given) `email` is an active
+            user's but is not in `settings.admin_email_set`.
     """
     normalized_email = email.strip().lower()
     user = session.execute(
@@ -88,7 +113,15 @@ def mint(session: Session, *, email: str, name: str, ttl_days: int | None = None
     if user is None:
         raise LookupError(f"No active user found for email {email!r}.")
 
-    resolved_ttl_days = ttl_days if ttl_days is not None else Settings().mcp_token_ttl_days
+    if settings is not None and normalized_email not in settings.admin_email_set:
+        raise LookupError(
+            f"Email {email!r} is an active user but is not in ADMIN_EMAILS — refusing to mint "
+            "a token that would never authenticate (app.auth.tokens.resolve_bearer_token "
+            "re-checks the same allowlist at every resolve)."
+        )
+
+    resolved_settings = settings if settings is not None else Settings()
+    resolved_ttl_days = ttl_days if ttl_days is not None else resolved_settings.mcp_token_ttl_days
     raw_token, token_hash = mint_token()
     session.add(
         ApiToken(
@@ -186,7 +219,13 @@ def _build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: Sequence[str] | None = None) -> None:
-    """Parse argv, open one session from `DATABASE_URL`, dispatch to the requested action."""
+    """Parse argv, open one session from `DATABASE_URL`, dispatch to the requested action.
+
+    P7 remediation (fresh-review M4): `--mint` always builds and passes a live `Settings()` (env-
+    sourced, zero-env-var constructible per CONVENTIONS.md §5 — mirrors `mint()`'s own pre-existing
+    `Settings()` construction for `mcp_token_ttl_days`) so a real operator invocation is always
+    gated by the CURRENT `ADMIN_EMAILS` allowlist, matching `resolve_bearer_token`'s own re-check.
+    """
     args = _build_parser().parse_args(argv)
 
     if args.mint and (not args.email or not args.name):
@@ -198,7 +237,7 @@ def main(argv: Sequence[str] | None = None) -> None:
     try:
         if args.mint:
             try:
-                raw_token = mint(session, email=args.email, name=args.name)
+                raw_token = mint(session, email=args.email, name=args.name, settings=Settings())
             except LookupError as exc:
                 print(str(exc), file=sys.stderr)
                 raise SystemExit(1) from exc

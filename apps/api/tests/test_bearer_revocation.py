@@ -231,7 +231,12 @@ def test_resolve_bearer_token_returns_principal_when_token_epoch_matches_user_ep
     isolates PURELY the compare in `resolve_bearer_token`, independent of how the row got its
     `session_epoch` value. RED today: `ApiToken` has no `session_epoch` column, so the
     constructor call below raises `TypeError` (an unexpected keyword argument) — a clean
-    behavioral failure, not a collection error."""
+    behavioral failure, not a collection error.
+
+    P7 remediation (fresh-review M2): `resolve_bearer_token`'s `settings` parameter is now
+    REQUIRED (no more fail-open `None` default) — this call passes an explicit `Settings` that
+    allowlists the owner's own email, so this test keeps isolating PURELY the epoch compare
+    rather than incidentally exercising the (unrelated) allowlist check."""
     owner = User(email="epoch-match@example.com", name="Epoch Match Owner")
     db_session.add(owner)
     db_session.flush()
@@ -246,7 +251,9 @@ def test_resolve_bearer_token_returns_principal_when_token_epoch_matches_user_ep
     )
     db_session.flush()
 
-    principal = resolve_bearer_token(db_session, raw)
+    principal = resolve_bearer_token(
+        db_session, raw, Settings(admin_emails="epoch-match@example.com")
+    )
 
     assert principal is not None
     assert principal.user_id == owner.id

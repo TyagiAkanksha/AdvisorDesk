@@ -20,7 +20,7 @@ services:
       EMBEDDING_MODEL: text-embedding-3-small
       EMBEDDING_DIMENSIONS: "1024"
       CHAT_MODEL: gpt-4o-mini
-      SIMILARITY_THRESHOLD: "0.35"
+      SIMILARITY_THRESHOLD: "0.5"
       RATE_LIMIT_PER_MIN: "10"
       RATE_LIMIT_PER_DAY: "50"
       SESSION_CREATE_PER_DAY: "20"

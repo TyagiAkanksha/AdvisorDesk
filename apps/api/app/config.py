@@ -153,7 +153,14 @@ class Settings(BaseSettings):
     # `str` field, parsed by hand via the `cors_origin_list` property below.
     cors_origins: str = ""
 
-    similarity_threshold: float = 0.35
+    # Retuned 0.35 -> 0.5 on 2026-09-06 for the OpenAI text-embedding-3-small
+    # provider (PRD §7.3). Measured over seed/eval_questions.yaml against the live
+    # corpus: answerable questions score top-similarity 0.645-0.806, unanswerable
+    # 0.356-0.403 — a clean gap. The old 0.35 sat BELOW the unanswerable max, so
+    # off-topic questions surfaced a spurious chunk (a citation on a refusal); 0.5
+    # is centred in the gap (~0.1 margin each side) so answerable keep all their
+    # chunks and unanswerable retrieve nothing. Env-configurable.
+    similarity_threshold: float = 0.5
     rate_limit_per_min: int = 10
     rate_limit_per_day: int = 50
     session_create_per_day: int = 20

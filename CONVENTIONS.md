@@ -178,6 +178,11 @@ extend-immutable-calls = ["fastapi.Depends", "fastapi.Query", "fastapi.Header",
 Mypy: `strict = true` over an explicit `files = ["app"]` list. A package is either listed
 (strict-clean) or not present — never partially typed. Third-party gaps get a targeted
 `ignore_missing_imports` override with a comment naming the typed wrapper that contains them.
+`tests/` and `scripts/` are **deliberately out of the mypy gate's scope** — the suite duck-types
+fakes and passes convenience values (e.g. plain strings for `SecretStr` fields) that strict typing
+would reject without any runtime benefit. A bare `mypy .` therefore reports errors in those trees;
+that is expected, not a regression. The canonical gate is `uv run mypy` (the `files = ["app"]`
+list), and only `app/` must be strict-clean.
 
 The gate commands (module form, run from `apps/api/`):
 

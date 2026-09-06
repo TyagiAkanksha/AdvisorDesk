@@ -19,9 +19,14 @@ and MUST NOT be touched by any task here — path-scoped `git add` only, per CON
 | B1 security | `task-04-prod-config-in-repo.md` | WR-03, WR-14 (restore-target limb), WR-70 (staged) | ✅ d091e11 + fix r1 0aefdd0; confirm pass APPROVED (comment-aware header_up pin mutation-proven) |
 | B1 security | `task-05-security-headers.md` (depends on task-04 ✅) | WR-04 | ✅ f386d20 (RED ffc7f18); review APPROVED first round, 0 findings (HSTS apex-scope safe, live curl verified, CSP-content deferred to follow-up) |
 | B1 security | `task-06-ratelimit-memory-bound.md` | WR-06 (per-minute limb) | ✅ 768324a + fix r1 be12475; confirm pass APPROVED (hard-cap LRU, memory flat ~17 MiB under 300k-IP flood; self-eviction bypass dominated ~2000:1; LRU-recency mutant now killed). Per-day limb → B4 item 10 |
-| B3 code/arch | task-07.. (import contracts WR-07, held txn WR-09, agent-route tests WR-10, tag-drop WR-11, sse package WR-12, aria WR-13, EC2 reproducibility WR-14, monitoring WR-15, README+demo WR-18) | — | pending |
-| B4 owner decisions | batched at next checkpoint (8 items, remediation plan Batch 4) + TWO new residual-scope items surfaced during B1 review: (9) WR-02 residual — bearer token EXPIRY + ADMIN_EMAILS re-check on resolve (t03 closed the logout-revocation half; expiry/allowlist halves were out of the brief's scope, review M5); (10) WR-06 residual — per-day `_session_create_counts` still grows ~144 B/IP within a day (~137 MiB/1M IPs), rollover-only by design pin 2 (t06 review M-2); recommend a follow-up 6R task capping/evicting the day structures too | — | pending |
-| B5 minors | 2–3 cleanup tasks after CI exists | — | pending |
+| B3 SUBSET (owner-chosen 2026-09-06) | `task-07-import-contracts-ws.md` | WR-07, t04-M7 | briefed |
+| B3 SUBSET | `task-08-held-txn-agent-tests-metrics.md` | WR-09, WR-10, t01-N2 | briefed |
+| B3 SUBSET | `task-11-frontend-tagdrop-aria-tsstrict.md` | WR-11, WR-13, TS-strictness (B4) | briefed |
+| B3 residual | `task-09-bearer-expiry-allowlist.md` | WR-02 residual (expiry + ADMIN_EMAILS re-check) | briefed |
+| B3 residual | `task-10-ratelimit-perday-bound.md` | WR-06 residual (per-day counters) | briefed |
+| B3 DEFERRED (owner: skip for now) | — | WR-12 SSE-package, WR-14/15 EC2 IaC+monitoring, WR-18 README+demo | ledgered, ready to brief if revisited |
+| B4 owner decisions | RESOLVED 2026-09-06: TS noUncheckedIndexedAccess ON + drop allowJs (→t11); mypy app/-scope documented as policy (CONVENTIONS §9, done); t01-N2 metrics bucket FIX (→t08); t04-M7 WS abort opportunistic (→t07); MSW keep hand mocks (no-op); t04-M1 raw ORM leave (ratified, no-op); UI-polish → one task later (`task-12-ui-polish.md` backlog stub); residuals 9+10 → DO BOTH (→t09/t10) | — | resolved |
+| B5 minors | 2–3 cleanup tasks; WR-51 limbs; whole-branch-triage Minors | — | pending |
 
 ## Sequencing (from the approved plan)
 

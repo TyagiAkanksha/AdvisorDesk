@@ -1,5 +1,12 @@
 # Frontends on AWS App Runner
 
+> **PARTIALLY SUPERSEDED (2026-08-09).** The App Runner service-creation and custom-domain
+> steps below were never executed — both frontends run as containers on the single EC2 host
+> behind Caddy instead (see **`ec2-single-host.md`**, the doc of record). The **"API-base
+> wiring: build-time vs runtime" section below remains fully authoritative** — the
+> `NEXT_PUBLIC_API_URL`/`API_URL` build-vs-runtime distinction is a property of the images, not
+> of App Runner, and applies identically on the EC2 host.
+
 Deployment guide for the `advisordesk/admin` and `advisordesk/client` images (phase-6 task-02).
 Like `apprunner-api.md`, this is a walkthrough for the **owner to run interactively** — nothing
 here runs automatically. Both frontends deploy the same way as the API: App Runner services

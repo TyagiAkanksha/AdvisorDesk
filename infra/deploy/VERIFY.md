@@ -39,8 +39,9 @@ correctly-working deploy doesn't get misread as broken.
   exhaust both caps above; running SSE afterward risks a 429 that looks like broken streaming
   rather than a healthy rate limiter. Doing SSE first costs only one admitted request.
 - **Escape hatch:** both caps are pure in-memory, per-process state
-  (`ratelimit.py`'s own docstring) — restarting or redeploying the App Runner service clears
-  every bucket if you need a clean slate to re-run these checks. Otherwise, space re-runs across
+  (`ratelimit.py`'s own docstring) — restarting the api container (`docker compose restart api`
+  on the EC2 host, via SSM — see `ec2-single-host.md`) clears every bucket if you need a clean
+  slate to re-run these checks. Otherwise, space re-runs across
   UTC days (session-create budget) or at least 60 seconds apart (per-minute window).
 
 ## 0. Health check
@@ -81,7 +82,7 @@ your IP's `SESSION_CREATE_PER_DAY` (default 20) budget** — see "Before you sta
 ## 2. Distinct-IP bucket check (proves `FORWARDED_ALLOW_IPS` is actually working)
 
 The check above only proves rate limiting exists — it doesn't prove it's keying on the *real*
-client IP rather than App Runner's single proxy address (which would rate-limit every visitor
+client IP rather than the reverse proxy's single address (which would rate-limit every visitor
 as one). Run the SAME loop from **two genuinely distinct real client IPs** — e.g. your laptop on
 home wifi, then your phone on cellular data (not the same wifi/NAT) — one right after the other:
 
@@ -108,8 +109,9 @@ for i in $(seq 1 3); do curl -s -o /dev/null -w "%{http_code} " --max-time 3 -X 
 ```
 
 Expected: device B gets its own fresh run of `200`s — device A hitting `429` must NOT make
-device B 429 too. If device B also 429s immediately, `FORWARDED_ALLOW_IPS` isn't taking effect
-(see `apprunner-api.md` step 2's escalation ladder) and every visitor is sharing one bucket. (On
+device B 429 too. If device B also 429s immediately, the forwarded-IP handling isn't taking
+effect (see `ec2-single-host.md`'s forwarded-IP section — Caddy must be overwriting
+`X-Forwarded-For` with `{remote_host}`) and every visitor is sharing one bucket. (On
 a re-run later the same UTC day, a `429` on device B's very first request can also mean device
 B's own IP already exhausted its `SESSION_CREATE_PER_DAY` budget from earlier testing — that's
 the session-create message, not the per-minute one; check the response body if you need to tell
@@ -133,11 +135,12 @@ for i in $(seq 1 3); do curl -s -o /dev/null -w "%{http_code} " --max-time 3 -X 
   -d '{"message":"hi"}'; done; echo
 ```
 
-Expected: still `429 429 429` — the forged header must be ignored (the trusted proxy's own
-appended entry wins). If any of these return `200`, the forged chain is being honored: an
-attacker can mint a fresh rate-limit bucket per request, which defeats §9's rate limiting
-entirely. STOP and pin `FORWARDED_ALLOW_IPS` to the observed peer range instead of `*`, then
-re-run checks 2 and 2b.
+Expected: still `429 429 429` — the forged header must be ignored (Caddy overwrites
+`X-Forwarded-For` with the real peer address). If any of these return `200`, the forged chain
+is being honored: an attacker can mint a fresh rate-limit bucket per request, which defeats
+§9's rate limiting entirely. STOP and check the Caddyfile's `header_up X-Forwarded-For
+{remote_host}` overwrite (and that the api container isn't reachable except through Caddy — see
+`ec2-single-host.md`), then re-run checks 2 and 2b.
 
 ```text
 (recorded during deployment — forged-XFF retries after exhausting the bucket)
@@ -153,7 +156,7 @@ only spends one admitted request either way.
 
 Tokens must arrive incrementally, not all at once at the end (which would indicate Cloudflare or
 some other hop buffered the response — the reason the custom-domain DNS records must be
-DNS-only/grey-cloud, per `apprunner-api.md` step 4):
+DNS-only/grey-cloud, per `ec2-single-host.md`'s DNS notes):
 
 ```sh
 curl -N -s -X POST $API/api/v1/public/chat -H 'content-type: application/json' \
@@ -294,13 +297,12 @@ that called it clears locally.
 
 ## 7. `chat_latency` visible in service logs (task-01)
 
-App Runner ships each service's stdout/stderr to CloudWatch Logs automatically, under
-`/aws/apprunner/<service-name>/<service-id>/application`. Find the API service's exact log group
-name in the App Runner console (service → "Logs" tab shows it directly), then:
+Container stdout/stderr stays on the EC2 host — there is no CloudWatch integration
+(`ec2-single-host.md`'s logging section). From an SSM session on the box:
 
 ```sh
-aws logs tail /aws/apprunner/advisordesk-api/<service-id>/application \
-  --since 1h --filter-pattern "chat_latency" --region us-east-1
+docker compose -f /opt/advisordesk/docker-compose.yml logs api --since 1h 2>&1 \
+  | grep chat_latency
 ```
 
 Expected: at least one line matching `chat_latency p50=<ms> p95=<ms> count=<n>` once
@@ -312,13 +314,14 @@ each, plus the SSE check, contributes toward that count).
 `apps/api/app/main.py`'s `_configure_logging()` calls `logging.basicConfig(level=logging.INFO)`
 at import time, but that call is a documented no-op whenever the root logger already has a
 handler attached (Python's own `logging.basicConfig` behavior, not passing `force=True`). This
-deployment uses the image's own `CMD` unmodified (`apprunner-api.md` step 2 — no Start command
-override), so nothing introduces a competing log configuration — but if a Start command
-override is ever added later (e.g. a future `uvicorn --log-config <file>` addition),
+deployment uses the image's own `CMD` unmodified (the production compose file on the EC2 host
+sets no `command:` override — `ec2-single-host.md`), so nothing introduces a competing log
+configuration — but if a command override is ever added later (e.g. a future
+`uvicorn --log-config <file>` addition),
 that could pre-configure the root logger with a level/handler that silently swallows this
 module's `logger.info(...)` calls, and `_configure_logging()`'s own guard would then leave it
 that way rather than fixing it. If this check ever comes back empty despite real chat traffic,
-check the actual Start command in use before assuming the metrics code itself regressed.
+check the actual container command in use before assuming the metrics code itself regressed.
 
 ```text
 (recorded during deployment)

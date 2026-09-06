@@ -29,6 +29,14 @@ no new HTTP surface). Production topology (owner D4, 2026-08-08): custom domain
 **Tech Stack:** AWS App Runner (default; ECS Fargate documented alternative) · ECR · Supabase
 Postgres (deployed DB, §9 default) · structured logging.
 
+> **AMENDED at task-02 execution (2026-08-09):** AWS App Runner turned out to be **closed to
+> new customers** (since 2026-04-30 — this project's account, created 2026-08-08, cannot create
+> services). The runtime that actually shipped is **single-host EC2 + Caddy**: all three ECR
+> images on one t3.small behind Caddy (auto-HTTPS), secrets in SSM Parameter Store, management
+> via SSM only, Cloudflare grey-cloud DNS unchanged. Everything else in this plan (ECR images,
+> Supabase, env contract, custom-domain topology, VERIFY checklist) carried over as written.
+> Doc of record: `infra/deploy/ec2-single-host.md`; decision trail in the execution ledger.
+
 ## Global Constraints
 
 Phase-1..5 Global Constraints apply verbatim. Additionally:

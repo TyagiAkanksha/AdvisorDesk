@@ -7,14 +7,14 @@ set -euo pipefail
 # WHAT THIS SCRIPT DOES: builds each image locally with Docker, tags it TWICE
 # (`latest` and the current git short SHA, e.g. `a1b2c3d`), creates the ECR
 # repository the first time it's needed, and pushes both tags. That's all —
-# it never touches App Runner, DNS, or any runtime environment variable. See
-# infra/deploy/apprunner-api.md and infra/deploy/frontends.md for the next
-# steps (pointing an App Runner service at the pushed image).
+# it never touches the EC2 host, DNS, or any runtime environment variable.
+# See infra/deploy/ec2-single-host.md for the next step (pulling the pushed
+# images onto the deployed host).
 #
-# WHY TWO TAGS: `latest` is easy to reference in the AWS console while
-# clicking through setup; the git-sha tag is what you actually want a real
-# App Runner service pinned to, so a later `git checkout` + rebuild can never
-# silently change what a running service serves out from under you.
+# WHY TWO TAGS: `latest` is easy to reference while clicking through setup;
+# the git-sha tag is what you actually want the deployed compose file pinned
+# to, so a later `git checkout` + rebuild can never silently change what a
+# running service serves out from under you.
 #
 # Beginner notes:
 #   - This script BUILDS on the machine it runs on (your laptop, or a CI
@@ -159,9 +159,9 @@ build_tag_push "advisordesk/admin" "infra/Dockerfile.web" \
 # is load-bearing, not unused. API_URL backs apps/client/src/lib/publicApi.ts's server-only
 # fetches — `next build` itself calls that code during its "Generating static pages" step, so
 # API_URL needs a real value at BUILD time here too, same as NEXT_PUBLIC_API_URL. (The deployed
-# App Runner client service ALSO needs API_URL set as a plain runtime environment variable, for
+# client container ALSO needs API_URL set as a plain runtime environment variable, for
 # the same module's per-request calls after the container starts — that's a separate step, not
-# this script's job; see frontends.md.) Because NEXT_PUBLIC_API_URL is baked at build time same
+# this script's job; see frontends.md's wiring section + ec2-single-host.md.) Because NEXT_PUBLIC_API_URL is baked at build time same
 # as admin's, changing the API's public origin later requires rebuilding+repushing THIS image
 # too — updating only the client service's runtime API_URL is not enough; see frontends.md.
 build_tag_push "advisordesk/client" "infra/Dockerfile.web" \
@@ -176,5 +176,4 @@ echo "  ${ECR_REGISTRY}/advisordesk/api"
 echo "  ${ECR_REGISTRY}/advisordesk/admin"
 echo "  ${ECR_REGISTRY}/advisordesk/client"
 echo
-echo "Next: infra/deploy/apprunner-api.md (API service), then infra/deploy/frontends.md"
-echo "(admin + client services)."
+echo "Next: infra/deploy/ec2-single-host.md (pull + run all three images on the EC2 host)."

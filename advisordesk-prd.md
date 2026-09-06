@@ -364,7 +364,7 @@ All tools read and write non-deleted rows only (§4.1) — a `content_id` addres
   - each MCP tool: happy path + one failure path (including `report_content_gaps` against seeded `retrieval_found` rows)
   - a smoke test that boots the API and hits `/api/v1/stats`
 - **Local development:** `docker compose up` runs api + both frontends. An optional `db` service (image `pgvector/pgvector:pg16`) sits behind a compose profile: `docker compose --profile local-db up` for fully offline dev. `DATABASE_URL` points at either the local container or Supabase. README documents both paths; **Supabase remains the default and the deployed target.**
-- **Deployment:** AWS. Default: API container on App Runner (or ECS Fargate); frontends per §11.
+- **Deployment:** AWS. Default: API container on App Runner (or ECS Fargate); frontends per §11. *(Amended 2026-08-09, phase-6 execution: App Runner closed to new AWS customers 2026-04-30 — deployed as single-host EC2 + Caddy running all three containers; see `infra/deploy/ec2-single-host.md`.)*
 
 ## 9.1 Metrics to capture (for resume/interview)
 - Number of seeded documents and chunks; number of MCP tools (9: 8 core + `report_content_gaps`).

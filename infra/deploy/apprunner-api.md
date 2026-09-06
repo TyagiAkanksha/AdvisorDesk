@@ -1,5 +1,12 @@
 # API on AWS App Runner
 
+> **SUPERSEDED (2026-08-09) — never executed.** AWS closed App Runner to new customers on
+> 2026-04-30, which gates this project's account (created 2026-08-08) out of `create-service`.
+> The deployment that actually shipped is **single-host EC2 + Caddy** — see
+> **`ec2-single-host.md`**, the doc of record. This file is kept for its still-valid reasoning
+> (the Fargate/ALB alternative discussion, the forwarded-IP trust ladder) and as the record of
+> what task-02 originally planned.
+
 Deployment guide for the `advisordesk/api` image (phase-6 task-02). This is a walkthrough for
 the **owner to run interactively** in the AWS console (or the equivalent `aws apprunner` CLI
 calls) — nothing in this repo runs it for you. Push the image first:

@@ -8,6 +8,13 @@ spec: advisordesk-prd.md §9 (deployment, auth security, CORS), §10 Phase 6, §
 
 # task-02 — AWS deployment
 
+> **AMENDED at execution (2026-08-09):** App Runner references below are the plan as written,
+> not the deployment as shipped — AWS closed App Runner to new customers (2026-04-30), gating
+> this project's account out of `create-service`. Executed topology: **single-host EC2 +
+> Caddy** (owner decision, cheapest path over ECS Express Mode / Fargate+ALB). Same ECR images,
+> same Supabase DB, same env contract, same custom-domain + grey-cloud DNS rules, same VERIFY
+> checklist. See `infra/deploy/ec2-single-host.md` (doc of record) and the execution ledger.
+
 ## Goal
 
 The full stack runs on AWS: API image on App Runner (ECS Fargate as the documented alternative),

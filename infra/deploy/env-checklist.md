@@ -4,10 +4,12 @@ Every variable AdvisorDesk reads in production (PRD §9; `apps/api/app/config.py
 class is the API's single source of truth; `.env.example` is the local-dev mirror of the same
 roster), grouped by which deployed service needs it. **No secret VALUE appears in this file or
 any other committed file** — secrets are named here, with a description of where their real
-value comes from; you paste the actual value into the AWS console (or wherever each service's
-env vars are configured) during deployment, never into a file in this repo.
+value comes from; the real values live in **SSM Parameter Store under `/advisordesk/`**
+(written by the owner from their own terminal, read + decrypted by the EC2 instance role and
+rendered into the box-local `.env` by `fetch-secrets.sh` — see `ec2-single-host.md`), never in
+a file in this repo.
 
-## API (App Runner) — see `apprunner-api.md`
+## API — see `ec2-single-host.md`
 
 | Variable | Secret? | Production value / source |
 |---|---|---|
@@ -32,7 +34,7 @@ env vars are configured) during deployment, never into a file in this repo.
 | `RATE_LIMIT_PER_DAY` | N | `50` (`.env.example` default). |
 | `SESSION_CREATE_PER_DAY` | N | `20` (`.env.example` default). |
 | `MCP_HTTP_ENABLED` | N — **pinned** | `true` — owner decision 2026-08-08 supersedes the task-02 brief's original `false` pin: the MCP endpoint is exposed for Claude connectors at the deployed site, gated by bearer auth (task-04) behind the 401 checks in `VERIFY.md`. |
-| `FORWARDED_ALLOW_IPS` | N — deploy-time decision | **Start UNSET** — not an `app/config.py` setting; uvicorn itself reads this env var natively when `--forwarded-allow-ips` isn't on the command line (verified, uvicorn 0.51.0 `Config.__init__`), defaulting to trusting `127.0.0.1` only. Purpose: make the rate limiter (`apps/api/app/routes/ratelimit.py`) key on the real client IP from `X-Forwarded-For` instead of App Runner's proxy address. Value is decided by `apprunner-api.md` step 2's escalation ladder (unset → observed peer range → `*` only if `VERIFY.md`'s spoof-resistance check passes) — never blind-trust `*`: if the ingress appends to a client-supplied `X-Forwarded-For` chain, trusting everything hands the attacker their own choice of rate-limit bucket. |
+| `FORWARDED_ALLOW_IPS` | N — **`*` in this topology** | Not an `app/config.py` setting; uvicorn itself reads this env var natively when `--forwarded-allow-ips` isn't on the command line (verified, uvicorn 0.51.0 `Config.__init__`). Purpose: make the rate limiter (`apps/api/app/routes/ratelimit.py`) key on the real client IP from `X-Forwarded-For` instead of the reverse proxy's address. In the deployed single-host topology `*` is safe **because of two properties together** (see `ec2-single-host.md`): the Caddyfile *overwrites* `X-Forwarded-For` with `{remote_host}` (client-supplied chains are discarded, not appended to), and the api container is not host-published (only Caddy can reach it). Verified live by `VERIFY.md` check 2b (forged XFF stays 429). If either property ever changes, re-derive the value — `apprunner-api.md` step 2's escalation ladder explains the appending-ingress hazard that makes blind `*` unsafe elsewhere. |
 
 `GOOGLE_CLIENT_ID` note: `apps/api/app/config.py`'s `Settings` class marks `nvidia_api_key`,
 `database_url`, `google_client_secret`, and `session_secret` as `SecretStr` (so a stray
@@ -44,21 +46,21 @@ than something to hand out casually.
 `TEST_DATABASE_URL` is dev/test-only (`CONVENTIONS.md` §10) — do not set it on any deployed
 service.
 
-## `admin` (App Runner) — see `frontends.md`
+## `admin` container — wiring in `frontends.md`, runtime in `ec2-single-host.md`
 
 | Variable | Secret? | Production value / source |
 |---|---|---|
-| `NEXT_PUBLIC_API_URL` | N — **pinned**, **build-time only** | `https://api.advisordesk.tyagiakanksha.com` — baked into the image by `push_ecr.sh` (its `API_PUBLIC_URL` env var). Do **not** set this as a runtime App Runner env var — it has no effect once the image is built; see `frontends.md`'s wiring explanation. |
+| `NEXT_PUBLIC_API_URL` | N — **pinned**, **build-time only** | `https://api.advisordesk.tyagiakanksha.com` — baked into the image by `push_ecr.sh` (its `API_PUBLIC_URL` env var). Do **not** set this as a runtime env var on the deployed container — it has no effect once the image is built; see `frontends.md`'s wiring explanation. |
 
 No other variables — the admin container never receives backend secrets (mirrors
 `infra/docker-compose.yml`'s own "only `api` loads `env_file`" rule).
 
-## `client` (App Runner) — see `frontends.md`
+## `client` container — wiring in `frontends.md`, runtime in `ec2-single-host.md`
 
 | Variable | Secret? | Production value / source |
 |---|---|---|
-| `API_URL` | N — **pinned**, **both build-time AND runtime** | `https://api.advisordesk.tyagiakanksha.com` — baked in by `push_ecr.sh` at build time AND must be set again as a plain runtime environment variable on the deployed service (see `frontends.md`'s wiring explanation for why one alone isn't enough). |
-| `NEXT_PUBLIC_API_URL` | N — **pinned**, **build-time only** | `https://api.advisordesk.tyagiakanksha.com` — baked into the image by `push_ecr.sh` (its `API_PUBLIC_URL` env var), same mechanism as `admin`'s row above. Load-bearing, not unused: `apps/client/src/components/chat/useChatStream.ts` reads it at build time for the browser-side chat POST (`/api/v1/public/chat`) — the client's entire chat feature depends on it. Do **not** set this as a runtime App Runner env var — it has no effect once the image is built; changing the API origin requires a client image rebuild, same as `API_URL`'s build-arg half above. |
+| `API_URL` | N — **pinned**, **both build-time AND runtime** | `https://api.advisordesk.tyagiakanksha.com` — baked in by `push_ecr.sh` at build time AND must be set again as a plain runtime environment variable on the deployed container (the production compose file on the EC2 host sets it — see `frontends.md`'s wiring explanation for why one alone isn't enough). |
+| `NEXT_PUBLIC_API_URL` | N — **pinned**, **build-time only** | `https://api.advisordesk.tyagiakanksha.com` — baked into the image by `push_ecr.sh` (its `API_PUBLIC_URL` env var), same mechanism as `admin`'s row above. Load-bearing, not unused: `apps/client/src/components/chat/useChatStream.ts` reads it at build time for the browser-side chat POST (`/api/v1/public/chat`) — the client's entire chat feature depends on it. Do **not** set this as a runtime env var on the deployed container — it has no effect once the image is built; changing the API origin requires a client image rebuild, same as `API_URL`'s build-arg half above. |
 
 No other variables — same "no backend secrets in a frontend container" rule as `admin`.
 
@@ -69,8 +71,8 @@ to `not settings.is_dev`, and `Settings.is_dev` is `True` for anything other tha
 `ENVIRONMENT=production` (case-insensitive). Setting `ENVIRONMENT=production` above is what
 turns `Secure` **on** — without it, the cookie would be sent over plain HTTP too, which is never
 correct once the site is on real HTTPS domains. Every deployed hostname here (`api.`, `admin.`,
-the client) is HTTPS-only via App Runner's managed certificate, so this is a hard requirement,
-not a tuning knob.
+the client) is HTTPS-only via Caddy's Let's Encrypt certificates (`ec2-single-host.md`), so
+this is a hard requirement, not a tuning knob.
 
 ## MCP bearer-token note
 

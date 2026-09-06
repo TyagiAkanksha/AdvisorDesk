@@ -135,10 +135,12 @@ AWS deployment scripts and step-by-step console walkthroughs live in `infra/depl
   deployed Supabase database. **Run this before the API service (below) is expected to serve
   real traffic** — the API's health check has no DB dependency, so an un-migrated database fails
   silently until real requests arrive.
-- `infra/deploy/apprunner-api.md` — API on AWS App Runner (env vars, health check, custom
-  domain), plus the ECS Fargate alternative.
-- `infra/deploy/frontends.md` — both frontends on App Runner, including the build-time-vs-runtime
-  distinction between `NEXT_PUBLIC_API_URL` (admin) and `API_URL` (client).
+- `infra/deploy/ec2-single-host.md` — **the deployed topology (doc of record)**: all three
+  containers on one EC2 instance behind Caddy (auto-HTTPS), secrets in SSM Parameter Store,
+  Cloudflare grey-cloud DNS. (The original AWS App Runner walkthroughs, `apprunner-api.md` and
+  `frontends.md`, are superseded — App Runner closed to new AWS customers in April 2026 —
+  but `frontends.md`'s build-time-vs-runtime wiring section for `NEXT_PUBLIC_API_URL` (admin)
+  and `API_URL` (client) is still authoritative.)
 - `infra/deploy/env-checklist.md` — every production env var, which service needs it, whether
   it's a secret, and where its value comes from (no secret values are ever committed).
 - `infra/deploy/VERIFY.md` — the deployed verification checklist (rate limiting, SSE, CORS, MCP

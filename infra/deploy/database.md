@@ -7,8 +7,8 @@ checkout — nothing in this repo runs it for you, and nothing here is a contain
 the local-dev path in the root `README.md`, which runs the same migration through `docker
 compose run`).
 
-**Do this BEFORE creating the API App Runner service (`apprunner-api.md`), and before either
-frontend (`frontends.md`).** `infra/Dockerfile.api`'s own top-of-file comment is explicit that
+**Do this BEFORE bringing the API up on the EC2 host (`ec2-single-host.md`), and before either
+frontend.** `infra/Dockerfile.api`'s own top-of-file comment is explicit that
 migrations are deliberately **not** run at container startup — Alembic is the only DDL path
 (`CONVENTIONS.md` §6). The API's `/api/v1/healthz` check has no database dependency at all
 (`apps/api/app/routes/health_routes.py`), so a service will come up "healthy" against an
@@ -16,7 +16,8 @@ un-migrated, unseeded database and then every real content/chat/auth request fai
 arrives. Run the two commands below first, so the API has real tables and real content the
 moment it starts serving:
 
-**Ordering: Database (this doc) → API (`apprunner-api.md`) → frontends (`frontends.md`).**
+**Ordering: Database (this doc) → the full stack on the EC2 host (`ec2-single-host.md` —
+API + both frontends come up together via compose).**
 
 ## What you need
 
@@ -85,4 +86,4 @@ seed_all: created=0 published=0 skipped=21 chunk_count=0
 ## Next
 
 Once both commands above have run successfully against the Supabase database, continue to
-`apprunner-api.md` to stand up the API service against that same database.
+`ec2-single-host.md` to stand up the stack against that same database.

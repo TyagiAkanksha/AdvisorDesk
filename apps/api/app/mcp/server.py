@@ -34,8 +34,9 @@ indefinitely instead of returning (M2).
 Phase-6-remediation task 6R-07 (t04-M7): `_AdminGatedMcpApp.__call__` now also rejects any
 non-`"http"` scope (a `"websocket"`-type scope, reachable only via the `Mount`'s sub-paths) with a
 `WebSocketException` BEFORE `Request(scope)` is ever constructed — see `__call__`'s own docstring
-for why `WebSocketException`, not `StarletteHTTPException`, is the exception type that matters
-here.
+for why `WebSocketException` is still preferred over `StarletteHTTPException` here (portability,
+not — as an earlier, incorrect version of that docstring claimed — to avoid a hang; fix round 1
+review disproved the hang claim for the installed starlette version).
 """
 
 from __future__ import annotations
@@ -336,16 +337,25 @@ class _AdminGatedMcpApp:
         crash, not a clean rejection. This guard runs FIRST, before `Request(scope)` is ever
         constructed, mirroring the method-guard's own placement/style (an early `if`, raising
         before any further work). It raises `WebSocketException`, not `StarletteHTTPException`,
-        deliberately: `starlette.middleware.exceptions.ExceptionMiddleware` is the one place in a
-        real deployment that renders a raised exception for a `"websocket"`-type scope, and its
-        `"websocket"` branch only ever *awaits* the matched handler — unlike the `"http"` branch,
-        it never sends the handler's return value on the ASGI `send` channel. `WebSocketException`
-        is the one exception type that middleware handles by calling `websocket.close(...)`
-        directly (`ExceptionMiddleware.websocket_exception`) rather than building an unsent
-        `Response`; a `StarletteHTTPException` here would be "handled" into a `JSONResponse` that
-        is silently discarded, leaving a real `ws://` client hanging (see
-        `tests/test_mcp_ws_guard.py`'s module docstring for the full trace of that separate,
-        out-of-scope `app.routes.errors` gap).
+        by choice, though on the installed `starlette==0.38.6` NEITHER hangs — both close a
+        `"websocket"`-scope connection cleanly (verified empirically, 6R-07 fix round 1 review,
+        against a full `create_app()` + `TestClient.websocket_connect` probe on the real mounted
+        app; an earlier version of this comment incorrectly claimed the `StarletteHTTPException`
+        alternative would hang, which the review disproved). `WebSocketException` is handled by
+        `ExceptionMiddleware`'s own `websocket_exception` method, which calls a real
+        `websocket.close(code=exc.code, reason=exc.reason)` directly
+        (`starlette.middleware.exceptions.ExceptionMiddleware.websocket_exception`).
+        `StarletteHTTPException`, mapped by `register_error_handlers` to `_http_exception_handler`
+        (a plain function returning a `JSONResponse`), instead goes through
+        `wrap_app_handling_exceptions`'s generic `await response(scope, receive, sender)` call —
+        and `starlette.responses.Response.__call__` auto-detects a `"websocket"`-type scope and
+        wraps `send` into the ASGI websocket-denial-response extension
+        (`websocket.http.response.start`/`.body`) rather than the plain `http.response.*` pair, so
+        the `JSONResponse` IS sent, just via that extension's message shape, not discarded.
+        `WebSocketException` is still the better choice here, on portability grounds: it emits the
+        plain `websocket.close` ASGI message every ASGI server supports, with no dependency on an
+        ASGI server implementing the newer websocket-denial-response extension the
+        `StarletteHTTPException` path relies on.
 
         Phase-6 task-04 fix round 1, finding M2: this ASGI app is reachable two ways — the
         bare-path `Route` (`mount_mcp_http`, method-restricted to POST at the routing layer, so a

@@ -18,10 +18,13 @@ class Chunk(Base, TimestampMixin):
 
     Hard-delete only (PRD §4.1): chunks are derived data whose physical
     removal is what guarantees retrieval never sees non-published or
-    deleted content — no `is_deleted`/`updated_at`. `embedding` is
-    `nvidia/nv-embedqa-e5-v5`, 1024 dimensions (PRD §7.2, v1.5; migration
-    0002 resized this column from the earlier `text-embedding-3-small`
-    1536-dim shape).
+    deleted content — no `is_deleted`/`updated_at`. `embedding` is a
+    1024-dimension vector (PRD §7.2; migration 0002 fixed this column
+    width) — provider-neutral by design: the embedding model is currently
+    OpenAI's `text-embedding-3-small` (was NVIDIA's `nvidia/nv-embedqa-e5-v5`
+    pre-2026-09-06; `app/config.py`'s `llm_provider` setting selects which),
+    both requested/resized to the same 1024-dim shape so this column and its
+    HNSW index don't change across the swap.
     """
 
     __tablename__ = "chunks"

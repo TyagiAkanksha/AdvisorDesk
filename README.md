@@ -191,8 +191,9 @@ data: {"session_id": "d88ddc81-290a-42e0-b75e-945bbd6341e7", "message_id": "cfbd
 Assembled answer: "No published guidance covers this; please ask the advisory team for
 assistance." — the refusal PRD §7.5 requires ("does not answer from general knowledge") lives in
 the answer text itself. Note `citations` is not always empty here: retrieval still surfaces
-whatever chunk cleared `SIMILARITY_THRESHOLD` (default `0.35`), even a loosely-related one that
-doesn't actually answer the question — verified consistently across all four of
+whatever chunk cleared `SIMILARITY_THRESHOLD` (default `0.5` — model-dependent; retuned from the
+earlier NVIDIA-embedding-era `0.35` when the app switched to OpenAI's `text-embedding-3-small`),
+even a loosely-related one that doesn't actually answer the question — verified consistently across all four of
 `eval_questions.yaml`'s unanswerable entries while authoring this walkthrough. The refusal
 wording is the reliable signal that the question wasn't answered, not an empty citations array.
 
@@ -347,7 +348,7 @@ AWS deployment scripts and step-by-step console walkthroughs live in `infra/depl
   such trick since it's reachable over the public internet from a normally-bridged container.
 - **Frontend containers never see backend secrets.** `admin`/`client` in `infra/docker-compose.yml`
   deliberately omit `env_file: ../.env` — only `api` has it. `.env` carries backend secrets
-  (`NVIDIA_API_KEY`, `SESSION_SECRET`, `GOOGLE_CLIENT_SECRET`, `DATABASE_URL`, ...); none of that
+  (`OPENAI_API_KEY`, `SESSION_SECRET`, `GOOGLE_CLIENT_SECRET`, `DATABASE_URL`, ...); none of that
   belongs inside a browser-served Next.js image. Each frontend service gets only the API-base
   value(s) it actually needs, passed explicitly rather than inherited wholesale: `admin` takes
   `NEXT_PUBLIC_API_URL` as a build `arg` (inlined into its browser bundle); `client` takes both
@@ -361,9 +362,10 @@ AWS deployment scripts and step-by-step console walkthroughs live in `infra/depl
 - **Chunking tokenizer choice (`app/rag/chunking.py`, phase-3 task-01).** PRD §7.1 sizes chunks in
   "tokens" without naming a tokenizer. `count_tokens`/`chunk_markdown` use `tiktoken`'s
   `cl100k_base` encoding — a stable, deterministic, offline-after-first-download proxy for chunk
-  sizing. This is **not** the embedding model's own tokenizer: `nvidia/nv-embedqa-e5-v5` (PRD §7.1
-  v1.5) is an NVIDIA NIM model and does not publish a `tiktoken` encoding, so `cl100k_base` is used
-  purely to make the ~400-token target/50-token-overlap budget reproducible, not to mirror the
+  sizing. This is **not** the embedding model's own tokenizer: the embedding model is OpenAI's
+  `text-embedding-3-small` (PRD §7.1 v1.6; was NVIDIA's `nvidia/nv-embedqa-e5-v5` before the
+  2026-09-06 provider switch) and `cl100k_base` is a separate, standalone tokenizer used purely
+  to make the ~400-token target/50-token-overlap budget reproducible, not to mirror either
   embedding model's exact token boundaries.
 - **Runtime Python version.** `Dockerfile.api`'s runtime stage runs on `python:3.12-slim-bookworm`.
   `apps/api/pyproject.toml` sets `requires-python = ">=3.11"` as a floor, not a pin; `3.12` is what
@@ -393,7 +395,7 @@ AWS deployment scripts and step-by-step console walkthroughs live in `infra/depl
   advisory articles (`seed/sample_content/`, spread across the six PRD §8 tags, every tag used ≥2
   times): 17 `status: published`, 4 `status: draft` (left for the phase-5 agent demo). Real run
   against the local `advisordesk-test-db` container (`127.0.0.1:5433`, migrated to head,
-  real NVIDIA `nv-embedqa-e5-v5` embedding calls, no fakes): first run —
+  real OpenAI `text-embedding-3-small` embedding calls, no fakes): first run —
   `SeedReport(created=21, published=17, skipped=0, chunk_count=100)`; an immediate re-run —
   `SeedReport(created=0, published=0, skipped=21, chunk_count=0)` — confirms idempotency against a
   real database, not just the fake-embedder test suite. (The database's raw `content`/`chunks`

@@ -48,10 +48,17 @@ Cloudflare DNS (grey-cloud A records → Elastic IP)
 ## Secrets: SSM Parameter Store, never in the repo or chat
 
 The six secret-bearing/owner-specific values live as SSM parameters under `/advisordesk/`:
-`DATABASE_URL`, `NVIDIA_API_KEY`, `SESSION_SECRET`, `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`
-(all SecureString) and `ADMIN_EMAILS` (String). The owner writes them from their own terminal;
-the instance role reads + decrypts them. On the box, `/opt/advisordesk/fetch-secrets.sh` renders
-them into `/opt/advisordesk/.env` (it prints only a count, never a value). All the **non-secret
+`DATABASE_URL`, `OPENAI_API_KEY`, `SESSION_SECRET`, `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`
+(all SecureString) and `ADMIN_EMAILS` (String). **Note (2026-09-06): the app switched from NVIDIA
+to OpenAI** (`text-embedding-3-small` embeddings + `gpt-4o-mini` chat, `SIMILARITY_THRESHOLD`
+retuned 0.35→0.5 — see `env-checklist.md`) — `OPENAI_API_KEY` is the credential
+`fetch-secrets.sh` fetches and renders into `.env` today; `NVIDIA_API_KEY` is no longer part of
+the live parameter set (it remains available as a legacy/optional SSM parameter only if
+`LLM_PROVIDER` is ever set back to `nvidia`). A disaster-recovery rebuild of this instance's SSM
+parameters should create `OPENAI_API_KEY`, not `NVIDIA_API_KEY`. The owner writes them from
+their own terminal; the instance role reads + decrypts them. On the box,
+`/opt/advisordesk/fetch-secrets.sh` renders them into `/opt/advisordesk/.env` (it prints only a
+count, never a value). All the **non-secret
 pinned values** (`ENVIRONMENT=production`, `CORS_ORIGINS`, `GOOGLE_REDIRECT_URI`,
 `ADMIN_APP_URL`, `MCP_HTTP_ENABLED=true`, model/threshold/rate-limit defaults) are exactly
 `env-checklist.md`'s roster — that file remains the authority on every variable.

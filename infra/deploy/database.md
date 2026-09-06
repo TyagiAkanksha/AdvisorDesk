@@ -26,9 +26,9 @@ API + both frontends come up together via compose).**
 - The Supabase pooler connection string — same `DATABASE_URL` value and source as
   `env-checklist.md`'s API row: Supabase dashboard → your project
   (`qfsknrtxibdtjyxxeykv`) → Connect → "Connection string".
-- Your NVIDIA NIM API key — same `NVIDIA_API_KEY` value and source as `env-checklist.md`'s API
-  row: build.nvidia.com → API Keys. The seed step makes real embedding calls, so this has to be
-  a real, working key.
+- Your OpenAI API key — same `OPENAI_API_KEY` value and source as `env-checklist.md`'s API
+  row: platform.openai.com → API keys. The seed step makes real embedding calls (via OpenAI's
+  `text-embedding-3-small`), so this has to be a real, working key.
 
 **Never put either value in a file in this repo — including this one.** Export them inline on
 the command line, in your own shell, for these two one-shot commands only, exactly like every
@@ -55,7 +55,7 @@ re-running `upgrade head` against an already-migrated database is a safe no-op.
 
 ```sh
 cd apps/api && DATABASE_URL=<same pooler string as above> \
-  NVIDIA_API_KEY=<paste your NVIDIA NIM API key here, in your shell only> \
+  OPENAI_API_KEY=<paste your OpenAI API key here, in your shell only> \
   uv run python -m app.seed
 ```
 
@@ -65,8 +65,8 @@ importable, and the same reasoning applies to `scripts/mint_mcp_token.py` later
 
 This runs the real content lifecycle for every file in `seed/sample_content/*.md` — draft
 creation, then a real publish (chunk + embed + insert) for everything marked
-`status: published` — through the actual NVIDIA NIM embedding endpoint, not a fake. Expect it to
-take a little while and to count against your NVIDIA API usage.
+`status: published` — through the actual OpenAI `text-embedding-3-small` embedding endpoint, not
+a fake. Expect it to take a little while and to count against your OpenAI API usage.
 
 Expected output on a first run against a freshly migrated, empty database (the real numbers this
 repo's own local run recorded — see the root `README.md`'s Implementation notes):

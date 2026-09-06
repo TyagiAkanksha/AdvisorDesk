@@ -601,7 +601,7 @@ def test_caplog_bearer_resolved_logs_info_with_token_id_only(
     via the real CLI path so the id under test is a genuine persisted row id."""
     mint_mcp_token = _import_mint_script()
     email = "bearer-resolved-audit@example.com"
-    client, _ = _build_client(tmp_engine)
+    client, _ = _build_client(tmp_engine, admin_emails=email)
 
     session_factory = make_session_factory(tmp_engine)
     session = session_factory()

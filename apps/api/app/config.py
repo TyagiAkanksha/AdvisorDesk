@@ -127,6 +127,15 @@ class Settings(BaseSettings):
     session_create_per_day: int = 20
     mcp_http_enabled: bool = False
 
+    # Not part of the PRD §9 env roster: default lifetime for a freshly-minted MCP bearer token
+    # (phase-6 remediation task-09, WR-02 residual, migration 0006). `scripts/mint_mcp_token.py
+    # ::mint` stamps `expires_at = now() + mcp_token_ttl_days` on every fresh mint; a pre-existing
+    # token (minted before migration 0006 ever ran) keeps its `NULL` expires_at — "no expiry" —
+    # regardless of this value. 90 days is a sane default for a long-lived connector credential
+    # (PRD §3) without being effectively permanent; `MCP_TOKEN_TTL_DAYS` overrides it per
+    # deployment.
+    mcp_token_ttl_days: int = 90
+
     @property
     def cors_origin_list(self) -> list[str]:
         """The `cors_origins` env value split into an allowlist (PRD §9 CORS).

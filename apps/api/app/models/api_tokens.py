@@ -14,13 +14,21 @@ to `users`/`content`/`tags` specifically, and revocation here is an honest hard 
 Phase-6 remediation task-03 (WR-02, migration 0005): `session_epoch` is a SECOND revocation path,
 independent of the hard-delete one above — a bulk one, keyed off the owning `User` row rather than
 this row's own id.
+
+Phase-6 remediation task-09 (WR-02 residual, migration 0006): `expires_at` is a THIRD, purely
+per-row, self-expiring path — `NULL` means "no expiry" (permanent semantics; every row that
+predates this column stays `NULL` forever, never force-expired). `scripts/mint_mcp_token.py::mint`
+stamps every FRESH token with `now() + Settings.mcp_token_ttl_days`;
+`app.auth.tokens.resolve_bearer_token` rejects a token whose `expires_at` is not `NULL` and is in
+the past.
 """
 
 from __future__ import annotations
 
 import uuid
+from datetime import datetime
 
-from sqlalchemy import ForeignKey, Integer, Text
+from sqlalchemy import DateTime, ForeignKey, Integer, Text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -59,3 +67,10 @@ class ApiToken(Base, TimestampMixin):
     # path (`scripts/mint_mcp_token.py::mint`) always stamps the value explicitly and never relies
     # on this default.
     session_epoch: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    # Per-token self-expiry (PRD §9; phase-6 remediation task-09, WR-02 residual, migration 0006):
+    # `NULL` = "no expiry", permanently — every row that predates this column, and any future row
+    # a caller deliberately constructs without this kwarg, keeps working forever, exactly as
+    # before. `scripts/mint_mcp_token.py::mint` always stamps a real future value on a fresh mint;
+    # `app.auth.tokens.resolve_bearer_token` rejects a token whose `expires_at` is not `NULL` and
+    # has passed.
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

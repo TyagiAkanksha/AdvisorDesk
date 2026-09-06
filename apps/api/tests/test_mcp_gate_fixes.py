@@ -70,22 +70,27 @@ _INITIALIZE_BODY = {
 }
 
 
-def _build_settings() -> Settings:
-    """Build a `Settings` explicitly for tests — never read the real `.env` (CONVENTIONS §10)."""
+def _build_settings(*, admin_emails: str = "admin@example.com") -> Settings:
+    """Build a `Settings` explicitly for tests — never read the real `.env` (CONVENTIONS §10).
+
+    Phase-6 remediation task-09 (WR-02 residual, data-only fixture fix): `admin_emails`
+    overridable (default unchanged) — see `test_mcp_bearer_auth.py::_build_settings`'s identical
+    rationale.
+    """
     return Settings(
         session_secret="test-secret",
         google_client_id="test-google-client-id",
         google_client_secret="test-google-client-secret",
-        admin_emails="admin@example.com",
+        admin_emails=admin_emails,
         mcp_http_enabled=True,
     )
 
 
-def _build_app(tmp_engine: Engine) -> FastAPI:
+def _build_app(tmp_engine: Engine, *, admin_emails: str = "admin@example.com") -> FastAPI:
     """Build a real, DB-backed app with MCP HTTP enabled — mirrors `test_mcp_bearer_auth.py`."""
     return create_app(
         session_factory=make_session_factory(tmp_engine),
-        settings=_build_settings(),
+        settings=_build_settings(admin_emails=admin_emails),
         oauth_client=FakeGoogleOAuthClient(),
     )
 
@@ -139,7 +144,7 @@ def test_case_insensitive_bearer_scheme_with_valid_token_still_authenticates(
     from app.auth.tokens import mint_token
     from app.models.api_tokens import ApiToken
 
-    app = _build_app(tmp_engine)
+    app = _build_app(tmp_engine, admin_emails="admin@example.com,connector@example.com")
     session = make_session_factory(tmp_engine)()
     try:
         owner = User(email="connector@example.com", name="Claude Connector")

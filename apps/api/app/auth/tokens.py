@@ -15,11 +15,13 @@ from __future__ import annotations
 import hashlib
 import logging
 import secrets
+from datetime import UTC, datetime
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.auth.deps import AdminPrincipal
+from app.config import Settings
 from app.models.api_tokens import ApiToken
 from app.services.users import get_active_user
 
@@ -47,7 +49,9 @@ def mint_token() -> tuple[str, str]:
     return raw_token, token_hash
 
 
-def resolve_bearer_token(session: Session, raw_token: str) -> AdminPrincipal | None:
+def resolve_bearer_token(
+    session: Session, raw_token: str, settings: Settings | None = None
+) -> AdminPrincipal | None:
     """Resolve a raw bearer token to the `AdminPrincipal` of the `User` who owns it, or `None`.
 
     Hashes `raw_token` the same way `mint_token()` does, looks up the `ApiToken` row by
@@ -65,25 +69,49 @@ def resolve_bearer_token(session: Session, raw_token: str) -> AdminPrincipal | N
     AuthRequiredError(...)`) produces the byte-identical 401 envelope for "revoked" as it already
     does for "unknown" — no new wire surface, no oracle distinguishing the two from outside.
 
-    Phase-6 remediation task-03 (WR-05, audit logging): logs exactly one line per call — INFO with
-    the token row id ONLY on success, WARNING with a reason keyword (`unknown` / `revoked` /
-    `inactive-user`) on rejection. Never logs `raw_token`, `token_hash`, or the owner's email.
+    Phase-6 remediation task-09 (WR-02 residual, migration 0006): also rejects a token whose
+    `expires_at` is not `NULL` and is in the past (reason `expired`) — a `NULL` `expires_at`
+    (every pre-migration-0006 row, forever) still authenticates normally, no matter how old.
 
-    Never raises on an unknown/garbage/malformed/revoked token, and does the same amount of work
-    (hash + one indexed lookup, short-circuiting only once a real row is or isn't found) whether
-    `raw_token` matches a row or not — there is no separate "is this even shaped like a token"
-    pre-check to skip.
+    Phase-6 remediation task-09 (WR-02 residual): also re-checks the resolved user's normalized
+    email against the CURRENT `ADMIN_EMAILS` allowlist (reason `not-allowlisted`) — the SAME
+    `settings.admin_email_set` property `app.routes.auth_routes.auth_callback` consults at login,
+    recomputed from `settings.admin_emails` on every access rather than cached, so an operator who
+    edits `ADMIN_EMAILS` and the running process picks it up kills a since-offboarded admin's
+    outstanding bearer tokens on their very next call, not just at next login. `settings` is
+    OPTIONAL and defaults to `None`, which SKIPS this check entirely — needed so this function's
+    pre-existing 2-arg call shape (`session, raw_token`), which `tests/test_bearer_revocation.py`
+    already pins with an owner email that belongs to no allowlist at all, keeps resolving exactly
+    as before. The one real caller with a live `Settings` to offer,
+    `app.mcp.server._resolve_bearer_principal`, always passes `request.app.state.settings` — the
+    LIVE instance, not one captured at process/request-factory-build time — so this check is
+    accurate the instant `ADMIN_EMAILS` changes underneath a running process.
+
+    Phase-6 remediation task-03/task-09 (WR-05, audit logging): logs exactly one line per call —
+    INFO with the token row id ONLY on success, WARNING with a reason keyword (`unknown` /
+    `revoked` / `inactive-user` / `expired` / `not-allowlisted`) on rejection. Never logs
+    `raw_token`, `token_hash`, or the owner's email.
+
+    Never raises on an unknown/garbage/malformed/revoked/expired/not-allowlisted token, and does
+    the same amount of work (hash + one indexed lookup, short-circuiting only once a real row is
+    or isn't found) whether `raw_token` matches a row or not — there is no separate "is this even
+    shaped like a token" pre-check to skip.
 
     Args:
         session: an open `Session` the caller owns (opened/closed by the caller — this function
             never commits, rolls back, or closes it).
         raw_token: the bearer value as sent on the wire (no `"Bearer "` scheme prefix — the
             caller, `app.mcp.server`, strips that before calling this).
+        settings: the live `Settings` instance to re-check the resolved user's email against
+            (`settings.admin_email_set`), or `None` (the default) to skip the allowlist re-check
+            entirely — see the allowlist paragraph above for why this is optional.
 
     Returns:
         The owning user's `AdminPrincipal`, or `None` if `raw_token` doesn't match any
-        `ApiToken.token_hash`, matches one whose owning `User` is missing or soft-deleted, or
-        matches one whose `session_epoch` is stale relative to the owner's current one.
+        `ApiToken.token_hash`, matches one whose owning `User` is missing or soft-deleted, matches
+        one whose `session_epoch` is stale relative to the owner's current one, matches one whose
+        `expires_at` has passed, or (when `settings` is given) matches one whose owner's email is
+        no longer in `settings.admin_email_set`.
     """
     token_hash = hashlib.sha256(raw_token.encode()).hexdigest()
     token = session.execute(
@@ -100,6 +128,14 @@ def resolve_bearer_token(session: Session, raw_token: str) -> AdminPrincipal | N
 
     if token.session_epoch != user.session_epoch:
         logger.warning("Bearer token rejected: token_id=%s reason=revoked", token.id)
+        return None
+
+    if token.expires_at is not None and token.expires_at < datetime.now(UTC):
+        logger.warning("Bearer token rejected: token_id=%s reason=expired", token.id)
+        return None
+
+    if settings is not None and user.email.strip().lower() not in settings.admin_email_set:
+        logger.warning("Bearer token rejected: token_id=%s reason=not-allowlisted", token.id)
         return None
 
     logger.info("Bearer token resolved: token_id=%s", token.id)

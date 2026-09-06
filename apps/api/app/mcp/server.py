@@ -37,6 +37,11 @@ non-`"http"` scope (a `"websocket"`-type scope, reachable only via the `Mount`'s
 for why `WebSocketException` is still preferred over `StarletteHTTPException` here (portability,
 not — as an earlier, incorrect version of that docstring claimed — to avoid a hang; fix round 1
 review disproved the hang claim for the installed starlette version).
+
+Phase-6-remediation task 6R-09 (WR-02 residual): `_resolve_bearer_principal` now also threads
+`request.app.state.settings` (the LIVE `Settings` instance, read fresh per request) into
+`resolve_bearer_token`, so a bearer token's owner is re-checked against the CURRENT `ADMIN_EMAILS`
+allowlist on every call, not just at mint time — see that function's own docstring.
 """
 
 from __future__ import annotations
@@ -62,6 +67,7 @@ from starlette.types import Receive, Scope, Send
 
 from app.auth.deps import AdminPrincipal, require_admin
 from app.auth.tokens import resolve_bearer_token
+from app.config import Settings
 from app.mcp.runtime import call_tool, list_tool_schemas
 from app.services.errors import AppError, AuthRequiredError
 from app.services.lifecycle import ChunkPipeline
@@ -267,17 +273,25 @@ def _resolve_bearer_principal(request: Request, raw_token: str) -> AdminPrincipa
     the cookie path — this is that "resolve or raise" seam; the caller never re-tries
     `require_admin` after this raises.
 
+    Phase-6 remediation task-09 (WR-02 residual): also passes `request.app.state.settings` —
+    the LIVE `Settings` instance `create_app` stashed there, not a value captured earlier — into
+    `resolve_bearer_token` so its allowlist re-check always sees the CURRENT `ADMIN_EMAILS`, even
+    if an operator edits it (or a test mutates `app.state.settings` directly) after the app was
+    built.
+
     Args:
-        request: the incoming request; reads `app.state.session_factory` directly (see
-            `app.auth.deps.require_admin`'s identical read for why this layer doesn't go through
-            `app.routes.deps.get_session`).
+        request: the incoming request; reads `app.state.session_factory`/`app.state.settings`
+            directly (see `app.auth.deps.require_admin`'s identical read for why this layer
+            doesn't go through `app.routes.deps.get_session`/`get_settings`).
         raw_token: the bearer value, already stripped of its `"Bearer "` scheme prefix by
             `_extract_bearer_token`.
 
     Raises:
-        AuthRequiredError: `raw_token` doesn't resolve to an active user (unknown, garbage, a
-            soft-deleted account's token, or — phase-6 remediation task-03, WR-02 — one revoked
-            by a since-run `/auth/logout` epoch bump).
+        AuthRequiredError: `raw_token` doesn't resolve to an active, allowlisted user (unknown,
+            garbage, a soft-deleted account's token, one revoked by a since-run `/auth/logout`
+            epoch bump — phase-6 remediation task-03, WR-02 — one whose `expires_at` has passed,
+            or one whose owner's email is no longer in `ADMIN_EMAILS` — phase-6 remediation
+            task-09, WR-02 residual).
         RuntimeError: the app was built without a `session_factory` (a DB-less `create_app()`) —
             mirrors `require_admin`'s own guard.
     """
@@ -288,10 +302,11 @@ def _resolve_bearer_principal(request: Request, raw_token: str) -> AdminPrincipa
             "configured — this app was built by create_app() without a session_factory "
             "(DB-less mode)."
         )
+    settings = cast(Settings, request.app.state.settings)
 
     session = session_factory()
     try:
-        principal = resolve_bearer_token(session, raw_token)
+        principal = resolve_bearer_token(session, raw_token, settings)
     finally:
         session.close()
 

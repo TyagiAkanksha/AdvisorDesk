@@ -96,27 +96,33 @@ _EXPECTED_TOOL_NAMES = {
 _SCRIPTS_DIR = Path(__file__).resolve().parent.parent / "scripts"
 
 
-def _build_settings() -> Settings:
+def _build_settings(*, admin_emails: str = "admin@example.com") -> Settings:
     """Build a `Settings` explicitly for tests — never read the real `.env` (CONVENTIONS §10).
 
     Always `mcp_http_enabled=True`: unlike `test_mcp_exposure.py`, this file has no
     "disabled" state to pin.
+
+    Phase-6 remediation task-09 (WR-02 residual, data-only fixture fix): `admin_emails` is now
+    overridable (default unchanged, `"admin@example.com"`) so a bearer-only test can allowlist its
+    own token owner — `resolve_bearer_token` now re-checks the resolved user's email against the
+    CURRENT `ADMIN_EMAILS` on every resolve, so a token minted for a user this file's fixture never
+    allowlisted no longer authenticates purely by accident of that mismatch.
     """
     return Settings(
         session_secret="test-secret",
         google_client_id="test-google-client-id",
         google_client_secret="test-google-client-secret",
-        admin_emails="admin@example.com",
+        admin_emails=admin_emails,
         mcp_http_enabled=True,
     )
 
 
-def _build_app(tmp_engine: Engine) -> FastAPI:
+def _build_app(tmp_engine: Engine, *, admin_emails: str = "admin@example.com") -> FastAPI:
     """Build a real, DB-backed app with MCP HTTP enabled — the shape every DB-touching test here
     shares."""
     return create_app(
         session_factory=make_session_factory(tmp_engine),
-        settings=_build_settings(),
+        settings=_build_settings(admin_emails=admin_emails),
         oauth_client=FakeGoogleOAuthClient(),
     )
 
@@ -202,7 +208,7 @@ def test_bearer_token_initialize_succeeds_and_tools_list_returns_eight_tools(
     from app.auth.tokens import mint_token
     from app.models.api_tokens import ApiToken
 
-    app = _build_app(tmp_engine)
+    app = _build_app(tmp_engine, admin_emails="connector@example.com")
     session = make_session_factory(tmp_engine)()
     try:
         owner = User(email="connector@example.com", name="Claude Connector")
@@ -237,7 +243,7 @@ def test_write_tool_via_bearer_stamps_token_owner_as_actor(tmp_engine: Engine) -
     from app.auth.tokens import mint_token
     from app.models.api_tokens import ApiToken
 
-    app = _build_app(tmp_engine)
+    app = _build_app(tmp_engine, admin_emails="connector@example.com")
     session_factory = make_session_factory(tmp_engine)
     session = session_factory()
     try:
@@ -428,7 +434,7 @@ def test_script_revoke_deletes_row_and_stops_authenticating(tmp_engine: Engine) 
     mint_mcp_token = _import_mint_script()
     from app.models.api_tokens import ApiToken
 
-    app = _build_app(tmp_engine)
+    app = _build_app(tmp_engine, admin_emails="connector@example.com")
     session_factory = make_session_factory(tmp_engine)
     session = session_factory()
     try:

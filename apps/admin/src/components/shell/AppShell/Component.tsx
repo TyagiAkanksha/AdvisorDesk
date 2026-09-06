@@ -43,6 +43,7 @@ export default function Component({ children }: AppShellProps) {
   };
 
   const userName = me?.name ?? me?.email ?? '';
+  const accountMenuOpen = Boolean(anchorEl);
 
   return (
     <Box sx={{ display: 'flex' }}>
@@ -64,8 +65,13 @@ export default function Component({ children }: AppShellProps) {
           <Button
             color="inherit"
             aria-haspopup="true"
-            aria-expanded={Boolean(anchorEl)}
-            aria-controls="app-shell-account-menu"
+            aria-expanded={accountMenuOpen}
+            // Fix round 1 (review finding #2, Minor): unlike the agent panel's `Drawer`
+            // (`variant="persistent"`, always in the DOM), this `Menu` is a MUI `Popover`/`Modal`
+            // that fully unmounts while closed — a static `aria-controls` here would dangle,
+            // pointing at an id that doesn't exist most of the time. Only advertise it while the
+            // target actually resolves, mirroring `aria-expanded`'s own open/closed split.
+            aria-controls={accountMenuOpen ? 'app-shell-account-menu' : undefined}
             onClick={(event) => setAnchorEl(event.currentTarget)}
           >
             {/* WR-66: decorative — the visible `userName` text right after it already carries
@@ -80,7 +86,7 @@ export default function Component({ children }: AppShellProps) {
         <Menu
           id="app-shell-account-menu"
           anchorEl={anchorEl}
-          open={Boolean(anchorEl)}
+          open={accountMenuOpen}
           onClose={() => setAnchorEl(null)}
           options={[{ label: 'Sign out', onSelect: handleSignOut }]}
         />

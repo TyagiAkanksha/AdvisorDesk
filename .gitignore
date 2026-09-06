@@ -4,6 +4,7 @@ reference_project/
 # secrets & env (only .env.example is tracked)
 .env
 *.env
+.env.*
 !.env.example
 
 # local tool state

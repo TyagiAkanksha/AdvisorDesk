@@ -1,5 +1,14 @@
 name: advisordesk
 
+# Log rotation (WR-70): the box keeps container logs on the 20 GB root volume with no
+# CloudWatch agent, so an unbounded json-file driver would eventually fill the disk.
+# Cap each container at 3 x 10 MB.
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
 services:
   api:
     image: 181040156847.dkr.ecr.us-east-1.amazonaws.com/advisordesk/api:9e18e82
@@ -30,6 +39,7 @@ services:
       FORWARDED_ALLOW_IPS: "*"
     expose:
       - "8000"
+    logging: *default-logging
     restart: unless-stopped
 
   admin:
@@ -39,6 +49,7 @@ services:
       PORT: "3000"
     expose:
       - "3000"
+    logging: *default-logging
     restart: unless-stopped
 
   client:
@@ -49,6 +60,7 @@ services:
       API_URL: https://api.advisordesk.tyagiakanksha.com
     expose:
       - "3000"
+    logging: *default-logging
     restart: unless-stopped
 
   caddy:
@@ -60,6 +72,7 @@ services:
       - /opt/advisordesk/Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy_data:/data
       - caddy_config:/config
+    logging: *default-logging
     depends_on:
       - api
       - admin

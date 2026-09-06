@@ -126,7 +126,11 @@ build_tag_push() {
 
   echo
   echo "-- Building $repo_name from $dockerfile (context: $REPO_ROOT)"
+  # --platform pinned: the deployed host is x86_64, so an arm64 build machine
+  # (e.g. Apple silicon) would otherwise push an unrunnable image. Overridable
+  # via BUILD_PLATFORM for a future arm64 host.
   docker build \
+    --platform "${BUILD_PLATFORM:-linux/amd64}" \
     -f "$REPO_ROOT/$dockerfile" \
     -t "${image_uri}:latest" \
     -t "${image_uri}:${GIT_SHA}" \
@@ -140,7 +144,7 @@ build_tag_push() {
 }
 
 # api: no build args. infra/Dockerfile.api's own top-of-file comment: runtime config is
-# env-only (DATABASE_URL, NVIDIA_API_KEY, ...) — nothing is baked into this image at build time.
+# env-only (DATABASE_URL, OPENAI_API_KEY, ...) — nothing is baked into this image at build time.
 build_tag_push "advisordesk/api" "infra/Dockerfile.api"
 
 # admin: NEXT_PUBLIC_API_URL is a BUILD-time arg — infra/Dockerfile.web's own top comment:

@@ -83,7 +83,7 @@ def test_defaults_match_prd_with_empty_env(clean_env: None) -> None:
     assert settings.admin_email_set == set()
     assert settings.cors_origins == ""
     assert settings.cors_origin_list == []
-    assert settings.similarity_threshold == 0.35
+    assert settings.similarity_threshold == 0.5
     assert settings.rate_limit_per_min == 10
     assert settings.rate_limit_per_day == 50
     assert settings.session_create_per_day == 20

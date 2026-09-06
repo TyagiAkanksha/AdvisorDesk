@@ -29,7 +29,7 @@ a file in this repo.
 | `ENVIRONMENT` | N — **pinned** | `production` (see the Secure-cookie note below — this is what turns it on). |
 | `ADMIN_APP_URL` | N — **pinned** | `https://admin.advisordesk.tyagiakanksha.com` |
 | `CORS_ORIGINS` | N — **pinned** | `https://advisordesk.tyagiakanksha.com,https://admin.advisordesk.tyagiakanksha.com` — no wildcard, ever, in a deployed environment (PRD §9). |
-| `SIMILARITY_THRESHOLD` | N | `0.35` (`.env.example` default — PRD §7.3). |
+| `SIMILARITY_THRESHOLD` | N | `0.5` (`.env.example` default — PRD §7.3). |
 | `RATE_LIMIT_PER_MIN` | N | `10` (`.env.example` default). |
 | `RATE_LIMIT_PER_DAY` | N | `50` (`.env.example` default). |
 | `SESSION_CREATE_PER_DAY` | N | `20` (`.env.example` default). |

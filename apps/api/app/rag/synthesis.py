@@ -128,14 +128,17 @@ def _build_user_message(question: str, sources: Sequence[RetrievedChunk]) -> str
 
 
 class OpenAICompatibleChatLLM:
-    """The real `ChatLLM`, built from `Settings` (PRD §7.5, v1.5).
+    """The real `ChatLLM`, built from `Settings` (PRD §7.5, v1.6).
 
-    Talks to NVIDIA NIM's OpenAI-compatible `/v1/chat/completions` endpoint via the `openai` SDK
-    — mirrors `app.rag.embeddings.OpenAICompatibleEmbedder` exactly (`from_settings` classmethod,
-    same empty-key-boot-safe `"unset"` fallback), except: `model=settings.chat_model`, and
-    streaming via the standard `chat.completions.create(stream=True)` with NO NVIDIA-specific
-    `extra_body` — the chat-completions path needs neither `input_type` nor `truncate`, both
-    embedding-only NIM extras (PRD §7.2 is explicit these are for `/v1/embeddings`).
+    Talks to an OpenAI-compatible `/v1/chat/completions` endpoint via the `openai` SDK — OpenAI's
+    own by default since v1.6 (task 6R-14: the prior NVIDIA NIM chat model went end-of-life),
+    NVIDIA NIM's compatible endpoint when `Settings.llm_provider="nvidia"` — mirrors
+    `app.rag.embeddings.OpenAICompatibleEmbedder` exactly (`from_settings` classmethod, same
+    empty-key-boot-safe `"unset"` fallback via `settings.llm_api_key`), except: `model=settings.
+    chat_model`, and streaming via the standard `chat.completions.create(stream=True)` with NO
+    provider-specific `extra_body` — the chat-completions path needs neither `input_type` nor
+    `truncate`, both embedding-only NIM extras (PRD §7.2 is explicit these are for
+    `/v1/embeddings`), so this wire shape is unchanged by the provider swap.
     """
 
     def __init__(self, *, client: OpenAI, model: str) -> None:
@@ -153,12 +156,15 @@ class OpenAICompatibleChatLLM:
     def from_settings(cls, settings: Settings) -> OpenAICompatibleChatLLM:
         """Build the real client from `Settings` — the one non-test constructor.
 
-        Mirrors `OpenAICompatibleEmbedder.from_settings` exactly: `nvidia_api_key` falls back to
-        the harmless `"unset"` placeholder when empty (dev-mode boot-safety — the `openai` SDK
-        raises at *construction* time for a falsy `api_key` with no `OPENAI_API_KEY` env var set
-        either, which would crash `app.main`'s module-level wiring on every offline dev boot).
-        Construction stays boot-safe either way; a real chat request made with a placeholder key
-        still fails, correctly, as a `ChatCompletionFailedError` at request time.
+        Mirrors `OpenAICompatibleEmbedder.from_settings` exactly: reads the API key via
+        `settings.llm_api_key` (v1.6, task 6R-14) — `openai_api_key` under the default
+        `llm_provider="openai"`, else `nvidia_api_key` — and falls back to the harmless
+        `"unset"` placeholder when that key is empty (dev-mode boot-safety — the `openai` SDK
+        raises at *construction* time for a falsy `api_key` with no `OPENAI_API_KEY`/
+        `NVIDIA_API_KEY` env var set either, which would crash `app.main`'s module-level wiring
+        on every offline dev boot). Construction stays boot-safe either way; a real chat request
+        made with a placeholder key still fails, correctly, as a `ChatCompletionFailedError` at
+        request time.
 
         `timeout=settings.embedding_timeout_seconds` and `max_retries=settings.
         embedding_max_retries` are reused rather than adding dedicated `CHAT_*` settings (task
@@ -170,7 +176,7 @@ class OpenAICompatibleChatLLM:
         pair would be a reasonable follow-up if the two endpoints ever need materially different
         budgets in practice; nothing here forecloses adding one later.
         """
-        api_key = settings.nvidia_api_key.get_secret_value() or "unset"
+        api_key = settings.llm_api_key.get_secret_value() or "unset"
         client = OpenAI(
             api_key=api_key,
             base_url=settings.llm_base_url,

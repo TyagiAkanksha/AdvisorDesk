@@ -245,16 +245,20 @@ class OpenAICompatibleAgentLLM:
     def from_settings(cls, settings: Settings) -> OpenAICompatibleAgentLLM:
         """Build the real client from `Settings` — the one non-test constructor.
 
-        Mirrors `OpenAICompatibleChatLLM.from_settings` exactly: `nvidia_api_key` falls back to
-        the harmless `"unset"` placeholder when empty (dev-mode boot-safety — the `openai` SDK
-        raises at *construction* time for a falsy `api_key` with no `OPENAI_API_KEY` env var set
-        either, which would crash `app.main`'s module-level wiring on every offline dev boot).
+        Mirrors `OpenAICompatibleChatLLM.from_settings` exactly: reads the API key via
+        `settings.llm_api_key` (v1.6, task 6R-14) — `openai_api_key` under the default
+        `llm_provider="openai"`, else `nvidia_api_key` — and falls back to the harmless
+        `"unset"` placeholder when that key is empty (dev-mode boot-safety — the `openai` SDK
+        raises at *construction* time for a falsy `api_key` with no `OPENAI_API_KEY`/
+        `NVIDIA_API_KEY` env var set either, which would crash `app.main`'s module-level wiring
+        on every offline dev boot). No other change: the chat-completions wire shape sends no
+        provider-specific `extra_body`, so the provider swap never touches it.
         `timeout=settings.embedding_timeout_seconds`/`max_retries=settings.
         embedding_max_retries` are reused for the same reason `OpenAICompatibleChatLLM` reuses
         them (its own docstring): both budgets bound a single provider call/attempt regardless
         of which OpenAI-compatible endpoint it targets.
         """
-        api_key = settings.nvidia_api_key.get_secret_value() or "unset"
+        api_key = settings.llm_api_key.get_secret_value() or "unset"
         client = OpenAI(
             api_key=api_key,
             base_url=settings.llm_base_url,

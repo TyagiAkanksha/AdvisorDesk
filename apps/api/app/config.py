@@ -6,6 +6,8 @@ configuration through `Settings` rather than `os.environ` directly.
 
 from __future__ import annotations
 
+from typing import Literal
+
 from pydantic import SecretStr
 from pydantic_settings import BaseSettings
 
@@ -42,35 +44,65 @@ class Settings(BaseSettings):
     it via the `openai` SDK purely because that SDK speaks the compatible
     wire protocol, hence the class name staying provider-neutral while the
     settings field name reflects the actual provider.
+
+    `llm_provider`/`openai_api_key` (v1.6; task 6R-14 — production-outage
+    remediation) reintroduce a real provider switch: both NVIDIA NIM models
+    this app was pinned to (`nvidia/nv-embedqa-e5-v5` embeddings,
+    `meta/llama-3.1-8b-instruct` chat) went end-of-life (410 Gone) on
+    2026-08-25/26, so OpenAI is now the default live provider (PRD §7.2
+    v1.6). `llm_provider: Literal["openai", "nvidia"]` selects which
+    credential field `llm_api_key` (below) resolves to; `nvidia_api_key`
+    stays in place, unchanged, as the back-compat/future-re-enable branch —
+    it is never removed, only no longer the default.
     """
 
     nvidia_api_key: SecretStr = SecretStr("")
+    # v1.6 (task 6R-14): the new default credential — OpenAI's own API key.
+    # Empty-`SecretStr` default and repr-hiding mirror every other secret
+    # field, `nvidia_api_key` included.
+    openai_api_key: SecretStr = SecretStr("")
     database_url: SecretStr = SecretStr("")
     google_client_id: str = ""
     google_client_secret: SecretStr = SecretStr("")
     session_secret: SecretStr = SecretStr("")
     admin_emails: str = ""
 
-    # NVIDIA NIM's OpenAI-compatible base URL (PRD §7.2, v1.5) — embeddings
-    # today (phase-3 task-02); the phase-4 chat/agent LLM client reuses the
-    # same field. Config-only so a provider swap never touches code.
-    llm_base_url: str = "https://integrate.api.nvidia.com/v1"
-    # `nvidia/nv-embedqa-e5-v5` (PRD §7.2, v1.5) — asymmetric embedding
-    # model: `input_type="passage"` at publish time, `input_type="query"` at
-    # retrieval time (phase-4 task-01 reuses `Embedder` for the latter).
-    embedding_model: str = "nvidia/nv-embedqa-e5-v5"
-    # The model's output vector width (PRD §7.2, v1.5) — also the
+    # v1.6 (task 6R-14): which provider `llm_api_key`/the embedding+chat/agent
+    # clients resolve to. Defaults to `"openai"` — both NVIDIA NIM models
+    # this app was pinned to are end-of-life (410 Gone, 2026-08-25/26); PRD
+    # §7.2 v1.6 amendment. `"nvidia"` stays selectable as a back-compat/
+    # future-re-enable branch (a 2048-dim NVIDIA embedding model exists but
+    # would need a migration + full corpus re-embed — deliberately deferred,
+    # not ruled out).
+    llm_provider: Literal["openai", "nvidia"] = "openai"
+
+    # OpenAI-compatible base URL (PRD §7.2). Defaults to OpenAI's own
+    # endpoint (v1.6); pointed at NVIDIA NIM's compatible endpoint
+    # (`https://integrate.api.nvidia.com/v1`) when `llm_provider="nvidia"`.
+    # Config-only so a provider swap never touches code.
+    llm_base_url: str = "https://api.openai.com/v1"
+    # `text-embedding-3-small` (PRD §7.2, v1.6) — controller-verified live:
+    # `dimensions=1024` returns exactly 1024-dim vectors, a drop-in for the
+    # existing `chunks.embedding vector(1024)` column (no migration). Unlike
+    # the earlier NVIDIA model, OpenAI's embedding model is symmetric — the
+    # `input_type` asymmetry (`app.rag.embeddings.embed_texts`) is now
+    # NVIDIA-branch-specific.
+    embedding_model: str = "text-embedding-3-small"
+    # The model's output vector width (PRD §7.2) — also the
     # `chunks.embedding` pgvector column's dimension (migration 0002); a
     # provider/model swap with a different width updates this one value and
-    # its matching Alembic migration together.
+    # its matching Alembic migration together. Unchanged by the v1.6
+    # provider swap: `text-embedding-3-small@1024` is a drop-in for the
+    # prior `nvidia/nv-embedqa-e5-v5@1024`.
     embedding_dimensions: int = 1024
 
     # Chat-completion model for the client assistant's answer synthesis (PRD
-    # §7.5) and, later, the admin agent loop (§5.4) — both talk to the same
-    # NVIDIA NIM OpenAI-compatible endpoint (`llm_base_url` above). Pinned in
-    # the phase-4 plan (`docs/plans/phase-4-rag-assistant/`); `CHAT_MODEL`
-    # env-overridable per PRD §9 so a provider swap never touches code.
-    chat_model: str = "meta/llama-3.1-8b-instruct"
+    # §7.5) and the admin agent loop (§5.4) — both talk to the same
+    # OpenAI-compatible endpoint (`llm_base_url` above). `gpt-4o-mini` (PRD
+    # §7.2, v1.6) — controller-verified live: responds and supports
+    # tool-calling (the admin agent needs it). `CHAT_MODEL` env-overridable
+    # per PRD §9 so a provider swap never touches code.
+    chat_model: str = "gpt-4o-mini"
 
     # Not part of the PRD §9 env roster (phase-3 task-02 review round 1,
     # finding I1): the `openai` SDK's own defaults for an unconfigured
@@ -135,6 +167,24 @@ class Settings(BaseSettings):
     # (PRD §3) without being effectively permanent; `MCP_TOKEN_TTL_DAYS` overrides it per
     # deployment.
     mcp_token_ttl_days: int = 90
+
+    @property
+    def llm_api_key(self) -> SecretStr:
+        """The credential for the active `llm_provider` (v1.6, task 6R-14).
+
+        Returns `openai_api_key` when `llm_provider == "openai"` (the
+        default), else `nvidia_api_key` — the ONE field
+        `OpenAICompatibleEmbedder.from_settings`/`OpenAICompatibleChatLLM.
+        from_settings`/`OpenAICompatibleAgentLLM.from_settings` all read,
+        so a provider switch never touches which field a call site names.
+        Returns the `SecretStr` itself, never the unwrapped plaintext — a
+        naive caller that logs `settings.llm_api_key` instead of calling
+        `.get_secret_value()` must not leak a real key, same as every other
+        secret field.
+        """
+        if self.llm_provider == "openai":
+            return self.openai_api_key
+        return self.nvidia_api_key
 
     @property
     def cors_origin_list(self) -> list[str]:

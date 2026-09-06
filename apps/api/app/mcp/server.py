@@ -30,6 +30,12 @@ now rejects any non-POST method with a 405 (`Allow: POST`) BEFORE the auth gate,
 hole for the `Mount`'s sub-paths that `methods=["POST"]` already closed for the bare path — a
 `GET`/etc. through `path + "/..."` previously reached the streamable-HTTP transport and hung
 indefinitely instead of returning (M2).
+
+Phase-6-remediation task 6R-07 (t04-M7): `_AdminGatedMcpApp.__call__` now also rejects any
+non-`"http"` scope (a `"websocket"`-type scope, reachable only via the `Mount`'s sub-paths) with a
+`WebSocketException` BEFORE `Request(scope)` is ever constructed — see `__call__`'s own docstring
+for why `WebSocketException`, not `StarletteHTTPException`, is the exception type that matters
+here.
 """
 
 from __future__ import annotations
@@ -48,6 +54,7 @@ from mcp.server.lowlevel import Server
 from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
 from sqlalchemy.orm import Session, sessionmaker
 from starlette.exceptions import HTTPException as StarletteHTTPException
+from starlette.exceptions import WebSocketException
 from starlette.requests import Request
 from starlette.routing import Route
 from starlette.types import Receive, Scope, Send
@@ -314,8 +321,31 @@ class _AdminGatedMcpApp:
         self._server = server
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
-        """Reject a non-POST method fast, then gate on a bearer token (if offered) or
-        `require_admin`'s cookie, bind a request-scoped session factory + actor, and dispatch.
+        """Reject a non-`"http"` scope, then a non-POST method, fast, then gate on a bearer
+        token (if offered) or `require_admin`'s cookie, bind a request-scoped session factory +
+        actor, and dispatch.
+
+        Phase-6-remediation task 6R-07, t04-M7: the `Mount`'s sub-paths (e.g. `/api/v1/mcp/`)
+        match BOTH `"http"` and `"websocket"` scope types (`starlette.routing.Mount.matches`) —
+        unlike the bare-path `Route` below, which only ever matches `"http"`
+        (`starlette.routing.Route.matches`), so only the `Mount` side can ever hand this
+        `__call__` a `"websocket"`-type scope. Before this guard, such a scope sailed past the
+        method-guard below (which only fires `if scope["type"] == "http"`) straight into
+        `Request(scope, receive=receive)`, whose `assert scope["type"] == "http"`
+        (`starlette.requests.Request.__init__`) raised a bare, uncaught `AssertionError` — a
+        crash, not a clean rejection. This guard runs FIRST, before `Request(scope)` is ever
+        constructed, mirroring the method-guard's own placement/style (an early `if`, raising
+        before any further work). It raises `WebSocketException`, not `StarletteHTTPException`,
+        deliberately: `starlette.middleware.exceptions.ExceptionMiddleware` is the one place in a
+        real deployment that renders a raised exception for a `"websocket"`-type scope, and its
+        `"websocket"` branch only ever *awaits* the matched handler — unlike the `"http"` branch,
+        it never sends the handler's return value on the ASGI `send` channel. `WebSocketException`
+        is the one exception type that middleware handles by calling `websocket.close(...)`
+        directly (`ExceptionMiddleware.websocket_exception`) rather than building an unsent
+        `Response`; a `StarletteHTTPException` here would be "handled" into a `JSONResponse` that
+        is silently discarded, leaving a real `ws://` client hanging (see
+        `tests/test_mcp_ws_guard.py`'s module docstring for the full trace of that separate,
+        out-of-scope `app.routes.errors` gap).
 
         Phase-6 task-04 fix round 1, finding M2: this ASGI app is reachable two ways — the
         bare-path `Route` (`mount_mcp_http`, method-restricted to POST at the routing layer, so a
@@ -370,6 +400,11 @@ class _AdminGatedMcpApp:
         `None`, so no fail-loud branch is needed here) — so an HTTP-invoked write tool embeds
         chunks for real, not through a request-local `NoopChunkPipeline`.
         """
+        if scope["type"] != "http":
+            raise WebSocketException(
+                code=1008, reason="This endpoint does not accept WebSocket connections."
+            )
+
         if scope["type"] == "http" and scope["method"] != "POST":
             raise StarletteHTTPException(status_code=405, headers={"Allow": "POST"})
 

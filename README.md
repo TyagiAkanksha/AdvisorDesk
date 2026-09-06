@@ -100,6 +100,142 @@ docker compose -f infra/docker-compose.yml --profile local-db down   # add -v to
 (`--profile local-db` is harmless to pass even if you ran the Supabase path — compose only tears
 down services that are actually running.)
 
+## Demo
+
+An end-to-end walkthrough of both PRD §2.2 user stories, anchored on the real seeded content
+(`seed/sample_content/`, `seed/eval_questions.yaml`) — no invented examples. Two independent
+choices: which story (client, fully scriptable — or admin, a UI walkthrough behind Google
+sign-in) and where to run it (locally per Dev quickstart above, or against the live deployment).
+
+### Client story: browse content + ask grounded questions
+
+Public, no auth. Point at a local API (`http://localhost:8000`, after Dev quickstart steps 1–3)
+or the live one (`https://api.advisordesk.tyagiakanksha.com`) — every command below works against
+either; `./scripts/demo.sh` runs all three (`BASE_URL=... ./scripts/demo.sh` to target the live
+site).
+
+**1. Browse published content** — `GET /api/v1/public/content`:
+
+```sh
+curl -s http://localhost:8000/api/v1/public/content | head -c 300
+```
+
+Returns a JSON array of published, non-deleted articles (`title`, `slug`, `tags`,
+`published_at`). Captured live (2026-09-06): 27 published articles — the pristine 17-article seed
+corpus plus ~10 the owner has published since (a fresh local seed gives exactly 17); either way
+`roth-ira-conversion-basics` (used below) is present.
+
+**2. Ask a real, answerable question** — one of `seed/eval_questions.yaml`'s entries — and watch
+a streamed, cited answer (`POST /api/v1/public/chat`, body `{"message": "..."}`, optional
+`session_id`):
+
+```sh
+curl -N -s -X POST http://localhost:8000/api/v1/public/chat \
+  -H "Content-Type: application/json" \
+  -d '{"message": "What is a Roth IRA conversion and how is it taxed?"}'
+```
+
+Captured live output (trimmed — token events repeat one word/punctuation mark per event):
+
+```
+event: token
+data: {"text": "A"}
+
+event: token
+data: {"text": " Roth"}
+
+event: token
+data: {"text": " IRA"}
+...
+event: token
+data: {"text": "]."}
+
+event: citations
+data: {"citations": [{"content_id": "5b01f642-b239-4ccd-83e3-88412b367313", "title": "Roth IRA Conversion Basics", "slug": "roth-ira-conversion-basics"}, {"content_id": "0e05672a-7341-4bc5-af6e-e76624d31043", "title": "Backdoor Roth IRA Basics", "slug": "backdoor-roth-ira-basics"}]}
+
+event: done
+data: {"session_id": "59c704a1-0e3d-4f69-a5c1-17b64226b2bf", "message_id": "2c0808de-dd43-43fd-86cc-0d2426630708"}
+```
+
+Assembled answer: "A Roth IRA conversion moves money from a traditional IRA (or another pre-tax
+retirement account, such as a traditional 401(k) rolled into an IRA) into a Roth IRA. The amount
+converted is treated as ordinary income in the year of the conversion... [1]." — cited to the
+exact article `eval_questions.yaml` expects (`expected_slugs: ["roth-ira-conversion-basics"]`).
+
+**3. Ask a real, unanswerable question** — one of the eval set's four deliberately-uncovered
+topics (`answerable: false`) — and see the assistant refuse rather than answer from general
+knowledge:
+
+```sh
+curl -N -s -X POST http://localhost:8000/api/v1/public/chat \
+  -H "Content-Type: application/json" \
+  -d '{"message": "What does the firm recommend about cryptocurrency staking rewards?"}'
+```
+
+Captured live output (trimmed):
+
+```
+event: token
+data: {"text": "No"}
+...
+event: token
+data: {"text": "."}
+
+event: citations
+data: {"citations": [{"content_id": "5fe48a7f-641b-472d-b7d9-2981035f6735", "title": "Diversification and Asset Allocation Basics", "slug": "diversification-and-asset-allocation-basics"}]}
+
+event: done
+data: {"session_id": "d88ddc81-290a-42e0-b75e-945bbd6341e7", "message_id": "cfbd0b82-a018-4668-bdbc-f22a803235fe"}
+```
+
+Assembled answer: "No published guidance covers this; please ask the advisory team for
+assistance." — the refusal PRD §7.5 requires ("does not answer from general knowledge") lives in
+the answer text itself. Note `citations` is not always empty here: retrieval still surfaces
+whatever chunk cleared `SIMILARITY_THRESHOLD` (default `0.35`), even a loosely-related one that
+doesn't actually answer the question — verified consistently across all four of
+`eval_questions.yaml`'s unanswerable entries while authoring this walkthrough. The refusal
+wording is the reliable signal that the question wasn't answered, not an empty citations array.
+
+### Admin story: sign in + the agent panel
+
+Needs an authenticated, allowlisted admin session, so this half is UI steps, not curl. Prerequisite:
+Google OAuth credentials and your email in `ADMIN_EMAILS` (Dev quickstart step 1) — the live
+deployed admin only accepts the owner's own allowlisted account.
+
+1. **Sign in** at the admin app (`http://localhost:3001` locally, or
+   `https://admin.advisordesk.tyagiakanksha.com`) with an allowlisted Google account.
+2. **Dashboard** — lands on a dashboard of all content: status, tags, updated date.
+3. **Content list** — click **Content** in the left nav for the full CRUD list; filter/search by
+   title, tag, and status.
+4. **Agent panel** — click **Agent** in the top bar to open the agent chat sidebar (a persistent
+   drawer on the right). Issue the PRD §2.2 example commands verbatim; the panel renders each
+   `tool_call`/`tool_result` event live as it happens:
+   - *"Draft an article on Roth IRA conversion basics and tag it retirement."* — the agent calls
+     `create_draft`; a new draft appears in the content list (agent-created drafts are never
+     auto-published).
+   - *"How many published pieces do we have on tax planning?"* — the agent calls
+     `count_content(status="published", tag="tax-planning")`. Against a freshly-seeded database
+     (Dev quickstart) this reports **7** — cross-checked directly against
+     `seed/sample_content/`'s frontmatter: 7 of the 8 tax-planning-tagged seed files are
+     `status: published`; the 8th, `year-end-tax-planning-checklist`, is deliberately left
+     `draft` (PRD §8) so the agent has something to find/publish in the next command. On the live
+     deployed site the number will be different (and keeps growing) since the owner has published
+     content beyond the seed — what to verify is the agent calling the right tool with the right
+     filters, not a specific number.
+   - *"Find everything tagged estate-planning and publish the drafts."* — the agent calls
+     `search_content` then `publish` for each match; the dashboard's draft/published counts update.
+
+### Two ways to run this
+
+- **Run it yourself (local):** finish Dev quickstart steps 1–3, then run the client-path commands
+  above (or `./scripts/demo.sh`) against `http://localhost:8000`, and the admin steps against
+  `http://localhost:3001`. The client chat path needs `OPENAI_API_KEY` set (Dev quickstart step
+  1); the admin story additionally needs your own Google OAuth app and your email in
+  `ADMIN_EMAILS`.
+- **See it live:** client at `https://advisordesk.tyagiakanksha.com` (content list + `/chat`),
+  API at `https://api.advisordesk.tyagiakanksha.com` for the curl commands above, admin at
+  `https://admin.advisordesk.tyagiakanksha.com` (owner's allowlisted account only).
+
 ### Gates (run before every commit that touches the relevant app)
 
 Python (`apps/api`):

@@ -71,12 +71,22 @@ PUBLIC_CHAT_KEY = "public_chat"
 # case-by-case check.
 _REQUEST_KEY_PREFIX = "request:"
 
-# Fix round 1, finding I-1: every request whose route never matched an `APIRoute` (a 404, or a
-# path inside a `Mount` this middleware can't name) buckets into this ONE constant key, never the
-# raw request path — `LatencyTracker` never evicts *keys*, only samples within a key, so keying on
-# the raw path let an unauthenticated scanner walking N distinct 404 paths grow the tracker's key
-# set (and the per-request work under its lock) without bound.
+# Fix round 1, finding I-1: every request whose route never matched an `APIRoute` AND never
+# matched any other registered route either (a genuine 404) buckets into this ONE constant key,
+# never the raw request path — `LatencyTracker` never evicts *keys*, only samples within a key, so
+# keying on the raw path let an unauthenticated scanner walking N distinct 404 paths grow the
+# tracker's key set (and the per-request work under its lock) without bound.
 _UNMATCHED_ROUTE_KEY = "unmatched"
+
+# t01-N2 (phase-6 remediation, task-08): prefix for a request that matched a non-`APIRoute`
+# `starlette.routing.Route`/`Mount` (e.g. `app.mcp.server.mount_mcp_http`'s bare-path `Route` and
+# its sibling `Mount`) — bucketed separately from `_UNMATCHED_ROUTE_KEY` so a genuine 404's latency
+# is never mixed with an MCP request's. Bounded cardinality is preserved (t01 I-1's own property):
+# the suffix is the matched ASGI endpoint's own class name, not the (attacker-controlled, since
+# `Mount` matches any sub-path) raw request path — the number of distinct endpoint CLASSES ever
+# registered as a plain `Route`/`Mount` is fixed at app-construction time, so this adds O(1) new
+# keys total, never one per distinct path a client happens to send.
+_MOUNT_ROUTE_KEY_PREFIX = "mount:"
 
 # Task brief: "every 100 chat requests logs `chat_latency p50=<ms> p95=<ms> count=<n>`".
 _CHAT_LATENCY_LOG_EVERY = 100
@@ -240,20 +250,38 @@ def observe_and_maybe_log_chat_latency(tracker: LatencyTracker, seconds: float) 
 
 
 def _route_name(scope: Scope) -> str:
-    """The matched route's name, or `_UNMATCHED_ROUTE_KEY` when nothing matched (a 404 —
-    `Router.app` never sets `scope["route"]` in that case; FastAPI's own `APIRoute.matches` is
-    what sets it on a match, `:832` of `fastapi.routing` — or a path inside a `Mount`, whose
-    `scope["route"]` is never an `APIRoute` either).
+    """The matched route's name, an `_MOUNT_ROUTE_KEY_PREFIX`-prefixed key for a matched
+    non-`APIRoute` `Route`/`Mount`, or `_UNMATCHED_ROUTE_KEY` when nothing matched at all (a
+    genuine 404).
 
-    Fix round 1, finding I-1: this used to fall back to the raw request path, so every distinct
-    unmatched path (e.g. an unauthenticated scanner walking 404s) created its own permanent
-    `LatencyTracker` key — unbounded memory growth with no eviction, since the tracker only evicts
-    SAMPLES within a key, never keys themselves. Every unmatched request now buckets into the same
-    single constant key instead.
+    FastAPI's own `APIRoute.matches` is the only `matches()` override that ever sets
+    `scope["route"]` (`fastapi.routing.APIRoute.matches`) — a plain `starlette.routing.Route` or
+    `Mount` (e.g. `app.mcp.server.mount_mcp_http`'s bare-path `Route` and its sibling `Mount`) never
+    does, but a match against either DOES set `scope["endpoint"]` (`Route.matches`/`Mount.matches`,
+    both in `starlette.routing`) — which a genuine 404 never reaches (`Router.app` calls its own
+    `default` handler without updating `scope` at all when no route matches, full or partial).
+    That gives a real, verified signal (empirically confirmed against both request shapes) to tell
+    "matched a non-FastAPI route" apart from "matched nothing" — t01-N2 (phase-6 remediation,
+    task-08): these two cases used to share this single bucket, mixing an MCP mount request's
+    latency percentiles with genuine 404 scans'.
+
+    Fix round 1, finding I-1: this used to fall back to the raw request path for BOTH cases, so
+    every distinct unmatched path (e.g. an unauthenticated scanner walking 404s) created its own
+    permanent `LatencyTracker` key — unbounded memory growth with no eviction, since the tracker
+    only evicts SAMPLES within a key, never keys themselves. A genuine 404 still buckets into the
+    one constant `_UNMATCHED_ROUTE_KEY`; a matched `Route`/`Mount` now buckets by its endpoint's
+    own class name instead of the raw path (t01-N2: raw path is out for the same unbounded-key
+    reason — `Mount` matches any sub-path an attacker cares to send — but the number of distinct
+    endpoint CLASSES ever registered as a plain `Route`/`Mount` is fixed at app-construction time,
+    so this still adds only O(1) new keys, never one per distinct path).
     """
     route = scope.get("route")
     if isinstance(route, APIRoute):
         return route.name
+    endpoint = scope.get("endpoint")
+    if endpoint is not None:
+        endpoint_type = type(endpoint)
+        return f"{_MOUNT_ROUTE_KEY_PREFIX}{endpoint_type.__module__}.{endpoint_type.__qualname__}"
     return _UNMATCHED_ROUTE_KEY
 
 

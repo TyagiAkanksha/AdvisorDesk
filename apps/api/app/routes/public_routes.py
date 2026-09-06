@@ -197,6 +197,18 @@ def _generate_chat_stream(
     is free to commit early when it has a documented reason to, same as it would be free to for
     any other request).
 
+    WR-09 (phase-6 remediation, task-08): a THIRD commit, right after `retrieve()` returns and
+    before the `chat_llm.stream_answer(...)` loop begins. `retrieve()`'s own read-only
+    `session.execute(select(...))` runs on this same session AFTER the user-message commit above
+    already closed that transaction — SQLAlchemy's autobegin silently opens a brand-new
+    transaction for that SELECT, and nothing had ever closed it again until the assistant-message
+    commit below, meaning it stayed open for the ENTIRE (potentially slow, network-bound) LLM
+    stream. Committing here releases it immediately once retrieval is done, before the stream
+    loop can hold it open. It is a plain commit with no pending writes (nothing is written between
+    `retrieve()` returning and this line), so it changes no persisted data and does not disturb the
+    user-row-before-assistant-row `created_at` ordering above: the assistant row's write and commit
+    still happen only after the stream completes, in their own (fourth) transaction.
+
     On the error path, the `error` event is yielded BEFORE `session.rollback()` runs (review
     round 2, finding N-1 — reordered from round 1's rollback-then-yield): probe RR-P7 showed that
     if the rollback itself raises — reachable exactly when the DB is the thing that failed, i.e.
@@ -218,6 +230,10 @@ def _generate_chat_stream(
         retrieval = retrieve(
             session, embedder, body.message, threshold=settings.similarity_threshold
         )
+        # WR-09: release the transaction `retrieve()`'s SELECT just (auto-)opened — see docstring
+        # above — before entering the stream loop, instead of holding it open across the whole
+        # (potentially slow) LLM stream.
+        session.commit()
 
         for token in chat_llm.stream_answer(SYSTEM_PROMPT, body.message, retrieval.chunks):
             tokens.append(token)

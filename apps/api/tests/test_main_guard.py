@@ -1,13 +1,15 @@
 """Pins `app/main.py`'s boot-time fail-fast guard (phase-2 task-01 review round 1, finding I1;
-policy narrowed in review round 2; `NVIDIA_API_KEY` joined the not-`is_dev` list in phase-3
-task-02).
+policy narrowed in review round 2; a provider-selected LLM credential guard joined the
+not-`is_dev` list in phase-3 task-02, made provider-aware by task 6R-15).
 
 `app/main.py` runs module-level code on import: build `Settings()`, then
 unconditionally require `DATABASE_URL`/`SESSION_SECRET` to be non-empty, and
 additionally require `GOOGLE_CLIENT_ID`/`GOOGLE_CLIENT_SECRET`/
-`GOOGLE_REDIRECT_URI`/`ADMIN_EMAILS`/`NVIDIA_API_KEY` to be non-empty
-whenever `not settings.is_dev` (i.e. `ENVIRONMENT=production`), before
-wiring a real engine + OAuth client + embedding pipeline.
+`GOOGLE_REDIRECT_URI`/`ADMIN_EMAILS`/the ACTIVE `llm_provider`'s API key
+(`settings.llm_api_key` — `OPENAI_API_KEY` under the default
+`llm_provider="openai"`, `NVIDIA_API_KEY` under `llm_provider="nvidia"`) to
+be non-empty whenever `not settings.is_dev` (i.e. `ENVIRONMENT=production`),
+before wiring a real engine + OAuth client + embedding pipeline.
 `Settings()`/`create_app()` themselves stay zero-env-var constructible
 (CONVENTIONS.md §5) — this guard is `app.main`-only, so these tests import
 `app.main` fresh (never cached in `sys.modules`) under a fully controlled
@@ -22,6 +24,18 @@ container. This file now pins the corrected policy: `database_url` and
 only with `ENVIRONMENT=production`; and — the regression-catching case that
 round 1 lacked — `app.main` imports cleanly in development with ONLY
 `DATABASE_URL`/`SESSION_SECRET` set and every `GOOGLE_*` var empty.
+
+Task 6R-15 (6R-14 review, Important finding): task 6R-14 added
+`Settings.llm_provider`/`openai_api_key`/`llm_api_key` and flipped the
+default provider to `"openai"`, but the guard below still validated
+`NVIDIA_API_KEY` unconditionally — under the new default that is wrong both
+ways: a missing `OPENAI_API_KEY` booted silently, and dropping the
+now-unused `NVIDIA_API_KEY` placeholder from a production env crash-looped
+boot. The contract pinned below is provider-aware instead: `_VALID_ENV`'s
+baseline sets `OPENAI_API_KEY` (never `NVIDIA_API_KEY` — a clean production
+boot under the default provider must never need the inactive key), and the
+guard is exercised under both `llm_provider` values to pin the
+provider-selection symmetry.
 
 Deliberately DB-less: `make_engine()` (`app.db`) only builds a SQLAlchemy
 `Engine` object (lazy — no connection attempt), so a syntactically valid but
@@ -48,9 +62,16 @@ _VALID_ENV = {
     # list below, same dev-exempt/production-required shape as the three
     # GOOGLE_* vars above.
     "ADMIN_EMAILS": "admin@example.com",
-    # Phase-3 task-02: NVIDIA_API_KEY joined the not-is_dev required list
-    # below, same dev-exempt/production-required shape.
-    "NVIDIA_API_KEY": "test-nvidia-api-key",
+    # Task 6R-15 (6R-14 review): the guard now validates the ACTIVE
+    # `llm_provider`'s key, not `NVIDIA_API_KEY` unconditionally.
+    # `llm_provider` defaults to `"openai"` (task 6R-14) so the baseline
+    # pins that default explicitly and sets its active credential,
+    # `OPENAI_API_KEY` — deliberately NOT `NVIDIA_API_KEY`: a clean
+    # production boot under the default provider must never require the
+    # inactive NVIDIA key (see
+    # `test_main_imports_cleanly_when_all_required_vars_are_set` below).
+    "LLM_PROVIDER": "openai",
+    "OPENAI_API_KEY": "test-openai-api-key",
 }
 
 
@@ -139,7 +160,14 @@ def test_google_guard_does_not_raise_in_development_when_blank(
 def test_main_imports_cleanly_when_all_required_vars_are_set(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The happy path: all five vars non-empty ⇒ `app.main` builds a real `FastAPI` app."""
+    """The happy path: all five vars non-empty ⇒ `app.main` builds a real `FastAPI` app.
+
+    Task 6R-15's deploy-safety pin: `_VALID_ENV`'s baseline never sets
+    `NVIDIA_API_KEY` at all, so this also proves a clean production boot
+    under the default `llm_provider="openai"` never needs the inactive
+    NVIDIA key present — matching a real deployment that has dropped it
+    from the env entirely.
+    """
     main_module = _reload_main(monkeypatch, {"ENVIRONMENT": "production"})
 
     assert main_module.app.title == "AdvisorDesk API"
@@ -151,15 +179,17 @@ def test_main_imports_cleanly_in_dev_with_only_database_url_and_session_secret_s
     """The offline-dev boot pin: this is the exact case round 1's guard broke.
 
     `ENVIRONMENT=development` + only `DATABASE_URL`/`SESSION_SECRET` set
-    (every `GOOGLE_*` var AND `NVIDIA_API_KEY` empty) must import cleanly —
-    this is `.env.example`'s and the README's documented offline local-db
-    path (`cp .env.example .env`, set `DATABASE_URL`,
+    (every `GOOGLE_*` var AND both LLM provider keys empty) must import
+    cleanly — this is `.env.example`'s and the README's documented offline
+    local-db path (`cp .env.example .env`, set `DATABASE_URL`,
     `docker compose --profile local-db up`), which round 1's unconditional
-    five-guard policy broke by crash-looping the api container. Also pins
-    phase-3 task-02's real embedder-client boot-safety fix
-    (`app.rag.embeddings`'s `from_settings` constructor): building the
-    `openai` SDK client with a blank API key must not itself raise, since
-    `NVIDIA_API_KEY` is dev-exempt same as the `GOOGLE_*` vars.
+    five-guard policy broke by crash-looping the api container.
+    `.env.example` ships `LLM_PROVIDER=openai` with `OPENAI_API_KEY`/
+    `NVIDIA_API_KEY` both blank, so this also pins task 6R-15's
+    provider-aware guard alongside phase-3 task-02's real embedder-client
+    boot-safety fix (`app.rag.embeddings`'s `from_settings` constructor):
+    building the `openai` SDK client with a blank API key must not itself
+    raise, since both keys are dev-exempt same as the `GOOGLE_*` vars.
     """
     main_module = _reload_main(
         monkeypatch,
@@ -168,6 +198,7 @@ def test_main_imports_cleanly_in_dev_with_only_database_url_and_session_secret_s
             "GOOGLE_CLIENT_ID": "",
             "GOOGLE_CLIENT_SECRET": "",
             "GOOGLE_REDIRECT_URI": "",
+            "OPENAI_API_KEY": "",
             "NVIDIA_API_KEY": "",
         },
     )
@@ -212,39 +243,109 @@ def test_admin_emails_guard_does_not_raise_in_development_when_blank(
 
 
 # ---------------------------------------------------------------------------
-# Phase-3 task-02: NVIDIA_API_KEY joins the not-is_dev required list
+# Task 6R-15 (6R-14 review, Important finding): the guard validates the
+# ACTIVE `llm_provider`'s key (`settings.llm_api_key`), not `NVIDIA_API_KEY`
+# unconditionally — a missing `OPENAI_API_KEY` under the default
+# `llm_provider="openai"` must fail fast in production, the inactive
+# `NVIDIA_API_KEY` must NOT be required, and `llm_provider="nvidia"` flips
+# which key is active (provider-selection symmetry).
 # ---------------------------------------------------------------------------
 
 
-def test_nvidia_api_key_guard_raises_in_production_when_blank(
+def test_openai_api_key_guard_raises_in_production_when_blank(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """`NVIDIA_API_KEY`, blanked alone, fails `app.main` import under production.
+    """`OPENAI_API_KEY`, blanked alone, fails `app.main` import under production
+    (`llm_provider` defaults to `"openai"` — this is the active provider's key).
 
-    An empty `NVIDIA_API_KEY` in production boots cleanly but every
-    publish/edit-of-published call fails at the first real embedding
-    request instead — never until an admin actually tries to publish, which
-    is worse than failing fast at boot.
+    A missing `OPENAI_API_KEY` under the default provider boots cleanly
+    today but every publish/chat/agent call fails at the first real
+    embedding/completion request instead — never until an admin or client
+    actually uses it, which is worse than failing fast at boot. This is the
+    exact boot-safety property `NVIDIA_API_KEY` used to have unconditionally
+    (phase-3 task-02), restored here for whichever provider is actually
+    active.
     """
     with pytest.raises(RuntimeError) as exc_info:
-        _reload_main(monkeypatch, {"NVIDIA_API_KEY": "", "ENVIRONMENT": "production"})
+        _reload_main(monkeypatch, {"OPENAI_API_KEY": "", "ENVIRONMENT": "production"})
+
+    message = str(exc_info.value)
+    assert "OPENAI_API_KEY" in message
+    assert "openai_api_key" in message
+
+
+def test_openai_api_key_guard_does_not_raise_in_development_when_blank(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`OPENAI_API_KEY`, blanked alone, is exempt under dev — same shape as the `GOOGLE_*` guards.
+
+    The offline dev path never has a real OpenAI key configured either
+    (`.env.example` ships it blank); publishing/chat just won't work until
+    it's set, but the app must still boot (`OpenAICompatibleEmbedder`/
+    `OpenAICompatibleChatLLM`/`OpenAICompatibleAgentLLM`'s `from_settings`
+    all tolerate the empty value at construction time).
+    """
+    main_module = _reload_main(monkeypatch, {"OPENAI_API_KEY": "", "ENVIRONMENT": "development"})
+
+    assert main_module.app.title == "AdvisorDesk API"
+
+
+def test_inactive_nvidia_api_key_does_not_raise_in_production_under_openai_provider(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Under `llm_provider="openai"` (the default), a blank/absent `NVIDIA_API_KEY` must NOT
+    raise in production.
+
+    This is the exact deploy-safety property task 6R-15 fixes: before this
+    fix, dropping the now-unused `NVIDIA_API_KEY` placeholder from a
+    production env crash-looped boot even though nothing reads it under the
+    OpenAI provider. `NVIDIA_API_KEY` is absent from `_VALID_ENV` entirely
+    (never set by `_reload_main`), so this also covers the "var dropped from
+    the env altogether" scenario, not just "set to an empty string".
+    """
+    main_module = _reload_main(monkeypatch, {"LLM_PROVIDER": "openai", "ENVIRONMENT": "production"})
+
+    assert main_module.app.title == "AdvisorDesk API"
+
+
+def test_nvidia_api_key_guard_raises_in_production_when_blank_under_nvidia_provider(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Under `llm_provider="nvidia"`, a blank `NVIDIA_API_KEY` DOES raise in production.
+
+    The provider-selection mirror image of the `openai` case above:
+    whichever provider is active, ITS key is required at boot.
+    """
+    with pytest.raises(RuntimeError) as exc_info:
+        _reload_main(
+            monkeypatch,
+            {"LLM_PROVIDER": "nvidia", "NVIDIA_API_KEY": "", "ENVIRONMENT": "production"},
+        )
 
     message = str(exc_info.value)
     assert "NVIDIA_API_KEY" in message
     assert "nvidia_api_key" in message
 
 
-def test_nvidia_api_key_guard_does_not_raise_in_development_when_blank(
+def test_inactive_openai_api_key_does_not_raise_in_production_under_nvidia_provider(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """`NVIDIA_API_KEY`, blanked alone, is exempt under dev — same shape as the `GOOGLE_*` guards.
+    """Under `llm_provider="nvidia"`, a blank `OPENAI_API_KEY` must NOT raise in production.
 
-    The offline dev path never has a real NVIDIA key configured either;
-    publishing just won't work until it's set, but the app must still boot
-    (`app.rag.embeddings`'s real embedder client tolerates the empty value
-    at construction time — see its `from_settings` docstring).
+    It's the inactive provider's key. Pins the full provider-selection
+    symmetry alongside the three tests above: exactly one of
+    `OPENAI_API_KEY`/`NVIDIA_API_KEY` is required at a time, selected by
+    `llm_provider`.
     """
-    main_module = _reload_main(monkeypatch, {"NVIDIA_API_KEY": "", "ENVIRONMENT": "development"})
+    main_module = _reload_main(
+        monkeypatch,
+        {
+            "LLM_PROVIDER": "nvidia",
+            "NVIDIA_API_KEY": "test-nvidia-api-key",
+            "OPENAI_API_KEY": "",
+            "ENVIRONMENT": "production",
+        },
+    )
 
     assert main_module.app.title == "AdvisorDesk API"
 

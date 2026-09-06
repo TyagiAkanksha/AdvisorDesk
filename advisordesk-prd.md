@@ -90,10 +90,13 @@ Seeded with realistic **sample** advisory content. No real customer or financial
 - **Two frontends, one backend, one database.** Do not create a second backend.
 - The MCP server runs **inside the FastAPI app process** and its tools call the same service functions as the REST endpoints — no duplicated business logic.
 - **MCP exposure rule:** tools are invoked in-process by the agent loop. Exposing the MCP server over HTTP (for external MCP clients) is OFF by default (`MCP_HTTP_ENABLED=false`); if enabled, the MCP route requires the same admin session auth as §5.2. CMS write tools must never be reachable unauthenticated.
-- LLM provider (v1.5): **NVIDIA-hosted models over the OpenAI-compatible API**
-  (`https://integrate.api.nvidia.com/v1`, key `NVIDIA_API_KEY`) — chat completions for the RAG
-  assistant and the agent loop; embeddings API for vectors. The code talks the OpenAI wire
-  protocol via a configurable base URL, so the provider is a config swap, not a code change.
+- LLM provider (v1.6, config-driven via `LLM_PROVIDER`): default **OpenAI**
+  (`https://api.openai.com/v1`, key `OPENAI_API_KEY`) — chat completions for the RAG assistant
+  and the agent loop; embeddings API for vectors. Back-compat branch **NVIDIA NIM**
+  (`https://integrate.api.nvidia.com/v1`, key `NVIDIA_API_KEY`), selectable via
+  `LLM_PROVIDER=nvidia`, but its two pinned models (v1.5) went end-of-life (410 Gone) on
+  2026-08-25/26 — not recommended for new deployments. The code talks the OpenAI wire protocol
+  via a configurable base URL either way, so a provider swap is config-only, not a code change.
 
 ### 3.1 Repository layout (monorepo)
 ```
@@ -179,7 +182,9 @@ chunks (
   content_id uuid not null references content(id) on delete cascade,
   chunk_index int not null,
   text text not null,
-  embedding vector(1024),            -- nvidia/nv-embedqa-e5-v5 (v1.5; was 1536/text-embedding-3-small)
+  embedding vector(1024),            -- text-embedding-3-small@1024 (v1.6 default); was
+                                      -- nvidia/nv-embedqa-e5-v5 (v1.5, EOL'd 2026-08-25) before
+                                      -- that, and 1536/text-embedding-3-small before v1.5
   created_at timestamptz not null default now()
 )
 create index on chunks using hnsw (embedding vector_cosine_ops);
@@ -306,11 +311,11 @@ All tools read and write non-deleted rows only (§4.1) — a `content_id` addres
 ## 7. RAG pipeline (client assistant)
 
 1. **Chunking:** split `body_md` by markdown headings, then to ~400-token chunks with 50-token overlap (v1.5: lowered from 500 — the embedding model's input window is 512 of *its* tokens, and tokenizers differ; 400 keeps a safe margin). Store `chunk_index`.
-2. **Embedding:** `nvidia/nv-embedqa-e5-v5` (1024 dims) via the OpenAI-compatible `/v1/embeddings` endpoint (v1.5). The model is **asymmetric**: pass `input_type="passage"` when embedding chunks at publish time and `input_type="query"` when embedding user questions at retrieval time; send `truncate="END"` as a defense against over-length input. Batch per content item. Model/dims/base-URL are env-configurable (`EMBEDDING_MODEL`, `EMBEDDING_DIMENSIONS`, `LLM_BASE_URL`) so a provider swap never touches code.
+2. **Embedding:** provider is config-driven via `LLM_PROVIDER` (v1.6). Default **`openai`**: `text-embedding-3-small` at `dimensions=1024` (controller-verified live — a drop-in for the existing `chunks.embedding vector(1024)` column, no migration) via OpenAI's own `/v1/embeddings` endpoint; this model is **symmetric**, so `input_type` is accepted for interface compatibility but never reaches the wire. Back-compat branch **`nvidia`**: `nvidia/nv-embedqa-e5-v5` (1024 dims) over NVIDIA NIM's OpenAI-compatible endpoint — **EOL'd 2026-08-25 (410 Gone)**, kept selectable but not recommended for new deployments. The NVIDIA model is **asymmetric**: pass `input_type="passage"` when embedding chunks at publish time and `input_type="query"` when embedding user questions at retrieval time; send `truncate="END"` as a defense against over-length input — both are now NVIDIA-branch-specific, not sent to OpenAI. Batch per content item. Model/dims/base-URL/provider are env-configurable (`LLM_PROVIDER`, `EMBEDDING_MODEL`, `EMBEDDING_DIMENSIONS`, `LLM_BASE_URL`) so a provider swap never touches code.
 3. **Retrieval:** embed the user query → nearest neighbors over `chunks` via the HNSW index → top 6 → threshold filter.
    **Similarity convention (implementation trap — read carefully):** pgvector's `<=>` operator returns cosine **distance**. Define once in the retrieval module: `similarity = 1 - (embedding <=> query_embedding)`. Apply `SIMILARITY_THRESHOLD` (default `0.35`, env-configurable) to that **similarity** value — chunks below it are dropped. A unit test pins this conversion (§9).
 4. **Retrieval outcome recording:** when persisting the assistant message, set `top_similarity` to the best similarity observed (null if the index returned nothing) and `retrieval_found = false` iff no chunk cleared the threshold.
-5. **Answer synthesis:** NVIDIA-hosted instruct model over the OpenAI-compatible chat-completions API (exact model pinned in the phase-4 plan; `CHAT_MODEL` env-configurable). System prompt (verbatim intent, wording adjustable):
+5. **Answer synthesis:** same config-driven provider as embedding (v1.6). Default **`openai`**: `gpt-4o-mini` (controller-verified live — responds, supports tool-calling for the admin agent) over OpenAI's chat-completions API. Back-compat branch **`nvidia`**: the NVIDIA-hosted instruct model pinned in the phase-4 plan (`meta/llama-3.1-8b-instruct`) — **EOL'd 2026-08-26 (410 Gone)**. `CHAT_MODEL` env-configurable either way; the chat-completions wire shape carries no provider-specific parameters, so it is identical for both branches. System prompt (verbatim intent, wording adjustable):
    - Answer ONLY from the provided context chunks.
    - Cite with bracketed numbers [1], [2] mapping to the provided sources.
    - If the context does not contain the answer: reply that no published guidance covers this, suggest asking the advisory team, and DO NOT answer from general knowledge.
@@ -349,8 +354,10 @@ All tools read and write non-deleted rows only (§4.1) — a `content_id` addres
   - `RATE_LIMIT_PER_DAY` (default 50) messages per day per session
   - `SESSION_CREATE_PER_DAY` (default 20) new sessions per day per IP — prevents resetting the per-session cap by minting fresh sessions
   - Violations return `429` with the standard error envelope.
-- **Config:** all secrets and tunables via env vars: `NVIDIA_API_KEY` (v1.5; was
-  `OPENAI_API_KEY`), `LLM_BASE_URL`, `EMBEDDING_MODEL`, `EMBEDDING_DIMENSIONS`, `CHAT_MODEL`, `DATABASE_URL`, `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `SESSION_SECRET`, `ADMIN_EMAILS`, `CORS_ORIGINS`, `SIMILARITY_THRESHOLD`, `RATE_LIMIT_PER_MIN`, `RATE_LIMIT_PER_DAY`, `SESSION_CREATE_PER_DAY`, `MCP_HTTP_ENABLED`. `.env.example` provided. Never commit secrets.
+- **Config:** all secrets and tunables via env vars: `LLM_PROVIDER` (v1.6; `"openai"` default or
+  `"nvidia"`), `OPENAI_API_KEY` (v1.6 default credential; was `NVIDIA_API_KEY` in v1.5, itself
+  was `OPENAI_API_KEY` before that), `NVIDIA_API_KEY` (only needed when `LLM_PROVIDER=nvidia`),
+  `LLM_BASE_URL`, `EMBEDDING_MODEL`, `EMBEDDING_DIMENSIONS`, `CHAT_MODEL`, `DATABASE_URL`, `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `SESSION_SECRET`, `ADMIN_EMAILS`, `CORS_ORIGINS`, `SIMILARITY_THRESHOLD`, `RATE_LIMIT_PER_MIN`, `RATE_LIMIT_PER_DAY`, `SESSION_CREATE_PER_DAY`, `MCP_HTTP_ENABLED`. `.env.example` provided. Never commit secrets.
 - **Streaming latency:** first token < ~2s on typical questions; a simple middleware logs p50/p95.
 - **Error handling:** consistent JSON error envelope `{error: {code, message}}` (also used inside SSE `error` events); frontends surface friendly messages.
 - **Type safety:** TypeScript strict mode in both frontends; Pydantic everywhere on the API boundary.
@@ -364,7 +371,7 @@ All tools read and write non-deleted rows only (§4.1) — a `content_id` addres
   - each MCP tool: happy path + one failure path (including `report_content_gaps` against seeded `retrieval_found` rows)
   - a smoke test that boots the API and hits `/api/v1/stats`
 - **Local development:** `docker compose up` runs api + both frontends. An optional `db` service (image `pgvector/pgvector:pg16`) sits behind a compose profile: `docker compose --profile local-db up` for fully offline dev. `DATABASE_URL` points at either the local container or Supabase. README documents both paths; **Supabase remains the default and the deployed target.**
-- **Deployment:** AWS. Default: API container on App Runner (or ECS Fargate); frontends per §11.
+- **Deployment:** AWS. Default: API container on App Runner (or ECS Fargate); frontends per §11. *(Amended 2026-08-09, phase-6 execution: App Runner closed to new AWS customers 2026-04-30 — deployed as single-host EC2 + Caddy running all three containers; see `infra/deploy/ec2-single-host.md`.)*
 
 ## 9.1 Metrics to capture (for resume/interview)
 - Number of seeded documents and chunks; number of MCP tools (9: 8 core + `report_content_gaps`).
@@ -391,7 +398,7 @@ Definition of done: a stranger can follow the README, run the demo script end to
 
 | # | Decision | Default chosen | Alternatives |
 |---|---|---|---|
-| 1 | LLM/embedding models (v1.5) | NVIDIA-hosted via OpenAI-compatible API: `nvidia/nv-embedqa-e5-v5` embeddings (1024d); chat model pinned in phase 4 | OpenAI `gpt-4o-mini` + `text-embedding-3-small` (original v1.4 default — config swap away) |
+| 1 | LLM/embedding models (v1.6) | Config-driven via `LLM_PROVIDER` (task 6R-14, both v1.5 NVIDIA NIM models EOL'd 2026-08-25/26): default **OpenAI** `gpt-4o-mini` + `text-embedding-3-small` (1024d) | `LLM_PROVIDER=nvidia`: NVIDIA NIM via OpenAI-compatible API, `nvidia/nv-embedqa-e5-v5` embeddings (1024d) + `meta/llama-3.1-8b-instruct` chat (v1.5 default — both EOL'd, back-compat only) |
 | 2 | Repo structure | Single monorepo | Split repos per app |
 | 3 | Client app auth | Public, anonymous sessions | Add optional Google login for clients |
 | 4 | Admin access control | Email allowlist via env var (`ADMIN_EMAILS`) | Open login for local development only |
@@ -424,6 +431,20 @@ Definition of done: a stranger can follow the README, run the demo script end to
 
 ## 14. Changelog
 
+- **v1.6** — LLM provider switched back to OpenAI by default (task 6R-14, 2026-09-06; P0
+  production-outage remediation): both v1.5 NVIDIA NIM models this app was pinned to went
+  end-of-life (410 Gone) — `nvidia/nv-embedqa-e5-v5` (embedding) on 2026-08-25, `meta/llama-3.1-
+  8b-instruct` (chat) on 2026-08-26 — taking down the public chat and admin agent. Provider is
+  now config-driven via a new `LLM_PROVIDER` (`"openai"`/`"nvidia"`) setting, defaulting to
+  `"openai"`; a new `OPENAI_API_KEY`/`openai_api_key` credential field is added, and
+  `NVIDIA_API_KEY`/`nvidia_api_key` stay in place as the back-compat/future-re-enable branch (not
+  removed). New OpenAI defaults (controller-verified live): `text-embedding-3-small` at
+  `dimensions=1024` (drop-in for the existing `chunks.embedding vector(1024)` column — no
+  migration) and `gpt-4o-mini` (supports tool-calling for the admin agent). The asymmetric
+  `input_type="passage"`/`"query"` embedding-request detail (§7.2) is now NVIDIA-branch-specific
+  — OpenAI's embedding model is symmetric and never receives it. Updates §3, §4 (schema
+  comment), §7.2, §9, §11 row 1. No route/DTO change (`openapi.json`/`mcp-tools.json`
+  byte-stable) — this is a config/provider-adapter change only.
 - **v1.4** — Styling stack switched from Tailwind to Material UI (owner decision, 2026-07-27): `@mui/material` + `@mui/icons-material` + `@mui/material-nextjs` (App Router SSR), Emotion styling, MUI `createTheme()` as the design-token system; no Tailwind. Updates §11 row 6 and the §3.1 layout comments. No behavioral or API change.
 - **v1.3** — Schema standardization pass (§4.1): uuid PKs; `timestamptz` audit columns (`created_at` everywhere, `updated_at` on mutable tables, `not null default now()`, app-maintained); actor columns on `content` (`author_id` doubles as created-by; new `updated_by`); soft delete via `is_deleted` on `users`/`content`/`tags` only (`chunks` stay hard-delete; chat tables append-only); define-once active-row filter; uniqueness-vs-soft-delete semantics (slugs never reused; tag/user reactivation-on-recreate); minimal FK index set. Lifecycle: delete = tombstone + chunk removal in one transaction, `status` untouched; no restore surface (§12). Ripples through §2.2, §5 (public filters now published **and** non-deleted), §6, §8, §9 tests. Retrieval behavior unchanged — deletion still physically removes chunks.
 - **v1.2** — Merged all 12 pre-implementation review resolutions inline (stateless agent endpoint; retrieval-outcome columns; `report_content_gaps` spec; body-param sessions; citation-granularity asymmetry; tool-cap behavior; slug rules; SSE event shapes; rate limiting; local-db compose profile; similarity-vs-distance convention; eval question set). Added from the follow-up consistency pass: publish/edit atomicity + rollback, MCP HTTP exposure rule, per-IP session-creation cap, `CORS_ORIGINS` as config. Added implementer contract.

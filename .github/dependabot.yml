@@ -1,0 +1,16 @@
+version: 2
+updates:
+  # Covers the whole pnpm workspace (apps/admin + apps/client) through the one root
+  # pnpm-lock.yaml — Dependabot auto-detects pnpm under the "npm" ecosystem id (verified
+  # against current GitHub docs; there is no separate "pnpm" ecosystem value).
+  - package-ecosystem: "npm"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+
+  # GA since March 2025 (verified against the GitHub Changelog) — reads pyproject.toml/uv.lock
+  # natively, so no pip-ecosystem fallback is needed here.
+  - package-ecosystem: "uv"
+    directory: "/apps/api"
+    schedule:
+      interval: "weekly"

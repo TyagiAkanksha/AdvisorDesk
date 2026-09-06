@@ -26,6 +26,7 @@ dev = [
     "mypy",
     "import-linter",
     "types-pyyaml>=6.0.12.20260724",
+    "pytest-cov>=7.1.0",
 ]
 
 [build-system]
@@ -131,10 +132,10 @@ forbidden_modules = [
 ]
 
 [[tool.importlinter.contracts]]
-name = "app.mcp never imports app.routes"
+name = "app.mcp never imports app.routes, app.agent, or app.db"
 type = "forbidden"
 source_modules = ["app.mcp"]
-forbidden_modules = ["app.routes"]
+forbidden_modules = ["app.routes", "app.agent", "app.db"]
 # Phase-5 task-03: was a two-way "independence" contract (task-01) — narrowed to one-directional
 # here because `POST /agent/chat` (app.routes.agent_routes) now legitimately reaches
 # `app.mcp.runtime.call_tool`/`list_tool_schemas` *through* `app.agent.loop` (the agent tool-loop
@@ -142,6 +143,33 @@ forbidden_modules = ["app.routes"]
 # standalone streamable-HTTP MCP surface — must still never depend on `app.routes` in the other
 # direction, so it stays reusable independent of the REST surface; that one-way guarantee is what
 # this contract keeps.
+#
+# Phase-6-remediation task 6R-07 (WR-07): `app.agent` and `app.db` were unguarded gaps — the
+# legal direction is `app.agent` -> `app.mcp` (contract above, "app.agent imports only app.mcp,
+# ..."), never the reverse, and `app.mcp` gets its `Session`/`sessionmaker` handed in by callers
+# (`_AdminGatedMcpApp`/`app.routes.deps`) rather than importing `app.db` to build one itself — so
+# both directions are now forbidden here too.
+
+[[tool.importlinter.contracts]]
+name = "app.routes never imports app.mcp or app.db directly"
+type = "forbidden"
+source_modules = ["app.routes"]
+forbidden_modules = ["app.mcp", "app.db"]
+allow_indirect_imports = true
+# Phase-6-remediation task 6R-07 (WR-07): `app.routes` had no contract of its own, so a future
+# `routes -> mcp` or `routes -> db` DIRECT import (bypassing `app.agent`) would go uncaught.
+# `allow_indirect_imports = true` is load-bearing here, not decorative: import-linter's
+# `ForbiddenContract` checks transitive chains by default, and `app.routes.deps -> app.agent.loop
+# -> app.mcp.runtime` is exactly such a chain (the owner-ratified path, `POST /agent/chat`,
+# phase-5 task-03) — without this flag the contract would be permanently BROKEN by that legal
+# indirect import; verified empirically while authoring this contract (ritual below caught it).
+# `app.routes -> app.agent` itself is NOT forbidden: routes reaches `app.mcp` only *through*
+# `app.agent.loop`'s tool-loop seam, mirroring the one-way guarantee the "app.mcp never imports
+# app.routes, ..." contract above already keeps in the other direction. `app.db` has no such
+# legitimate indirect path today (a route depends on `app.routes.deps.get_session`, which reads
+# `request.app.state.session_factory` rather than importing `app.db`), but the same flag is used
+# for both forbidden targets in this one contract so a same-shaped indirect exception, if ever
+# legitimately needed for `app.db`, doesn't silently break this contract either.
 
 [[tool.importlinter.contracts]]
 name = "nothing imports app.main; only app.main imports app.factory"

@@ -1,0 +1,172 @@
+name: CI
+
+# Task 6R-02 (WR-16/17/50/51/52): runs the exact gate commands documented for local dev
+# (root package.json's gates:api / gates:admin / gates:client, one `uv run …`/`pnpm …` per
+# step so a failure pinpoints the gate), plus dependency audits, a coverage floor, a
+# mass-skip tripwire, and a codegen-drift check.
+on:
+  push:
+    branches:
+      - v1
+      - "feat/**"
+  pull_request:
+    branches:
+      - v1
+
+jobs:
+  api:
+    runs-on: ubuntu-latest
+    env:
+      # Bare `postgresql://` — `app.db.make_engine` (and Alembic's `env.py`, which builds its
+      # engine through the same factory) normalizes it to `postgresql+psycopg://` itself, and
+      # this is the form `.env`/`.env.example` already use, so CI stays consistent with local
+      # dev rather than introducing a second convention.
+      TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/advisordesk_test
+      # Fix round 1 (review I2): `uv run` without `--locked`/`--frozen` silently re-resolves and
+      # rewrites uv.lock when it disagrees with pyproject.toml — but infra/Dockerfile.api's image
+      # build uses `uv sync --frozen` and fails hard on that same disagreement. UV_LOCKED makes
+      # every `uv run` step below behave like `--locked` (env var per `uv run --help`), closing
+      # the gap so lockfile drift fails in CI instead of only at image build.
+      UV_LOCKED: "1"
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: advisordesk_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    defaults:
+      run:
+        working-directory: apps/api
+    steps:
+      - uses: actions/checkout@v7
+
+      # astral-sh/setup-uv v8+ cuts immutable per-version releases only (no moving `@v8`/`@v9`
+      # major tag exists to pin to) — pinning the exact latest version is the closest
+      # equivalent of "pin the current major" available upstream.
+      - uses: astral-sh/setup-uv@v10.0.1
+        with:
+          python-version: "3.12"
+
+      # The five gates, command text verbatim from root package.json's `gates:api` (task 6R-01)
+      # / README.md §Gates, as separate named steps so a CI failure pinpoints the gate.
+      - name: ruff check
+        run: uv run ruff check .
+      - name: ruff format --check
+        run: uv run ruff format --check .
+      - name: mypy
+        run: uv run mypy
+      - name: lint-imports
+        run: uv run lint-imports
+
+      # Fix round 1 (review I3, controller-adjudicated into scope): the codegen-drift step (web
+      # job, below) only proves generated TS types ⟷ the committed openapi.json — nothing proved
+      # committed openapi.json/mcp-tools.json ⟷ the actual app (CONVENTIONS.md §8's gate, until
+      # now enforced only by human memory). Regenerate both deterministic wire-surface baselines
+      # via the repo's own export scripts and fail if that changes anything.
+      - name: wire-surface baseline drift
+        run: |
+          uv run python scripts/export_openapi.py
+          uv run python scripts/export_mcp_tools.py
+          git diff --exit-code -- openapi.json mcp-tools.json
+
+      - name: pytest
+        run: uv run pytest -q
+
+      # WR-50: separate step, not a change to the pytest gate above — `--cov-fail-under`
+      # only ever needs to gate CI, and keeping the gate step flag-free means a local
+      # `pnpm gates:api` never needs pytest-cov-aware flags to stay green.
+      - name: coverage
+        run: uv run pytest -q --cov=app --cov-fail-under=95
+
+      # WR-17. `uv export`'s default output includes an `-e .` (editable, local-path) line for
+      # the project itself; pip-audit's hash-checked install of that line fails with no single
+      # file to hash. `--no-emit-project` drops it — verified locally, the shape isn't the
+      # brief's originally-assumed `uv export --format requirements-txt | uvx pip-audit -r
+      # /dev/stdin` (that exact pipeline fails for the reason above).
+      #
+      # Fix round 1 (review I1): `shell: bash` is required here, not just for-consistency — the
+      # step's default shell (`bash -e {0}`, no `-o pipefail`) makes the pipeline's exit status
+      # `pip-audit`'s alone. If `uv export` ever breaks (e.g. a future uv drops
+      # `--no-emit-project`), it exits non-zero and writes nothing, but `pip-audit` reads an empty
+      # stdin, prints "No known vulnerabilities found", and exits 0 — a false-green with no
+      # signal to investigate. `shell: bash` opts into GitHub's `-o pipefail` variant so a broken
+      # `uv export` fails the step instead (still harmless: `continue-on-error: true` still means
+      # it can never fail the job, only stop lying about what it audited).
+      - name: pip-audit # tighten after baseline triage
+        continue-on-error: true
+        shell: bash
+        run: uv export --format requirements-txt --no-emit-project | uvx pip-audit -r /dev/stdin
+
+  web:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        app: [admin, client]
+    steps:
+      - uses: actions/checkout@v7
+
+      # pnpm's version is pinned by root package.json's `packageManager` field and activated by
+      # `corepack enable` below; Node itself isn't corepack's concern, so it's pinned here to
+      # match the version this repo already standardizes on (README §Prerequisites, and
+      # infra/Dockerfile.web's `node:24-slim`).
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+
+      - run: corepack enable
+      - run: pnpm install --frozen-lockfile
+
+      # The four gates, command text verbatim from root package.json's `gates:admin`/
+      # `gates:client` (task 6R-01) — `pnpm -C apps/<app> <script>`, one matrix leg per app.
+      - name: lint
+        run: pnpm -C apps/${{ matrix.app }} lint
+      - name: type-check
+        run: pnpm -C apps/${{ matrix.app }} type-check
+      - name: format:check
+        run: pnpm -C apps/${{ matrix.app }} format:check
+      - name: test
+        run: pnpm -C apps/${{ matrix.app }} test
+
+      # `next build` runs page code at "Generating static pages" under NODE_ENV=production; both
+      # apps intentionally throw there if their API-base env var is unset (apps/admin's
+      # `src/lib/apiBase.ts`, apps/client's `src/lib/publicApi.ts` — "a missing env var in a
+      # production build is a deploy-config bug, not a runtime edge case to degrade gracefully
+      # around"). Verified empirically: `pnpm build` fails on both apps without these set. CI
+      # only needs the build to succeed, not to serve traffic, so a same-shaped dummy origin
+      # (matching each app's own `.env.local.example` dev default) satisfies both apps
+      # regardless of which one the matrix leg is building.
+      - name: build
+        env:
+          NEXT_PUBLIC_API_URL: http://localhost:8000
+          API_URL: http://localhost:8000
+        run: pnpm -C apps/${{ matrix.app }} build
+
+      # WR-52: codegen reads the committed apps/api/openapi.json directly (see each app's
+      # `codegen` script) — no live API server needed, verified locally (clean before this
+      # change; re-running codegen produces byte-identical output).
+      - name: codegen drift
+        run: |
+          pnpm -C apps/${{ matrix.app }} codegen
+          git diff --exit-code -- apps/${{ matrix.app }}/src/types/generated
+
+  audit-web:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+      - run: corepack enable
+      - run: pnpm install --frozen-lockfile
+      # WR-17. Runs once (not per web-job matrix leg) — `pnpm audit` at the workspace root
+      # covers both apps/admin and apps/client through the one shared pnpm-lock.yaml.
+      - name: pnpm audit # tighten after baseline triage
+        continue-on-error: true
+        run: pnpm audit --audit-level=high

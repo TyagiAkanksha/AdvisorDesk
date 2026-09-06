@@ -446,8 +446,16 @@ def test_from_settings_falls_back_to_unset_api_key_when_nvidia_api_key_is_empty(
     """Dev-mode boot-safety (mirrors `OpenAICompatibleChatLLM`/`OpenAICompatibleEmbedder`): an
     empty `nvidia_api_key` must not crash `from_settings` — the `openai` SDK raises at
     *construction* time for a falsy `api_key` with no `OPENAI_API_KEY` env var either, which
-    would crash `app.main`'s module-level wiring on every offline dev boot."""
-    settings = Settings(nvidia_api_key="")
+    would crash `app.main`'s module-level wiring on every offline dev boot.
+
+    Task 6R-14 pre-authorized pinned edit: explicit `llm_provider="nvidia"` — `from_settings`
+    now resolves its API key via `settings.llm_api_key` (openai when `llm_provider="openai"`,
+    the new default), so this test must pin the NVIDIA branch explicitly to keep testing what
+    its name says: an empty `nvidia_api_key` under the `nvidia` provider still boot-safes to
+    `"unset"`. The `provider="openai"` empty-key case is covered separately, in
+    `tests/test_openai_embeddings_wire.py`'s/the new chat-wire file's own boot-safety pins.
+    """
+    settings = Settings(llm_provider="nvidia", nvidia_api_key="")
 
     agent_llm = OpenAICompatibleAgentLLM.from_settings(settings)
 
@@ -457,8 +465,17 @@ def test_from_settings_falls_back_to_unset_api_key_when_nvidia_api_key_is_empty(
 def test_from_settings_reuses_embedding_timeout_and_max_retries() -> None:
     """`from_settings` applies `Settings.embedding_timeout_seconds`/`embedding_max_retries` to
     the real client (mirrors `OpenAICompatibleChatLLM.from_settings`'s own documented reuse
-    decision — no dedicated `AGENT_*`/`CHAT_*` settings exist)."""
+    decision — no dedicated `AGENT_*`/`CHAT_*` settings exist).
+
+    Task 6R-14 pre-authorized pinned edit: explicit `llm_provider="nvidia"` alongside the
+    `nvidia_api_key` this test sets — makes the NVIDIA configuration this test exercises
+    unambiguous now that `llm_provider` (default `"openai"`) governs which key `from_settings`
+    actually reads (this particular test never asserts on `.api_key`, so it was not at risk of
+    silently breaking, but gating it keeps every `nvidia_api_key=`-setting test in this file
+    consistent).
+    """
     settings = Settings(
+        llm_provider="nvidia",
         nvidia_api_key="test-nvidia-key",
         embedding_timeout_seconds=12.5,
         embedding_max_retries=5,

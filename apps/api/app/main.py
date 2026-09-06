@@ -4,10 +4,13 @@ CONVENTIONS.md §5: `app/main.py` is the only wiring point — load settings,
 build the engine + session factory, call `create_app(...)`, expose `app`.
 It's also the only place that requires `DATABASE_URL` and `SESSION_SECRET`
 to be non-empty, unconditionally, and `GOOGLE_CLIENT_ID`/
-`GOOGLE_CLIENT_SECRET`/`GOOGLE_REDIRECT_URI`/`ADMIN_EMAILS`/`NVIDIA_API_KEY`
-to be non-empty outside dev (phase-2 task-01 review round 1, finding I1;
-narrowed in review round 2 — see below; `ADMIN_EMAILS` added by the phase-2
-final review, finding C-6; `NVIDIA_API_KEY` added by phase-3 task-02, same
+`GOOGLE_CLIENT_SECRET`/`GOOGLE_REDIRECT_URI`/`ADMIN_EMAILS`/the ACTIVE
+`llm_provider`'s API key (`settings.llm_api_key` — `OPENAI_API_KEY` under the
+default `llm_provider="openai"`, `NVIDIA_API_KEY` under
+`llm_provider="nvidia"`) to be non-empty outside dev (phase-2 task-01 review
+round 1, finding I1; narrowed in review round 2 — see below; `ADMIN_EMAILS`
+added by the phase-2 final review, finding C-6; the LLM key guard added by
+phase-3 task-02, made provider-aware by task 6R-15 — see below — same
 dev-exempt/production-required shape). A real deployment booted without one
 of these would otherwise sign every session with an empty secret / talk to
 Google with an empty client id / lock every admin out of `/auth/callback`
@@ -28,6 +31,17 @@ environment); the three `GOOGLE_*` guards now fire only when
 `not settings.is_dev` — in development the app boots without Google
 credentials and admin login simply won't work until they're set, exactly as
 `.env.example`'s comments now say.
+
+Task 6R-15 (6R-14 review, Important finding): task 6R-14 added
+`Settings.llm_provider`/`openai_api_key`/`llm_api_key` and flipped the
+default provider to `"openai"`, but this guard validated `NVIDIA_API_KEY`
+unconditionally — under the new default that was wrong both ways: a missing
+`OPENAI_API_KEY` booted silently, and dropping the now-unused
+`NVIDIA_API_KEY` placeholder from a production env crash-looped boot. The
+guard below is provider-aware instead: it requires whichever of
+`OPENAI_API_KEY`/`NVIDIA_API_KEY` is actually active (`settings.llm_api_key`
+resolves to one or the other; `settings.llm_provider` says which), naming
+that env var — never the inactive one — in the boot-failure message.
 """
 
 from __future__ import annotations
@@ -50,6 +64,34 @@ from app.rag.synthesis import OpenAICompatibleChatLLM
 from app.routes.ratelimit import RateLimiter
 
 logger = logging.getLogger(__name__)
+
+
+def _configure_logging() -> None:
+    """Configure the root logger to INFO with a stream handler (fix round 1, phase-6 task-01
+    review round 1, finding C-2) — GUARDED so it never clobbers an already-configured root.
+
+    Before this, nothing in `apps/api/app/` ever called `logging.basicConfig`/`dictConfig`, so
+    under uvicorn's own default `LOGGING_CONFIG` (what `uvicorn app.main:app` applies — it only
+    configures the `uvicorn`/`uvicorn.access`/`uvicorn.error` loggers, never the root logger) the
+    root logger was left at its library default (WARNING, no handlers). Every `logger.info(...)`
+    call in `app.routes.metrics` — including the one greppable `chat_latency ...` line PRD §9.1
+    exists to produce — was therefore silently discarded in any real deployed process; the pinned
+    `tests/test_metrics.py` suite never caught this because `caplog.at_level(logging.INFO)`
+    forcibly lowers the level for the duration of each test, masking the gap.
+
+    `logging.basicConfig(level=logging.INFO)`'s own built-in behavior — a no-op whenever the root
+    logger already has at least one handler, unless `force=True` is passed (never passed here) —
+    IS the "only configure if root has no handlers" guard the controller adjudication asked for,
+    so this function adds no separate check on top of it. Called unconditionally at import time,
+    below, so it always runs before `app.main` wires anything else: it is a no-op only when
+    something else (a test harness that pre-configured logging, or a future task-02 dictConfig)
+    already added a handler to the root logger first — this function then leaves that
+    configuration completely untouched.
+    """
+    logging.basicConfig(level=logging.INFO)
+
+
+_configure_logging()
 
 
 def _require_nonempty(value: str, env_var: str, settings_attr: str) -> None:
@@ -95,19 +137,33 @@ if not settings.is_dev:
         "google_client_secret",
     )
     _require_nonempty(settings.google_redirect_uri, "GOOGLE_REDIRECT_URI", "google_redirect_uri")
-    # Phase-3 task-02: an empty NVIDIA_API_KEY in production boots cleanly
-    # but every publish/edit-of-published call fails at the first real
-    # embedding request (EmbeddingFailedError, PRD §4 atomicity rolls the
-    # whole transaction back) — never silently, but also never until an
-    # admin actually tries to publish, which is worse than failing at boot.
-    # Dev-exempt for the same reason as the three GOOGLE_* guards: the
-    # offline dev path (`cp .env.example .env`, which ships this blank)
-    # must still boot; publishing just won't work until it's set
-    # (`OpenAICompatibleEmbedder.from_settings` tolerates the empty value at
-    # construction time — see its docstring — so this is purely a
-    # request-time failure, not a boot-time one, when left unset in dev).
+    # Phase-3 task-02: an empty LLM API key in production boots cleanly but
+    # every publish/edit-of-published call fails at the first real embedding
+    # request (EmbeddingFailedError, PRD §4 atomicity rolls the whole
+    # transaction back) — never silently, but also never until an admin
+    # actually tries to publish, which is worse than failing at boot. Task
+    # 6R-15 (6R-14 review): made provider-aware — this validates the ACTIVE
+    # `llm_provider`'s key (`settings.llm_api_key`), not `NVIDIA_API_KEY`
+    # unconditionally, so a production env that has dropped the now-unused
+    # NVIDIA placeholder (default provider is `openai`, task 6R-14) still
+    # boots cleanly, while a genuinely missing key for whichever provider IS
+    # active still fails fast, named correctly in the error. Dev-exempt for
+    # the same reason as the three GOOGLE_* guards: the offline dev path
+    # (`cp .env.example .env`, which ships both provider keys blank) must
+    # still boot; publishing/chat/agent calls just won't work until one is
+    # set (`OpenAICompatibleEmbedder`/`OpenAICompatibleChatLLM`/
+    # `OpenAICompatibleAgentLLM`'s `from_settings` all tolerate the empty
+    # value at construction time — see their docstrings — so this is purely
+    # a request-time failure, not a boot-time one, when left unset in dev).
+    _llm_api_key_env_var, _llm_api_key_settings_attr = (
+        ("OPENAI_API_KEY", "openai_api_key")
+        if settings.llm_provider == "openai"
+        else ("NVIDIA_API_KEY", "nvidia_api_key")
+    )
     _require_nonempty(
-        settings.nvidia_api_key.get_secret_value(), "NVIDIA_API_KEY", "nvidia_api_key"
+        settings.llm_api_key.get_secret_value(),
+        _llm_api_key_env_var,
+        _llm_api_key_settings_attr,
     )
     # Final review, finding C-6: an empty ADMIN_EMAILS in production boots
     # cleanly but locks EVERY Google identity out of `/auth/callback`

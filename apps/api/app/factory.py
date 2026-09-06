@@ -24,6 +24,7 @@ from app.routes.auth_routes import router as auth_router
 from app.routes.content_routes import router as content_router
 from app.routes.errors import register_error_handlers
 from app.routes.health_routes import router as health_router
+from app.routes.metrics import LatencyMiddleware, LatencyTracker
 from app.routes.public_routes import router as public_router
 from app.routes.ratelimit import RateLimiter
 from app.services.lifecycle import ChunkPipeline, NoopChunkPipeline
@@ -143,6 +144,21 @@ def create_app(
     app.state.rate_limiter = (
         rate_limiter if rate_limiter is not None else RateLimiter(resolved_settings)
     )
+    # Phase-6 task-01 (PRD §9/§9.1): one process-lifetime `LatencyTracker`, always real (no
+    # injection point in `create_app`'s own signature — unlike `rate_limiter`, nothing needs to
+    # override it: no test asserts on a specific window/clock, only on `app.state.latency_tracker`
+    # existing and accumulating real samples). Read directly off `app.state` by
+    # `app.routes.public_routes.public_chat`'s `on_first_event` closure and by tests; never
+    # exposed through any route (§5 surface stays frozen).
+    app.state.latency_tracker = LatencyTracker()
+
+    # `LatencyMiddleware` is added BEFORE `CORSMiddleware` below so CORS ends up OUTERMOST in the
+    # resulting stack (`Starlette.add_middleware` prepends — the most-recently-added middleware
+    # wraps everything else) — the conventional ordering: CORS headers must reach every response,
+    # including ones `LatencyMiddleware`'s own inner layers never see (e.g. a CORS-intercepted
+    # preflight `OPTIONS` never reaches the router, so it never gets a meaningless timing line
+    # either).
+    app.add_middleware(LatencyMiddleware, tracker=app.state.latency_tracker)
 
     app.add_middleware(
         CORSMiddleware,

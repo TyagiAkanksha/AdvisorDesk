@@ -16,11 +16,13 @@ export default function Component({
   variant = 'permanent',
   open = true,
   onClose,
+  id,
 }: DrawerProps) {
   const width = anchor === 'left' ? NAV_DRAWER_WIDTH : PANEL_DRAWER_WIDTH;
 
   return (
     <MuiDrawer
+      id={id}
       anchor={anchor}
       variant={variant}
       open={open}

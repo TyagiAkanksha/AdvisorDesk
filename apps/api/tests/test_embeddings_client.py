@@ -47,11 +47,21 @@ def _embedder_with_transport(
     *,
     dimensions: int = 3,
     max_retries: int = 0,
+    provider: str = "nvidia",
 ) -> OpenAICompatibleEmbedder:
     """Build a real `OpenAICompatibleEmbedder` wired to a fake HTTP transport — no network.
 
     `max_retries=0` by default so an error-path test doesn't sit through the SDK's real retry
     backoff; F1's own tests override the client's retry budget directly where that's the point.
+
+    `provider="nvidia"` by default (task 6R-14 pre-authorized pinned edit): every test in this
+    file was written against the NVIDIA-shape request (`extra_body={"input_type", "truncate"}`,
+    no `dimensions`) before OpenAI became the config default (`Settings.llm_provider`) —
+    explicitly gating the default here, in the ONE shared builder, keeps every existing
+    NVIDIA-shape assertion below pointed at the `provider="nvidia"` branch it was always
+    written for, rather than silently drifting onto whatever `OpenAICompatibleEmbedder`'s own
+    default becomes. The OpenAI-provider branch is covered separately, in
+    `tests/test_openai_embeddings_wire.py`.
     """
     http_client = httpx.Client(transport=httpx.MockTransport(handler))
     client = OpenAI(
@@ -60,7 +70,9 @@ def _embedder_with_transport(
         http_client=http_client,
         max_retries=max_retries,
     )
-    return OpenAICompatibleEmbedder(client=client, model="test-embed-model", dimensions=dimensions)
+    return OpenAICompatibleEmbedder(
+        client=client, model="test-embed-model", dimensions=dimensions, provider=provider
+    )
 
 
 def _embedding_response(vectors: list[list[float]]) -> httpx.Response:
@@ -156,6 +168,10 @@ def test_request_body_carries_encoding_format_float_alongside_input_type_and_tru
     (never the SDK's silently-injected default `"base64"`) alongside the existing
     `input_type`/`truncate` NVIDIA NIM extras — a deterministic, provider-agnostic wire shape
     (PRD §7.2).
+
+    Task 6R-14 pre-authorized pinned edit: explicitly `provider="nvidia"` — this is the
+    NVIDIA-shape assertion `_embedder_with_transport`'s own default already selects, named here
+    too so the gate is visible at the one call site that actually depends on it.
     """
     captured: dict[str, object] = {}
 
@@ -163,7 +179,7 @@ def test_request_body_carries_encoding_format_float_alongside_input_type_and_tru
         captured["body"] = json.loads(request.content)
         return _embedding_response([[0.1, 0.2, 0.3]])
 
-    embedder = _embedder_with_transport(handler)
+    embedder = _embedder_with_transport(handler, provider="nvidia")
 
     embedder.embed_texts(["hello"], input_type="passage")
 

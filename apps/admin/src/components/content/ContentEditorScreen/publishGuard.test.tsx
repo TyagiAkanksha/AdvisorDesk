@@ -137,12 +137,17 @@ describe('ContentEditorScreen save-then-publish', () => {
     );
     expect(patchCalls).toHaveLength(1);
     expect(publishCalls).toHaveLength(1);
+    const patchCall = patchCalls[0];
+    const publishCall = publishCalls[0];
+    if (!patchCall || !publishCall) {
+      throw new Error('expected exactly one PATCH call and one publish POST call');
+    }
 
-    const patchBody = (await requestJson(patchCalls[0][0])) as Record<string, unknown>;
+    const patchBody = (await requestJson(patchCall[0])) as Record<string, unknown>;
     expect(patchBody).toEqual({ title: 'Changed Title' });
 
-    const patchIndex = fetchMock.mock.calls.indexOf(patchCalls[0]);
-    const publishIndex = fetchMock.mock.calls.indexOf(publishCalls[0]);
+    const patchIndex = fetchMock.mock.calls.indexOf(patchCall);
+    const publishIndex = fetchMock.mock.calls.indexOf(publishCall);
     expect(patchIndex).toBeGreaterThanOrEqual(0);
     expect(publishIndex).toBeGreaterThan(patchIndex);
   });

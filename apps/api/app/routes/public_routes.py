@@ -38,6 +38,7 @@ started") and a dead connection.
 from __future__ import annotations
 
 import logging
+import time
 import uuid
 from collections.abc import Iterator
 from datetime import datetime
@@ -55,7 +56,15 @@ from app.models.schemas.public import PublicContentDetail, PublicContentSummary
 from app.rag.embeddings import Embedder
 from app.rag.retrieval import retrieve
 from app.rag.synthesis import SYSTEM_PROMPT, ChatLLM, dedupe_citations
-from app.routes.deps import get_chat_llm, get_embedder, get_rate_limiter, get_session, get_settings
+from app.routes.deps import (
+    get_chat_llm,
+    get_embedder,
+    get_latency_tracker,
+    get_rate_limiter,
+    get_session,
+    get_settings,
+)
+from app.routes.metrics import LatencyTracker, observe_and_maybe_log_chat_latency
 from app.routes.ratelimit import RateLimiter
 from app.routes.sse import sse_event, sse_response
 from app.services import content as content_service
@@ -71,6 +80,12 @@ logger = logging.getLogger(__name__)
 # of whether it came from the real `OpenAICompatibleChatLLM` or (in tests) a fake.
 _CHAT_STREAM_ERROR_CODE = "chat_synthesis_failed"
 _CHAT_STREAM_ERROR_MESSAGE = "The assistant failed to generate a response. Please try again."
+
+# Fix round 1, finding I-2: the exact prefix `app.routes.sse.sse_event("token", ...)` always
+# produces — `public_chat`'s `_on_first_event` hook below uses this to recognize a genuine first
+# `token` event (and only that) among the first SSE block `sse_response` hands it, which may
+# instead be an `error` block on the failure path.
+_FIRST_TOKEN_EVENT_PREFIX = "event: token\n"
 
 # No 401 (unlike `app.routes.content_routes.router`): these routes are
 # unauthenticated by design. 422 is over-declared on the whole router for
@@ -182,6 +197,18 @@ def _generate_chat_stream(
     is free to commit early when it has a documented reason to, same as it would be free to for
     any other request).
 
+    WR-09 (phase-6 remediation, task-08): a THIRD commit, right after `retrieve()` returns and
+    before the `chat_llm.stream_answer(...)` loop begins. `retrieve()`'s own read-only
+    `session.execute(select(...))` runs on this same session AFTER the user-message commit above
+    already closed that transaction — SQLAlchemy's autobegin silently opens a brand-new
+    transaction for that SELECT, and nothing had ever closed it again until the assistant-message
+    commit below, meaning it stayed open for the ENTIRE (potentially slow, network-bound) LLM
+    stream. Committing here releases it immediately once retrieval is done, before the stream
+    loop can hold it open. It is a plain commit with no pending writes (nothing is written between
+    `retrieve()` returning and this line), so it changes no persisted data and does not disturb the
+    user-row-before-assistant-row `created_at` ordering above: the assistant row's write and commit
+    still happen only after the stream completes, in their own (fourth) transaction.
+
     On the error path, the `error` event is yielded BEFORE `session.rollback()` runs (review
     round 2, finding N-1 — reordered from round 1's rollback-then-yield): probe RR-P7 showed that
     if the rollback itself raises — reachable exactly when the DB is the thing that failed, i.e.
@@ -203,6 +230,10 @@ def _generate_chat_stream(
         retrieval = retrieve(
             session, embedder, body.message, threshold=settings.similarity_threshold
         )
+        # WR-09: release the transaction `retrieve()`'s SELECT just (auto-)opened — see docstring
+        # above — before entering the stream loop, instead of holding it open across the whole
+        # (potentially slow) LLM stream.
+        session.commit()
 
         for token in chat_llm.stream_answer(SYSTEM_PROMPT, body.message, retrieval.chunks):
             tokens.append(token)
@@ -273,6 +304,7 @@ def public_chat(
     chat_llm: ChatLLM = Depends(get_chat_llm),
     embedder: Embedder = Depends(get_embedder),
     rate_limiter: RateLimiter = Depends(get_rate_limiter),
+    latency_tracker: LatencyTracker = Depends(get_latency_tracker),
 ) -> StreamingResponse:
     """PRD §5.3: retrieval -> grounded synthesis -> typed SSE stream -> persistence.
 
@@ -338,6 +370,31 @@ def public_chat(
     never fires); the `responses=` override then supplies the real media type both frontend
     codegens read.
     """
+    # Phase-6 task-01 (PRD §9.1) first-token latency. NOT documented in this function's own
+    # docstring (deliberately — that docstring's TEXT is FastAPI's own OpenAPI `description` for
+    # this route, and the §5 surface is frozen; a comment here changes no wire-visible baseline).
+    # `_start` is captured before either rate-limit check, so a rejected request (which never
+    # reaches `sse_response`/`_on_first_event` at all) never skews the metric — the reference
+    # point is meant to reflect what a client actually experiences waiting for its first byte of
+    # answer, not just the retrieval/synthesis portion. `_on_first_event` (passed to
+    # `sse_response` below) fires once, right before `_generate_chat_stream`'s first SSE block is
+    # yielded (`app.routes.sse`'s own docstring), and is passed that first block's raw formatted
+    # text. Fix round 1, finding I-2: only a genuine `token` event records anything — a stream
+    # whose first (and, on the failure path, only) block is an `error` event no longer lands a
+    # sample in the reserved "public_chat" first-TOKEN bucket, which PRD §9.1 defines as
+    # time-to-first-token specifically, not time-to-first-SSE-block-of-any-kind. A refusal (no
+    # matching content) is unaffected: `_generate_chat_stream` still streams real `token` events
+    # for a refusal, so it still belongs in the metric. When it does fire, it records the elapsed
+    # time under `app.state.latency_tracker`'s reserved `"public_chat"` key, logging the greppable
+    # `chat_latency ...` line every 100 samples (`app.routes.metrics.
+    # observe_and_maybe_log_chat_latency`, §9.1's phase-7-consumed metric).
+    _start = time.monotonic()
+
+    def _on_first_event(first_item: str) -> None:
+        if not first_item.startswith(_FIRST_TOKEN_EVENT_PREFIX):
+            return
+        observe_and_maybe_log_chat_latency(latency_tracker, time.monotonic() - _start)
+
     client_ip = request.client.host if request.client is not None else "unknown"
 
     existing_session = (
@@ -352,4 +409,7 @@ def public_chat(
     if will_mint:
         rate_limiter.reserve_session_create(client_ip)
 
-    return sse_response(_generate_chat_stream(session, chat_llm, embedder, settings, body))
+    return sse_response(
+        _generate_chat_stream(session, chat_llm, embedder, settings, body),
+        on_first_event=_on_first_event,
+    )

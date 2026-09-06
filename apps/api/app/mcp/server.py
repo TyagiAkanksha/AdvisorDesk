@@ -7,14 +7,41 @@ below just delegate to `app.mcp.runtime.list_tool_schemas`/`call_tool`, so
 this module never needs to change as tools are added.
 
 `mount_mcp_http()` is `factory.py`'s only hook into this module: gated
-behind the same `require_admin` dependency every REST admin route uses
-(PRD §3 exposure rule — "the MCP route requires the same admin session auth
-as §5.2"), mounting the official `mcp` SDK's streamable-HTTP transport, not
-a stub.
+behind `require_admin` OR a resolvable `Authorization: Bearer` token (PRD
+§3 exposure rule — "the MCP route requires the same admin session auth as
+§5.2", extended by phase-6 task-04 so a deployed Claude connector, which
+can send a bearer header but never a cookie, can also reach it), mounting
+the official `mcp` SDK's streamable-HTTP transport, not a stub.
 
 Fix round 1 (Opus review of commit 08dd82a, findings C1/C2/I1/I2/I3): see
 `_execute_tool_call`, `_AdminGatedMcpApp.__call__`, and `mount_mcp_http` for
 the specifics of each fix.
+
+Phase-6 task-04: `_AdminGatedMcpApp.__call__` gained the bearer-token gate
+(`_extract_bearer_token`/`_resolve_bearer_principal`, both new here), and
+`mount_mcp_http`'s bare-path `Route` gained `methods=["POST"]` so an
+unauthenticated `GET` answers 405 at the routing layer instead of 401 from
+`require_admin` (phase-5 final-review t01-M8 fix).
+
+Phase-6 task-04, fix round 1 (review findings I1/M2): `_extract_bearer_token` now raises
+`AuthRequiredError` itself for a present-but-malformed `Authorization` header instead of
+returning `None` and silently falling through to the cookie path (I1); `_AdminGatedMcpApp.__call__`
+now rejects any non-POST method with a 405 (`Allow: POST`) BEFORE the auth gate, closing the same
+hole for the `Mount`'s sub-paths that `methods=["POST"]` already closed for the bare path — a
+`GET`/etc. through `path + "/..."` previously reached the streamable-HTTP transport and hung
+indefinitely instead of returning (M2).
+
+Phase-6-remediation task 6R-07 (t04-M7): `_AdminGatedMcpApp.__call__` now also rejects any
+non-`"http"` scope (a `"websocket"`-type scope, reachable only via the `Mount`'s sub-paths) with a
+`WebSocketException` BEFORE `Request(scope)` is ever constructed — see `__call__`'s own docstring
+for why `WebSocketException` is still preferred over `StarletteHTTPException` here (portability,
+not — as an earlier, incorrect version of that docstring claimed — to avoid a hang; fix round 1
+review disproved the hang claim for the installed starlette version).
+
+Phase-6-remediation task 6R-09 (WR-02 residual): `_resolve_bearer_principal` now also threads
+`request.app.state.settings` (the LIVE `Settings` instance, read fresh per request) into
+`resolve_bearer_token`, so a bearer token's owner is re-checked against the CURRENT `ADMIN_EMAILS`
+allowlist on every call, not just at mint time — see that function's own docstring.
 """
 
 from __future__ import annotations
@@ -32,13 +59,17 @@ from mcp.server.context import ServerRequestContext
 from mcp.server.lowlevel import Server
 from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
 from sqlalchemy.orm import Session, sessionmaker
+from starlette.exceptions import HTTPException as StarletteHTTPException
+from starlette.exceptions import WebSocketException
 from starlette.requests import Request
 from starlette.routing import Route
 from starlette.types import Receive, Scope, Send
 
-from app.auth.deps import require_admin
+from app.auth.deps import AdminPrincipal, require_admin
+from app.auth.tokens import resolve_bearer_token
+from app.config import Settings
 from app.mcp.runtime import call_tool, list_tool_schemas
-from app.services.errors import AppError
+from app.services.errors import AppError, AuthRequiredError
 from app.services.lifecycle import ChunkPipeline
 
 _SERVER_NAME = "advisordesk-mcp"
@@ -196,9 +227,97 @@ async def _handle_call_tool(
     )
 
 
+def _extract_bearer_token(request: Request) -> str | None:
+    """Return the raw token from an `Authorization: Bearer <token>` header, or `None`.
+
+    Fix round 1, finding I1: three cases, not two.
+      - No `Authorization` header at all -> `None`. This is the ONLY case that still falls back
+        to the unchanged `require_admin` cookie path (`_AdminGatedMcpApp.__call__`).
+      - A well-formed `Bearer` credential — scheme `bearer` (case-insensitive per RFC 7235),
+        exactly one separating space, a non-empty, single-token value (no embedded whitespace) —
+        returns that raw value, routing the caller into the bearer-first, no-fall-through gate.
+      - An `Authorization` header IS present but does not parse as a well-formed `Bearer`
+        credential (missing/empty value, a non-space or doubled separator such as a tab or two
+        spaces, or any scheme other than `bearer` — including `Basic ...`) -> raises
+        `AuthRequiredError` directly, from here. The controller's binding rule (review round 1):
+        OFFERING any `Authorization` header at all commits the caller to the bearer path — there
+        is no header value that is silently ignored and falls through to the cookie. Previously
+        this branch returned `None` like the absent-header case, which let a malformed bearer
+        header authenticate via a coincidentally-present valid session cookie.
+
+    Phase-6 remediation task-03 (WR-05, audit logging): the malformed-header rejection branch
+    logs WARNING with reason `malformed` — never the header's value (the presented credential is
+    never well-formed enough to be a real secret, but it is never logged regardless).
+    """
+    header = request.headers.get("authorization")
+    if header is None:
+        return None
+    scheme, sep, value = header.partition(" ")
+    if sep == " " and scheme.lower() == "bearer" and value and " " not in value:
+        return value
+    logger.warning("Bearer token rejected: reason=malformed")
+    raise AuthRequiredError("Sign in required.")
+
+
+def _resolve_bearer_principal(request: Request, raw_token: str) -> AdminPrincipal:
+    """Resolve `raw_token` to its owning `AdminPrincipal`, or raise `AuthRequiredError`.
+
+    Opens/closes its OWN short-lived session from `app.state.session_factory` — mirrors
+    `require_admin`'s own session lifecycle (`app.auth.deps`'s module docstring: "a second, ad
+    hoc, read-only session per admin request") rather than reusing the request-scoped
+    `sessionmaker` `_request_context` later binds for tool execution. Runs synchronously;
+    `_AdminGatedMcpApp.__call__` offloads it to a worker thread via `anyio.to_thread.run_sync`,
+    exactly like `require_admin` itself.
+
+    Task-04 brief: a present-but-unresolvable bearer token must 401 WITHOUT falling through to
+    the cookie path — this is that "resolve or raise" seam; the caller never re-tries
+    `require_admin` after this raises.
+
+    Phase-6 remediation task-09 (WR-02 residual): also passes `request.app.state.settings` —
+    the LIVE `Settings` instance `create_app` stashed there, not a value captured earlier — into
+    `resolve_bearer_token` so its allowlist re-check always sees the CURRENT `ADMIN_EMAILS`, even
+    if an operator edits it (or a test mutates `app.state.settings` directly) after the app was
+    built.
+
+    Args:
+        request: the incoming request; reads `app.state.session_factory`/`app.state.settings`
+            directly (see `app.auth.deps.require_admin`'s identical read for why this layer
+            doesn't go through `app.routes.deps.get_session`/`get_settings`).
+        raw_token: the bearer value, already stripped of its `"Bearer "` scheme prefix by
+            `_extract_bearer_token`.
+
+    Raises:
+        AuthRequiredError: `raw_token` doesn't resolve to an active, allowlisted user (unknown,
+            garbage, a soft-deleted account's token, one revoked by a since-run `/auth/logout`
+            epoch bump — phase-6 remediation task-03, WR-02 — one whose `expires_at` has passed,
+            or one whose owner's email is no longer in `ADMIN_EMAILS` — phase-6 remediation
+            task-09, WR-02 residual).
+        RuntimeError: the app was built without a `session_factory` (a DB-less `create_app()`) —
+            mirrors `require_admin`'s own guard.
+    """
+    session_factory = getattr(request.app.state, "session_factory", None)
+    if session_factory is None:
+        raise RuntimeError(
+            "_resolve_bearer_principal() requires app.state.session_factory, but none was "
+            "configured — this app was built by create_app() without a session_factory "
+            "(DB-less mode)."
+        )
+    settings = cast(Settings, request.app.state.settings)
+
+    session = session_factory()
+    try:
+        principal = resolve_bearer_token(session, raw_token, settings)
+    finally:
+        session.close()
+
+    if principal is None:
+        raise AuthRequiredError("Sign in required.")
+    return principal
+
+
 class _AdminGatedMcpApp:
-    """ASGI app mounted at the MCP HTTP path: `require_admin` gate + a per-request streamable
-    HTTP transport.
+    """ASGI app mounted at the MCP HTTP path: bearer-or-cookie admin gate + a per-request
+    streamable HTTP transport.
 
     A fresh `StreamableHTTPSessionManager` is built and `.run()` per call, scoped to exactly
     this one request, rather than one long-lived manager started once at mount time. Judgment
@@ -218,25 +337,87 @@ class _AdminGatedMcpApp:
         self._server = server
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
-        """Gate on `require_admin`, bind a request-scoped session factory + actor, then dispatch.
+        """Reject a non-`"http"` scope, then a non-POST method, fast, then gate on a bearer
+        token (if offered) or `require_admin`'s cookie, bind a request-scoped session factory +
+        actor, and dispatch.
 
-        `require_admin` runs first, so an unauthenticated call never binds a session factory or
+        Phase-6-remediation task 6R-07, t04-M7: the `Mount`'s sub-paths (e.g. `/api/v1/mcp/`)
+        match BOTH `"http"` and `"websocket"` scope types (`starlette.routing.Mount.matches`) —
+        unlike the bare-path `Route` below, which only ever matches `"http"`
+        (`starlette.routing.Route.matches`), so only the `Mount` side can ever hand this
+        `__call__` a `"websocket"`-type scope. Before this guard, such a scope sailed past the
+        method-guard below (which only fires `if scope["type"] == "http"`) straight into
+        `Request(scope, receive=receive)`, whose `assert scope["type"] == "http"`
+        (`starlette.requests.Request.__init__`) raised a bare, uncaught `AssertionError` — a
+        crash, not a clean rejection. This guard runs FIRST, before `Request(scope)` is ever
+        constructed, mirroring the method-guard's own placement/style (an early `if`, raising
+        before any further work). It raises `WebSocketException`, not `StarletteHTTPException`,
+        by choice, though on the installed `starlette==0.38.6` NEITHER hangs — both close a
+        `"websocket"`-scope connection cleanly (verified empirically, 6R-07 fix round 1 review,
+        against a full `create_app()` + `TestClient.websocket_connect` probe on the real mounted
+        app; an earlier version of this comment incorrectly claimed the `StarletteHTTPException`
+        alternative would hang, which the review disproved). `WebSocketException` is handled by
+        `ExceptionMiddleware`'s own `websocket_exception` method, which calls a real
+        `websocket.close(code=exc.code, reason=exc.reason)` directly
+        (`starlette.middleware.exceptions.ExceptionMiddleware.websocket_exception`).
+        `StarletteHTTPException`, mapped by `register_error_handlers` to `_http_exception_handler`
+        (a plain function returning a `JSONResponse`), instead goes through
+        `wrap_app_handling_exceptions`'s generic `await response(scope, receive, sender)` call —
+        and `starlette.responses.Response.__call__` auto-detects a `"websocket"`-type scope and
+        wraps `send` into the ASGI websocket-denial-response extension
+        (`websocket.http.response.start`/`.body`) rather than the plain `http.response.*` pair, so
+        the `JSONResponse` IS sent, just via that extension's message shape, not discarded.
+        `WebSocketException` is still the better choice here, on portability grounds: it emits the
+        plain `websocket.close` ASGI message every ASGI server supports, with no dependency on an
+        ASGI server implementing the newer websocket-denial-response extension the
+        `StarletteHTTPException` path relies on.
+
+        Phase-6 task-04 fix round 1, finding M2: this ASGI app is reachable two ways — the
+        bare-path `Route` (`mount_mcp_http`, method-restricted to POST at the routing layer, so a
+        non-POST request there never reaches this `__call__` at all) AND the `Mount`'s sub-paths
+        (`path + "/..."`, e.g. `/api/v1/mcp/`), which Starlette's `Mount` does not method-restrict.
+        A `GET`/`DELETE`/etc. through the `Mount` used to reach the streamable-HTTP transport
+        directly, which opens a standalone SSE stream and never returns — the request hangs
+        indefinitely. The check below runs BEFORE the auth gate (so it's also DB-less, matching
+        the bare path's routing-layer 405) and raises the same `StarletteHTTPException(405,
+        headers={"Allow": "POST"})` shape Starlette's own router raises for the bare path's
+        method mismatch, so `register_error_handlers` renders both through the identical §9
+        envelope + `Allow` header.
+
+        Phase-6 task-04: `_extract_bearer_token` checks for an `Authorization: Bearer <token>`
+        header FIRST. When one is present, it must resolve via `_resolve_bearer_principal` or the
+        whole request 401s right there — no fall-through to `require_admin`'s cookie check, even
+        when a valid cookie also happens to be present on the same request (task-04 brief's
+        explicit no-fall-through pin: offering a bearer header commits the caller to the bearer
+        path). Only when NO bearer header is present at all does this fall back to the unchanged
+        `require_admin` cookie path — everything below this auth step is exactly as it was before
+        task-04, for either path. Fix round 1, finding I1: a present-but-malformed `Authorization`
+        header (empty/missing value, a bad separator, or a non-`bearer` scheme) now raises
+        `AuthRequiredError` from inside `_extract_bearer_token` itself, before this method ever
+        considers the cookie path — see that function's docstring for the exact three-way split.
+
+        Either way, auth runs first, so an unauthenticated call never binds a session factory or
         starts the transport (§3 pin: state 2 stays DB-less, mirroring every REST admin route). A
-        raised `AuthRequiredError` propagates out of this ASGI callable uncaught, through the app's
-        normal exception-handling middleware (`app.routes.errors.register_error_handlers`), the
-        same path any `Depends(require_admin)` route failure takes — CONVENTIONS.md §4's "routes
-        contain no try/except" extends here: this mount has no try/except around the auth check
-        either.
+        raised `AuthRequiredError` (or the `StarletteHTTPException` above) propagates out of this
+        ASGI callable uncaught, through the app's normal exception-handling middleware
+        (`app.routes.errors.register_error_handlers`), the same path any `Depends(require_admin)`
+        route failure takes — CONVENTIONS.md §4's "routes contain no try/except" extends here:
+        this mount has no try/except around the auth check either.
 
         Fix round 1, finding C1: `require_admin` itself runs a synchronous DB query
         (`app/auth/deps.py`) — offloaded to a worker thread the same way tool execution is
         (`_handle_call_tool`), so this coroutine never blocks the event loop either.
+        Phase-6 task-04: `_resolve_bearer_principal` is offloaded to a worker thread the same way,
+        for the same reason — it also runs a synchronous DB query.
 
         Fix round 1, finding C1 (session scoping): no `Session` is opened here at all — only a
         `sessionmaker` reference is bound to `_request_context`. `tools/list`/`initialize`
         HTTP requests (which touch no database) now never open a connection; a `tools/call`
         request opens one only for the duration of `_execute_tool_call`'s worker-thread span,
-        never held across an `await`.
+        never held across an `await`. (The bearer path's own auth-time lookup, if taken, opens
+        and closes ITS OWN separate session inside `_resolve_bearer_principal` — same "ad hoc,
+        short-lived" shape `require_admin` already uses for the cookie path, never the
+        `_request_context` sessionmaker.)
 
         Phase-5 task-02: also binds `request.app.state.chunk_pipeline` — the same resolved
         `ChunkPipeline` `app.routes.deps.get_chunk_pipeline` hands every REST route (`create_app`
@@ -244,8 +425,23 @@ class _AdminGatedMcpApp:
         `None`, so no fail-loud branch is needed here) — so an HTTP-invoked write tool embeds
         chunks for real, not through a request-local `NoopChunkPipeline`.
         """
+        if scope["type"] != "http":
+            raise WebSocketException(
+                code=1008, reason="This endpoint does not accept WebSocket connections."
+            )
+
+        if scope["type"] == "http" and scope["method"] != "POST":
+            raise StarletteHTTPException(status_code=405, headers={"Allow": "POST"})
+
         request = Request(scope, receive=receive)
-        principal = await anyio.to_thread.run_sync(require_admin, request)
+        bearer_token = _extract_bearer_token(request)
+        principal: AdminPrincipal
+        if bearer_token is not None:
+            principal = await anyio.to_thread.run_sync(
+                _resolve_bearer_principal, request, bearer_token
+            )
+        else:
+            principal = await anyio.to_thread.run_sync(require_admin, request)
 
         session_factory = cast(sessionmaker[Session], request.app.state.session_factory)
         pipeline = cast(ChunkPipeline, request.app.state.chunk_pipeline)
@@ -261,7 +457,8 @@ class _AdminGatedMcpApp:
 
 
 def mount_mcp_http(app: FastAPI, *, path: str) -> None:
-    """Mount the streamable-HTTP MCP transport at `path`, behind `require_admin` (PRD §3).
+    """Mount the streamable-HTTP MCP transport at `path`, behind the bearer-or-cookie admin gate
+    (PRD §3).
 
     Called by `factory.py` only when `settings.mcp_http_enabled` is `True` — when it's `False`
     (the default), this is never called and `path` simply doesn't exist (§3 exposure rule,
@@ -270,20 +467,35 @@ def mount_mcp_http(app: FastAPI, *, path: str) -> None:
     Fix round 1, finding I1: Starlette's `Mount` compiles its match regex as
     `path + "/{path:path}"` (`starlette.routing.Mount.__init__`), which requires a literal `/`
     immediately after `path` — a bare request to `path` itself (no trailing segment) never matches
-    `Mount`, so Starlette's router 307-redirects it to `path + "/"` before `require_admin` ever
+    `Mount`, so Starlette's router 307-redirects it to `path + "/"` before the auth gate ever
     runs. An external client that doesn't auto-follow redirects (plain `httpx`/`requests`
     defaults, `curl` without `-L`, a browser `fetch`) gets a bodyless 307 instead of the MCP
     endpoint the controller pinned at exactly `path`. Registering an exact-match `Route` at `path`
     too closes the gap: Starlette treats a non-function/-method `endpoint` as already ASGI-shaped
     (`Route.__init__`: `self.app = endpoint` when `endpoint` isn't `inspect.isfunction`/
-    `inspect.ismethod`), so the same `_AdminGatedMcpApp` instance is called the same way, with no
-    method restriction (`methods=None`, matching `Mount`'s own no-method-restriction behavior) —
-    `path` now answers directly, and `path + "/..."` still goes through `Mount` exactly as before.
+    `inspect.ismethod`), so the same `_AdminGatedMcpApp` instance is called the same way — `path`
+    now answers directly, and `path + "/..."` still goes through `Mount` exactly as before.
+
+    Phase-6 task-04 (phase-5 final-review t01-M8 fix): the bare-path `Route` now also declares
+    `methods=["POST"]` (`Mount`'s own sub-path matching is untouched — still no method
+    restriction there). Starlette's router treats a path match with a disallowed method as a
+    "partial match" (`starlette.routing.Route.matches`) and answers 405 with an `Allow` header
+    BEFORE `Route.app` (this mount's `_AdminGatedMcpApp.__call__`, i.e. the whole auth gate) is
+    ever invoked — so an unauthenticated `GET /api/v1/mcp` is a routing-layer 405, not a 401 from
+    `require_admin`/`_resolve_bearer_principal`. (This surfaced a pre-existing gap in
+    `app.routes.errors._http_exception_handler` — it rebuilt the §9 envelope from a caught
+    `StarletteHTTPException` but dropped `exc.headers`, which would have silently discarded this
+    very `Allow: POST` header; fixed alongside this change since nothing about a 405 with no
+    `Allow` header would have satisfied PRD §9's general "framework-native errors still carry
+    their real HTTP semantics" intent, even though no route raised a header-bearing
+    `HTTPException` before this task.)
 
     Args:
         app: the `FastAPI` app under construction.
         path: the full path to mount at (`factory.py` passes `/api/v1/mcp`).
     """
     gated_app = _AdminGatedMcpApp(build_mcp_server())
-    app.router.routes.append(Route(path, endpoint=gated_app, name="mcp_http_bare_path"))
+    app.router.routes.append(
+        Route(path, endpoint=gated_app, name="mcp_http_bare_path", methods=["POST"])
+    )
     app.mount(path, gated_app)

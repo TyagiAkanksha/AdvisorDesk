@@ -13,13 +13,29 @@ container deploy). On any conflict the PRD wins.
 **Goal:** AdvisorDesk runs on AWS — API on App Runner, both frontends as containers, Supabase as
 the database — with rate limiting verified in the deployed environment, first-token latency
 metrics logging p50/p95, and a README + demo script a stranger can follow end-to-end (§10).
+Owner-ratified scope additions (2026-08-08): the MCP endpoint ships ENABLED in production behind
+bearer-token auth (task-04, superseding the original `MCP_HTTP_ENABLED=false` pin — the owner
+chose streamable-HTTP exposure at the site's MCP slug for Claude connectors), and the two
+phase-2 auth-hardening findings (logout revocation, OAuth state CSRF) are fixed pre-deploy
+(task-05).
 
 **Architecture:** ECR-pushed images from the phase-1 Dockerfiles; env-driven config (no wildcard
 CORS, Secure cookies); metrics as an ASGI middleware wrapping the existing endpoints (log-based —
-no new HTTP surface).
+no new HTTP surface). Production topology (owner D4, 2026-08-08): custom domain
+`tyagiakanksha.com` (registrar + DNS on Cloudflare) — `advisordesk.tyagiakanksha.com` → client,
+`admin.advisordesk.tyagiakanksha.com` → admin, `api.advisordesk.tyagiakanksha.com` → API + MCP
+(`/api/v1/mcp`); all one registrable domain, so the SameSite=Lax admin cookie works.
 
 **Tech Stack:** AWS App Runner (default; ECS Fargate documented alternative) · ECR · Supabase
 Postgres (deployed DB, §9 default) · structured logging.
+
+> **AMENDED at task-02 execution (2026-08-09):** AWS App Runner turned out to be **closed to
+> new customers** (since 2026-04-30 — this project's account, created 2026-08-08, cannot create
+> services). The runtime that actually shipped is **single-host EC2 + Caddy**: all three ECR
+> images on one t3.small behind Caddy (auto-HTTPS), secrets in SSM Parameter Store, management
+> via SSM only, Cloudflare grey-cloud DNS unchanged. Everything else in this plan (ECR images,
+> Supabase, env contract, custom-domain topology, VERIFY checklist) carried over as written.
+> Doc of record: `infra/deploy/ec2-single-host.md`; decision trail in the execution ledger.
 
 ## Global Constraints
 
@@ -27,20 +43,24 @@ Phase-1..5 Global Constraints apply verbatim. Additionally:
 
 - Deployment scripts/notes live in `infra/deploy/` (§3.1); no secrets in the repo, ever — env is
   configured in AWS, documented by name only.
-- The §5 API surface is frozen in this phase: metrics/log changes must not add or alter routes
-  (baseline diff stays empty).
+- The §5 API surface is frozen in this phase: NO task adds or alters REST routes (the OpenAPI
+  baseline diff stays empty). Metrics are log-based; MCP bearer tokens are minted by a SCRIPT,
+  not a route; auth hardening changes behavior behind the existing routes only.
 
 ## Tasks
 
 | # | Task | File | Depends on |
 |---|------|------|-----------|
 | 1 | Metrics middleware (first-token p50/p95) | `task-01-metrics-middleware.md` | phase-4/task-02 |
-| 2 | AWS deployment | `task-02-aws-deployment.md` | phases 1–5 complete |
+| 2 | AWS deployment | `task-02-aws-deployment.md` | 1, 4, 5 |
 | 3 | README + demo script | `task-03-readme-demo-script.md` | 2 |
+| 4 | MCP bearer-token auth | `task-04-mcp-bearer-auth.md` | phase-5 complete |
+| 5 | Auth hardening (logout revocation + OAuth state) | `task-05-auth-hardening.md` | 4 (migration chain) |
 
-Order: 1 → 2 → 3 (1 can land any time after phase-4 task-02). Rationale: the deployed
-verification in task-02 wants task-01's latency logs available; the README documents what task-02
-stood up.
+Order: **1 → 4 → 5 → 2 → 3**. Rationale: task-02 deploys the image, so every code task (1, 4, 5)
+must be merged into it first — the deployed verification exercises task-01's latency logs,
+task-04's bearer-gated MCP endpoint, and task-05's hardened auth; the README (3) documents what
+2 stood up. Task-05 chains its Alembic revision after task-04's, fixing the migration order.
 
 ## Status
 

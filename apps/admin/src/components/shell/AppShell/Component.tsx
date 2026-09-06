@@ -43,6 +43,7 @@ export default function Component({ children }: AppShellProps) {
   };
 
   const userName = me?.name ?? me?.email ?? '';
+  const accountMenuOpen = Boolean(anchorEl);
 
   return (
     <Box sx={{ display: 'flex' }}>
@@ -51,20 +52,41 @@ export default function Component({ children }: AppShellProps) {
         {/* User checkpoint (phase-5): both AppBar buttons rendered theme-primary text on the
             primary-colored bar — present in the a11y tree, invisible to the eye. `inherit`
             picks up the AppBar's contrast text color (the standard MUI AppBar idiom). */}
-        <Button color="inherit" onClick={() => setAgentPanelOpen((prev) => !prev)}>
+        <Button
+          color="inherit"
+          aria-haspopup="true"
+          aria-expanded={agentPanelOpen}
+          aria-controls="app-shell-agent-panel"
+          onClick={() => setAgentPanelOpen((prev) => !prev)}
+        >
           Agent
         </Button>
         {me ? (
-          <Button color="inherit" onClick={(event) => setAnchorEl(event.currentTarget)}>
-            <Avatar alt={userName} src={me.avatar_url}>
+          <Button
+            color="inherit"
+            aria-haspopup="true"
+            aria-expanded={accountMenuOpen}
+            // Fix round 1 (review finding #2, Minor): unlike the agent panel's `Drawer`
+            // (`variant="persistent"`, always in the DOM), this `Menu` is a MUI `Popover`/`Modal`
+            // that fully unmounts while closed — a static `aria-controls` here would dangle,
+            // pointing at an id that doesn't exist most of the time. Only advertise it while the
+            // target actually resolves, mirroring `aria-expanded`'s own open/closed split.
+            aria-controls={accountMenuOpen ? 'app-shell-account-menu' : undefined}
+            onClick={(event) => setAnchorEl(event.currentTarget)}
+          >
+            {/* WR-66: decorative — the visible `userName` text right after it already carries
+                the accessible name, so the avatar itself is hidden from the a11y tree to avoid
+                announcing the name twice. */}
+            <Avatar alt="" aria-hidden src={me.avatar_url}>
               {userName.charAt(0)}
             </Avatar>
             {userName}
           </Button>
         ) : null}
         <Menu
+          id="app-shell-account-menu"
           anchorEl={anchorEl}
-          open={Boolean(anchorEl)}
+          open={accountMenuOpen}
           onClose={() => setAnchorEl(null)}
           options={[{ label: 'Sign out', onSelect: handleSignOut }]}
         />
@@ -77,6 +99,7 @@ export default function Component({ children }: AppShellProps) {
         {children}
       </Box>
       <Drawer
+        id="app-shell-agent-panel"
         anchor="right"
         variant="persistent"
         open={agentPanelOpen}

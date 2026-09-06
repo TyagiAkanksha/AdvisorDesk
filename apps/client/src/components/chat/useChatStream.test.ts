@@ -236,7 +236,11 @@ describe('useChatStream', () => {
       (message: ChatMessage) => message.role === 'assistant',
     );
     expect(assistantMessages).toHaveLength(1);
-    expect(assistantMessages[0].text).toBe('Roth IRAs allow tax-free growth.');
+    const assistantMessage = assistantMessages[0];
+    if (!assistantMessage) {
+      throw new Error('expected an assistant message');
+    }
+    expect(assistantMessage.text).toBe('Roth IRAs allow tax-free growth.');
   });
 
   it('a citations event attaches the citations array (and no refusal) to the assistant message', async () => {
@@ -349,7 +353,11 @@ describe('useChatStream', () => {
     await waitFor(() => expect(result.current.streaming).toBe(false));
 
     expect(fetchMock).toHaveBeenCalledTimes(2);
-    const secondCallInit = fetchMock.mock.calls[1][1] as RequestInit;
+    const secondCall = fetchMock.mock.calls[1];
+    if (!secondCall) {
+      throw new Error('expected a second fetch call');
+    }
+    const secondCallInit = secondCall[1] as RequestInit;
     expect(secondCallInit.method).toBe('POST');
     const secondBody = JSON.parse(String(secondCallInit.body)) as {
       session_id?: string;
@@ -377,7 +385,11 @@ describe('useChatStream', () => {
     await waitFor(() => expect(result.current.streaming).toBe(false));
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
-    const callInit = fetchMock.mock.calls[0][1] as RequestInit;
+    const call = fetchMock.mock.calls[0];
+    if (!call) {
+      throw new Error('expected fetch to have been called');
+    }
+    const callInit = call[1] as RequestInit;
     expect(callInit.method).toBe('POST');
     const body = JSON.parse(String(callInit.body)) as { session_id?: string };
     expect(body.session_id).toBe('existing-session-id');

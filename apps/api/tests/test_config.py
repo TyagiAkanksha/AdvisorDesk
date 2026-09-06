@@ -13,6 +13,8 @@ from app.config import Settings
 # developer's ambient shell exports can never leak into the "empty env"
 # scenario these tests are pinning.
 _ENV_ROSTER = [
+    "LLM_PROVIDER",
+    "OPENAI_API_KEY",
     "NVIDIA_API_KEY",
     "LLM_BASE_URL",
     "EMBEDDING_MODEL",
@@ -43,16 +45,27 @@ def clean_env(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_defaults_match_prd_with_empty_env(clean_env: None) -> None:
-    """PRD §9: `Settings()` must succeed with zero env vars and match the documented defaults."""
+    """PRD §9: `Settings()` must succeed with zero env vars and match the documented defaults.
+
+    Task 6R-14 (both pinned NVIDIA models EOL'd, 410 Gone): the provider defaults FLIP to
+    OpenAI — `llm_provider` defaults `"openai"`, `llm_base_url`/`embedding_model`/`chat_model`
+    now point at OpenAI's endpoint/models, `openai_api_key` is the new credential field.
+    `nvidia_api_key`/NVIDIA values stay available (back-compat, `llm_provider="nvidia"`) but are
+    no longer what a zero-env-var `Settings()` resolves to.
+    """
     settings = Settings()
 
     # SecretStr fields (phase-2 task-01 Settings hardening; `database_url`
     # added by the phase-2 final review, finding C-5): compare the
     # unwrapped plaintext, never the SecretStr instance itself.
     assert settings.database_url.get_secret_value() == ""
+    assert settings.llm_provider == "openai"
+    assert settings.openai_api_key.get_secret_value() == ""
     assert settings.nvidia_api_key.get_secret_value() == ""
-    assert settings.llm_base_url == "https://integrate.api.nvidia.com/v1"
-    assert settings.embedding_model == "nvidia/nv-embedqa-e5-v5"
+    assert settings.llm_api_key.get_secret_value() == ""
+    assert settings.llm_base_url == "https://api.openai.com/v1"
+    assert settings.embedding_model == "text-embedding-3-small"
+    assert settings.chat_model == "gpt-4o-mini"
     assert settings.embedding_dimensions == 1024
     # Phase-3 task-02 review round 1, finding I1: bounds the `openai` SDK
     # client's read timeout/retry budget so `EmbeddingChunkPipeline` never

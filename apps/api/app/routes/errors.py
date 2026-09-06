@@ -113,11 +113,21 @@ def _http_exception_handler(request: Request, exc: Exception) -> JSONResponse:
     unmatched route under `/api/v1` (Starlette's router 404s before any
     handler runs) — so those also answer with the §9 envelope instead of
     Starlette's default `{"detail": "Not Found"}`.
+
+    Phase-6 task-04: forwards `exc.headers` onto the rebuilt `JSONResponse`. Surfaced by adding
+    `methods=["POST"]` to the MCP bare-path `Route` (`app.mcp.server.mount_mcp_http`) — Starlette
+    itself raises `HTTPException(status_code=405, headers={"Allow": "POST"})` for a
+    method-mismatched route (`starlette.routing.Route.handle`), and this handler was silently
+    dropping `exc.headers` when rebuilding the envelope response, which would have discarded that
+    very `Allow` header (PRD §9's task-04 acceptance: `GET /api/v1/mcp` → 405 WITH `Allow: POST`).
+    No prior route ever raised a header-bearing `HTTPException`, so this had no observable effect
+    before now; forwarding is strictly more correct for any future one too.
     """
     status_code = getattr(exc, "status_code", 500)
     detail = getattr(exc, "detail", str(exc))
+    headers = getattr(exc, "headers", None)
     envelope = {"error": {"code": f"http_{status_code}", "message": str(detail)}}
-    return JSONResponse(status_code=status_code, content=envelope)
+    return JSONResponse(status_code=status_code, content=envelope, headers=headers)
 
 
 _INTERNAL_ERROR_ENVELOPE = {

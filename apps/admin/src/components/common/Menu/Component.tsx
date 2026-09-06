@@ -3,9 +3,9 @@ import MenuItem from '@mui/material/MenuItem';
 
 import type { MenuProps } from './interface';
 
-export default function Component({ anchorEl, open, onClose, options }: MenuProps) {
+export default function Component({ anchorEl, open, onClose, options, id }: MenuProps) {
   return (
-    <MuiMenu anchorEl={anchorEl} open={open} onClose={onClose}>
+    <MuiMenu id={id} anchorEl={anchorEl} open={open} onClose={onClose}>
       {options.map((option) => (
         <MenuItem
           key={option.label}

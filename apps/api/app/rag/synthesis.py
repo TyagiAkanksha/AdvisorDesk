@@ -1,5 +1,5 @@
-"""Answer synthesis: the system prompt, the `ChatLLM` seam, and the real NVIDIA NIM chat client
-(PRD §7.5, §7.6, v1.5).
+"""Answer synthesis: the system prompt, the `ChatLLM` seam, and the real OpenAI-compatible chat
+client (PRD §7.5, §7.6, v1.5).
 
 `app.routes.public_routes` depends on `ChatLLM` only — never on `OpenAICompatibleChatLLM`
 directly — mirroring `app.rag.embeddings.Embedder`'s seam shape (CONVENTIONS.md §10: external
@@ -60,7 +60,7 @@ SYSTEM_PROMPT = (
 class ChatLLM(Protocol):
     """The chat-completion seam `app.routes.public_routes` depends on.
 
-    Structurally implemented by `OpenAICompatibleChatLLM` (the real NVIDIA NIM client) and by
+    Structurally implemented by `OpenAICompatibleChatLLM` (the real OpenAI-compatible client) and by
     `tests/test_public_chat.py`'s `FakeChatLLM` — a `Protocol`, not an ABC, so a test fake needs
     no inheritance relationship to satisfy it.
     """

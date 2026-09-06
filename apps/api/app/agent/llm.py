@@ -6,10 +6,11 @@ with no HTTP and no provider — never has to import the `openai` SDK at all. Th
 `app.rag.embeddings`/`app.rag.synthesis`'s own split of Protocol-plus-fake-friendly modules from
 provider-SDK-touching ones, just carried one file further apart.
 
-Talks to NVIDIA NIM's OpenAI-compatible `/v1/chat/completions` endpoint via the `openai` SDK,
-mirroring `app.rag.synthesis.OpenAICompatibleChatLLM` exactly (`from_settings`, the same
-empty-key boot-safe `"unset"` fallback, `model=settings.chat_model`, no NVIDIA-specific
-`extra_body` — the chat-completions path needs none). Unlike `OpenAICompatibleChatLLM.
+Talks to an OpenAI-compatible `/v1/chat/completions` endpoint (OpenAI or NVIDIA NIM, selected by
+`Settings.llm_provider`) via the `openai` SDK, mirroring `app.rag.synthesis.
+OpenAICompatibleChatLLM` exactly (`from_settings`, the same empty-key boot-safe `"unset"`
+fallback, `model=settings.chat_model`, no provider-specific `extra_body` — the chat-completions
+path needs none for either provider). Unlike `OpenAICompatibleChatLLM.
 stream_answer` (token-by-token SSE), `AgentLLM.next_step` returns exactly ONE `LlmStep` per call
 (`app.agent.loop`'s own step-at-a-time Protocol) — so each call here issues one non-streaming
 `chat.completions.create` request and maps the single response into one step; `run_agent`'s own
@@ -21,7 +22,7 @@ return MULTIPLE `tool_calls` at once (parallel tool calls) even though `next_ste
 return one `LlmStep` per call. Any extra tool calls from the same turn are queued
 (`_pending_tool_calls`) and drained one at a time on later `next_step` calls, without re-querying
 the model, before a fresh completion is ever requested again — this keeps the adapter correct if
-the pinned model (`meta/llama-3.1-8b-instruct`) ever emits more than one tool call per turn, even
+the configured model (`Settings.chat_model`) ever emits more than one tool call per turn, even
 though in practice it rarely does under `tool_choice="auto"`.
 
 Fix round 1 (Opus review of commit e58f007, findings C-2/C-3/I-2):
@@ -116,10 +117,12 @@ def _repair_string_encoded_arguments(
 ) -> dict[str, Any]:
     """Repair a tool call's string-encoded array/object argument values (finding L-3).
 
-    The pinned model (`meta/llama-3.1-8b-instruct`) sometimes emits an array-typed (or, in
-    principle, object-typed) argument as a STRING — either Python-repr (`"['retirement']"`) or
-    quoted-valid-JSON (`'["retirement"]'`) — rather than a real JSON array in the tool-call
-    arguments object. Finding L-1's actionable `ToolInputError` message + one-retry
+    The NVIDIA NIM model this app originally shipped against (`meta/llama-3.1-8b-instruct`)
+    sometimes emits an array-typed (or, in principle, object-typed) argument as a STRING —
+    either Python-repr (`"['retirement']"`) or quoted-valid-JSON (`'["retirement"]'`) — rather
+    than a real JSON array in the tool-call arguments object. The repair below is defensive
+    for any configured model/provider, not just that one. Finding L-1's actionable
+    `ToolInputError` message + one-retry
     self-correction is the safety net for this, but a live proof (checkpoint follow-up) showed
     one retry isn't reliably enough: the model sometimes regenerates the SAME malformation. Since
     C-1 already established that wire-format translation is the ADAPTER's job (not the loop's,

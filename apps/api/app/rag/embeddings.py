@@ -40,8 +40,8 @@ __all__ = ["Embedder", "EmbeddingFailedError", "OpenAICompatibleEmbedder"]
 class Embedder(Protocol):
     """The embedding-provider seam `app.rag.pipeline` depends on.
 
-    Structurally implemented by `OpenAICompatibleEmbedder` (the real NVIDIA
-    NIM client) and by `tests/test_lifecycle.py`'s `FakeEmbedder`/
+    Structurally implemented by `OpenAICompatibleEmbedder` (the real
+    OpenAI-compatible client) and by `tests/test_lifecycle.py`'s `FakeEmbedder`/
     `FailingEmbedder` — a `Protocol`, not an ABC, so a test fake needs no
     inheritance relationship to satisfy it.
     """

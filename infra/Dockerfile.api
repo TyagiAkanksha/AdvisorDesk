@@ -24,6 +24,10 @@ RUN uv sync --frozen --no-dev --no-install-project
 COPY apps/api/app ./app
 COPY apps/api/alembic ./alembic
 COPY apps/api/alembic.ini ./alembic.ini
+# The seed corpus (`sample_content/*.md` + `eval_questions.yaml`) lives at the repo-root `seed/`,
+# not under apps/api — the build context is the repo root, so `seed` resolves there. Without this
+# the seed CLI (`python -m app.seed`) and the groundedness harness have no data to read in-container.
+COPY seed ./seed
 
 # Install the project itself (non-editable) so the runtime stage needs the
 # venv alone.
@@ -39,6 +43,11 @@ COPY --from=builder --chown=appuser:appuser /app/.venv /app/.venv
 COPY --from=builder --chown=appuser:appuser /app/app ./app
 COPY --from=builder --chown=appuser:appuser /app/alembic ./alembic
 COPY --from=builder --chown=appuser:appuser /app/alembic.ini ./alembic.ini
+COPY --from=builder --chown=appuser:appuser /app/seed ./seed
+# The seed CLI and groundedness harness resolve their data dir from $SEED_DATA_DIR
+# (app/seed_paths.py) — baked here so neither does host-relative `parents[...]` path math inside
+# the container's `/app/app/...` layout (which crashed on import before this was set).
+ENV SEED_DATA_DIR=/app/seed
 # The `uv` binary itself (not just the venv it built) — the README-documented
 # migration invocation is `uv run alembic upgrade head` (task-05 Interfaces:
 # phase-4 task-04 reuses that exact command), so `uv` must exist in the

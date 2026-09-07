@@ -406,12 +406,15 @@ AWS deployment scripts and step-by-step console walkthroughs live in `infra/depl
   runs with `apps/api` as the process's working directory — `seed_all`'s Interfaces-pinned default
   (`content_dir=Path("seed/sample_content")`) resolves relative to *that* cwd, where the directory
   does not exist (only `<repo-root>/seed/sample_content` does). Rather than change the tested
-  default, `python -m app.seed`'s `__main__` entry point (`_run_from_cli`) computes the real
-  `content_dir` off `Path(__file__).resolve().parents[3]` (mirroring `tests/test_seed.py`'s own
-  `_REPO_ROOT` computation, since both files sit at the same `apps/api/<dir>/<file>.py` depth) —
-  `seed_all`'s signature and default are untouched; only this one call site resolves the path
-  robustly regardless of invocation cwd. Caught by actually running the Real Run command as
-  written (first attempt silently produced `SeedReport(created=0, published=0, skipped=0,
+  default, `python -m app.seed`'s `__main__` entry point (`_run_from_cli`) resolves the real
+  `content_dir` through `app.seed_paths.seed_data_dir()`, which prefers `$SEED_DATA_DIR` (baked to
+  `/app/seed` in the container image) and otherwise falls back to the repo-root `seed/` relative to
+  its own file location — so `seed_all`'s signature and default are untouched, and the one call site
+  resolves the path robustly regardless of invocation cwd *or* host-vs-container layout. (An earlier
+  version computed this off `Path(__file__).resolve().parents[3]`, which crashed in the container's
+  shallower `/app/app/...` layout; the env-driven resolver + `COPY seed` into the image fixed the
+  containerized seed — see the phase-7 verification record.) Caught by actually running the Real Run
+  command as written (first attempt silently produced `SeedReport(created=0, published=0, skipped=0,
   chunk_count=0)` — no error, just an empty glob).
 - **Seeded documents and chunks (PRD §9.1 metric input; phase-4 task-04).** 21 original sample
   advisory articles (`seed/sample_content/`, spread across the six PRD §8 tags, every tag used ≥2

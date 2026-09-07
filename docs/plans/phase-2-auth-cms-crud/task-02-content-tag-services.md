@@ -2,7 +2,7 @@
 id: task-02
 phase: phase-2-auth-cms-crud
 depends_on: [phase-1-skeleton/task-02]
-status: planned
+status: built
 spec: advisordesk-prd.md §4, §4.1, §5.2, §9
 ---
 

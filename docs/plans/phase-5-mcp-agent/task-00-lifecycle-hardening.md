@@ -2,7 +2,7 @@
 id: task-00
 phase: phase-5-mcp-agent
 depends_on: [phase-3-publish-client-content/task-02]
-status: planned
+status: built
 spec: advisordesk-prd.md §2 (draft → published → archived), §4 lifecycle rule, §9 envelope
 ---
 

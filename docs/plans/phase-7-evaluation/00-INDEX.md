@@ -40,4 +40,4 @@ recording; task-3 is the closing gate over everything.
 
 ## Status
 
-planned — snapshot only; git history is authoritative.
+built — snapshot only; git history is authoritative.

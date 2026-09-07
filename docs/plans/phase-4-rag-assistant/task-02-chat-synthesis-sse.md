@@ -2,7 +2,7 @@
 id: task-02
 phase: phase-4-rag-assistant
 depends_on: [task-01]
-status: planned
+status: built
 spec: advisordesk-prd.md §5.3, §7.5–§7.7, §4, §7.4
 ---
 

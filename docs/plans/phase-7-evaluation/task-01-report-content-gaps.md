@@ -2,7 +2,7 @@
 id: task-01
 phase: phase-7-evaluation
 depends_on: [phase-4-rag-assistant/task-02, phase-5-mcp-agent/task-01]
-status: planned
+status: built
 spec: advisordesk-prd.md §6 (report_content_gaps), §9.1
 ---
 

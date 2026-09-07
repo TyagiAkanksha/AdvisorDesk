@@ -2,7 +2,7 @@
 id: task-02
 phase: phase-6-deployment
 depends_on: [task-01, task-04, task-05]
-status: planned
+status: built
 spec: advisordesk-prd.md §9 (deployment, auth security, CORS), §10 Phase 6, §11 row 5
 ---
 

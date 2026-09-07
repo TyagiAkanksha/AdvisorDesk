@@ -58,4 +58,4 @@ superpowers:requesting-code-review for the phase diff. Do not skip.
 
 ## Status
 
-planned — snapshot only; git history is authoritative.
+built — snapshot only; git history is authoritative.

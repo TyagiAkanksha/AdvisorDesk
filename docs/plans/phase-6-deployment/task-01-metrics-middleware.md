@@ -2,7 +2,7 @@
 id: task-01
 phase: phase-6-deployment
 depends_on: [phase-4-rag-assistant/task-02]
-status: planned
+status: built
 spec: advisordesk-prd.md §9 (streaming latency), §9.1
 ---
 

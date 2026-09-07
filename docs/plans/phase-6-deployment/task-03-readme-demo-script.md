@@ -2,7 +2,7 @@
 id: task-03
 phase: phase-6-deployment
 depends_on: [task-02]
-status: planned
+status: built
 spec: advisordesk-prd.md §9 (local development), §10 Phase 6 + DoD, §1 implementer contract
 ---
 

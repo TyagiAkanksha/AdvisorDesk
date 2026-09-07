@@ -2,7 +2,7 @@
 id: task-03
 phase: phase-5-mcp-agent
 depends_on: [task-02, phase-2-auth-cms-crud/task-01, phase-4-rag-assistant/task-02]
-status: planned
+status: built
 spec: advisordesk-prd.md §6 (agent loop), §5.4, §11 row 7
 ---
 

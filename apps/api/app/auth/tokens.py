@@ -94,31 +94,52 @@ def resolve_bearer_token(
     write access. Every caller must now supply the live `Settings` explicitly; there is no way to
     opt out of the allowlist re-check.
 
+    mcp-oauth plan, task 03 (RFC 8707 audience binding, DESIGN.md §"Security / threat model"):
+    also enforces the resource-indicator rule, evaluated AFTER the expiry check and BEFORE the
+    allowlist re-check — a wrong audience is rejected before this function spends a
+    settings-dependent allowlist lookup on a token that was never valid for this resource server
+    regardless of who its owner is. A token with `client_id IS NOT NULL` (minted through the OAuth
+    authorization-code/refresh-token flow, `app.models.oauth.OAuthClient`) must have `resource ==
+    settings.mcp_resource_url` exactly — `NULL` does NOT satisfy this branch, unlike the other
+    one. A token with `client_id IS NULL` (every token `scripts/mint_mcp_token.py` has ever
+    minted, OAuth or not) accepts `resource IS NULL` (every pre-migration-0007 row, permanently —
+    see `app.models.api_tokens.ApiToken`'s class docstring) OR an exact match; anything else is
+    rejected with reason `wrong-audience`, the same "unknown token" 401 shape from the caller's
+    point of view.
+
+    mcp-oauth plan, task 03: on a successful resolve (after every rejection branch above,
+    including the audience/allowlist checks), stamps `token.last_used_at = datetime.now(UTC)` and
+    `session.flush()`es — never `session.commit()` (CONVENTIONS.md §3: services flush, the caller
+    commits). The one production caller, `app.mcp.server._resolve_bearer_principal`, commits the
+    session on the success path right after this returns a non-`None` principal.
+
     Phase-6 remediation task-03/task-09 (WR-05, audit logging): logs exactly one line per call —
     INFO with the token row id ONLY on success, WARNING with a reason keyword (`unknown` /
-    `revoked` / `inactive-user` / `expired` / `not-allowlisted`) on rejection. Never logs
-    `raw_token`, `token_hash`, or the owner's email.
+    `revoked` / `inactive-user` / `expired` / `wrong-audience` / `not-allowlisted`) on rejection.
+    Never logs `raw_token`, `token_hash`, or the owner's email.
 
-    Never raises on an unknown/garbage/malformed/revoked/expired/not-allowlisted token, and does
-    the same amount of work (hash + one indexed lookup, short-circuiting only once a real row is
-    or isn't found) whether `raw_token` matches a row or not — there is no separate "is this even
-    shaped like a token" pre-check to skip.
+    Never raises on an unknown/garbage/malformed/revoked/expired/wrong-audience/not-allowlisted
+    token, and does the same amount of work (hash + one indexed lookup, short-circuiting only once
+    a real row is or isn't found) whether `raw_token` matches a row or not — there is no separate
+    "is this even shaped like a token" pre-check to skip.
 
     Args:
         session: an open `Session` the caller owns (opened/closed by the caller — this function
-            never commits, rolls back, or closes it).
+            never commits or rolls back; it does `flush()` on a successful resolve to persist the
+            `last_used_at` stamp, per the paragraph above).
         raw_token: the bearer value as sent on the wire (no `"Bearer "` scheme prefix — the
             caller, `app.mcp.server`, strips that before calling this).
         settings: the live `Settings` instance to re-check the resolved user's email against
-            (`settings.admin_email_set`) — required (P7 remediation M2); see the allowlist
+            (`settings.admin_email_set`) and to validate the token's audience against
+            (`settings.mcp_resource_url`) — required (P7 remediation M2); see the allowlist
             paragraph above.
 
     Returns:
         The owning user's `AdminPrincipal`, or `None` if `raw_token` doesn't match any
         `ApiToken.token_hash`, matches one whose owning `User` is missing or soft-deleted, matches
         one whose `session_epoch` is stale relative to the owner's current one, matches one whose
-        `expires_at` has passed, or matches one whose owner's email is no longer in
-        `settings.admin_email_set`.
+        `expires_at` has passed, matches one whose `(client_id, resource)` fails the audience rule
+        above, or matches one whose owner's email is no longer in `settings.admin_email_set`.
     """
     token_hash = hashlib.sha256(raw_token.encode()).hexdigest()
     token = session.execute(
@@ -141,9 +162,20 @@ def resolve_bearer_token(
         logger.warning("Bearer token rejected: token_id=%s reason=expired", token.id)
         return None
 
+    if token.client_id is not None:
+        if token.resource != settings.mcp_resource_url:
+            logger.warning("Bearer token rejected: token_id=%s reason=wrong-audience", token.id)
+            return None
+    elif token.resource not in (None, settings.mcp_resource_url):
+        logger.warning("Bearer token rejected: token_id=%s reason=wrong-audience", token.id)
+        return None
+
     if user.email.strip().lower() not in settings.admin_email_set:
         logger.warning("Bearer token rejected: token_id=%s reason=not-allowlisted", token.id)
         return None
+
+    token.last_used_at = datetime.now(UTC)
+    session.flush()
 
     logger.info("Bearer token resolved: token_id=%s", token.id)
     return AdminPrincipal(user_id=user.id, email=user.email, name=user.name)

@@ -8,6 +8,8 @@ every subtype to an HTTP status and builds the PRD §9 envelope
 
 from __future__ import annotations
 
+from collections.abc import Mapping
+
 
 class AppError(Exception):
     """Base of AdvisorDesk's typed error family (CONVENTIONS.md §4).
@@ -15,12 +17,20 @@ class AppError(Exception):
     Args:
         message: human-readable text returned verbatim as the §9 envelope's
             `message` field.
+        headers: optional extra HTTP response headers to forward verbatim onto the rendered
+            §9 envelope response (`app.routes.errors._make_handler`). `None` (the default) for
+            every pre-existing raise site — additive, keyword-only, backward compatible.
+            mcp-oauth plan, task 03: `app.mcp.server` raises `AuthRequiredError` with
+            `headers={"WWW-Authenticate": ...}` (RFC 9728 §5.1) so a claude.ai connector can
+            discover the protected-resource metadata document from a bare 401, without this
+            base class (or any other `AppError` subclass) needing to know that concept exists.
     """
 
     code: str = "error"
 
-    def __init__(self, message: str) -> None:
+    def __init__(self, message: str, *, headers: Mapping[str, str] | None = None) -> None:
         super().__init__(message)
+        self.headers: Mapping[str, str] | None = headers
 
 
 class NotFoundError(AppError):

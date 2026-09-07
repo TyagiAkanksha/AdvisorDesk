@@ -68,12 +68,20 @@ def _make_handler(status_code: int) -> Callable[[Request, Exception], JSONRespon
     Starlette's `ExceptionHandler` type requires it — but only `AppError`
     subclasses are ever registered against this handler, so `.code` is
     always present at runtime.
+
+    mcp-oauth plan, task 03: also forwards `exc.headers` (the `AppError.headers` mapping added
+    this task, `None` for every subclass that doesn't set it) onto the rebuilt `JSONResponse` —
+    mirrors `_http_exception_handler`'s existing `headers=getattr(exc, "headers", None)` forward
+    for `StarletteHTTPException`. `getattr` (not `exc.headers`) because this handler's `exc`
+    parameter is typed as the base `Exception`, same reasoning as `.code` above; `JSONResponse`
+    accepts `headers=None` (its default) with no special-casing needed here.
     """
 
     def _handler(request: Request, exc: Exception) -> JSONResponse:
         code = getattr(exc, "code", "error")
         envelope = {"error": {"code": code, "message": str(exc)}}
-        return JSONResponse(status_code=status_code, content=envelope)
+        headers = getattr(exc, "headers", None)
+        return JSONResponse(status_code=status_code, content=envelope, headers=headers)
 
     return _handler
 

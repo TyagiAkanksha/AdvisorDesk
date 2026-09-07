@@ -42,6 +42,18 @@ Phase-6-remediation task 6R-09 (WR-02 residual): `_resolve_bearer_principal` now
 `request.app.state.settings` (the LIVE `Settings` instance, read fresh per request) into
 `resolve_bearer_token`, so a bearer token's owner is re-checked against the CURRENT `ADMIN_EMAILS`
 allowlist on every call, not just at mint time — see that function's own docstring.
+
+mcp-oauth plan, task 03 (RFC 9728 §5.1, DESIGN.md §"Security / threat model" + §"End-to-end flow"
+step 1): every one of this module's three 401 paths — `_extract_bearer_token`'s malformed-header
+branch, `_resolve_bearer_principal`'s unresolved-bearer branch, and the cookie path's
+`_require_admin_with_challenge` wrapper — now raises `AuthRequiredError` via the shared
+`_auth_required(request)` helper, which attaches a `WWW-Authenticate: Bearer resource_metadata=...`
+header built from the LIVE `request.app.state.settings` (task 02's `www_authenticate_challenge`).
+This lets a claude.ai connector, or any RFC 9728-aware client, discover the protected-resource
+metadata document straight from a bare 401 instead of needing prior out-of-band knowledge of this
+server's OAuth wiring. `_resolve_bearer_principal` also now commits its session on a successful
+resolve, persisting `resolve_bearer_token`'s `last_used_at` stamp (the service itself only
+`flush()`es — CONVENTIONS.md §3: the caller commits).
 """
 
 from __future__ import annotations
@@ -66,6 +78,7 @@ from starlette.routing import Route
 from starlette.types import Receive, Scope, Send
 
 from app.auth.deps import AdminPrincipal, require_admin
+from app.auth.oauth_discovery import www_authenticate_challenge
 from app.auth.tokens import resolve_bearer_token
 from app.config import Settings
 from app.mcp.runtime import call_tool, list_tool_schemas
@@ -227,6 +240,42 @@ async def _handle_call_tool(
     )
 
 
+def _auth_required(request: Request) -> AuthRequiredError:
+    """Build the 401 `AuthRequiredError` for an unauthenticated `/api/v1/mcp` request, carrying
+    the RFC 9728 §5.1 `WWW-Authenticate` challenge built from the LIVE settings.
+
+    mcp-oauth plan, task 03 (DESIGN.md §"Security / threat model", §"End-to-end flow" step 1):
+    the single construction site for every 401 this module raises, so the challenge header is
+    identical across all three unauthenticated paths (`_extract_bearer_token`'s malformed-header
+    branch, `_resolve_bearer_principal`'s unresolved-bearer branch, and
+    `_require_admin_with_challenge`'s failed-cookie branch below) — a caller cannot distinguish
+    which path rejected it from the header alone, matching the existing "byte-identical 401
+    envelope" invariant `resolve_bearer_token`'s own docstring already pins for its rejection
+    reasons.
+
+    Reads `request.app.state.settings` fresh on every call (never a value captured at
+    app-build/factory time) so a live settings mutation — an operator editing `OAUTH_ISSUER_URL`,
+    or a test mutating `app.state.settings.oauth_issuer_url` directly
+    (`test_www_authenticate_uses_live_settings`) — is reflected on the very next request, the same
+    "live, not captured" guarantee `require_admin`/`_resolve_bearer_principal` already give the
+    admin-email allowlist.
+
+    Args:
+        request: the incoming request; reads `request.app.state.settings` directly.
+
+    Returns:
+        An `AuthRequiredError("Sign in required.")` with `headers={"WWW-Authenticate": ...}` set
+        — the caller raises it (this function only builds it, mirroring `str`/exception-factory
+        helpers elsewhere in this codebase that build-but-don't-raise so the caller's own `raise`
+        statement stays visible at the call site).
+    """
+    settings = cast(Settings, request.app.state.settings)
+    return AuthRequiredError(
+        "Sign in required.",
+        headers={"WWW-Authenticate": www_authenticate_challenge(settings)},
+    )
+
+
 def _extract_bearer_token(request: Request) -> str | None:
     """Return the raw token from an `Authorization: Bearer <token>` header, or `None`.
 
@@ -248,6 +297,9 @@ def _extract_bearer_token(request: Request) -> str | None:
     Phase-6 remediation task-03 (WR-05, audit logging): the malformed-header rejection branch
     logs WARNING with reason `malformed` — never the header's value (the presented credential is
     never well-formed enough to be a real secret, but it is never logged regardless).
+
+    mcp-oauth plan, task 03: this branch's raise now goes through `_auth_required(request)`, so
+    the response carries the RFC 9728 `WWW-Authenticate` challenge — see that helper's docstring.
     """
     header = request.headers.get("authorization")
     if header is None:
@@ -256,7 +308,7 @@ def _extract_bearer_token(request: Request) -> str | None:
     if sep == " " and scheme.lower() == "bearer" and value and " " not in value:
         return value
     logger.warning("Bearer token rejected: reason=malformed")
-    raise AuthRequiredError("Sign in required.")
+    raise _auth_required(request)
 
 
 def _resolve_bearer_principal(request: Request, raw_token: str) -> AdminPrincipal:
@@ -279,6 +331,14 @@ def _resolve_bearer_principal(request: Request, raw_token: str) -> AdminPrincipa
     if an operator edits it (or a test mutates `app.state.settings` directly) after the app was
     built.
 
+    mcp-oauth plan, task 03: a `None` return now raises via `_auth_required(request)` (the RFC
+    9728 `WWW-Authenticate` challenge), and a non-`None` return now `session.commit()`s before
+    closing — `resolve_bearer_token` itself only `flush()`es its `last_used_at` stamp
+    (CONVENTIONS.md §3: services never commit), so this is the one call site that persists it, on
+    the success path only. A rejected token never mutates the row, so committing an empty/rejected
+    transaction has no effect either way — the commit is gated on success purely to keep the
+    "only a successful resolve is observable" contract explicit at the call site.
+
     Args:
         request: the incoming request; reads `app.state.session_factory`/`app.state.settings`
             directly (see `app.auth.deps.require_admin`'s identical read for why this layer
@@ -290,8 +350,9 @@ def _resolve_bearer_principal(request: Request, raw_token: str) -> AdminPrincipa
         AuthRequiredError: `raw_token` doesn't resolve to an active, allowlisted user (unknown,
             garbage, a soft-deleted account's token, one revoked by a since-run `/auth/logout`
             epoch bump — phase-6 remediation task-03, WR-02 — one whose `expires_at` has passed,
-            or one whose owner's email is no longer in `ADMIN_EMAILS` — phase-6 remediation
-            task-09, WR-02 residual).
+            one whose owner's email is no longer in `ADMIN_EMAILS` — phase-6 remediation task-09,
+            WR-02 residual — or one that fails the mcp-oauth task-03 audience rule) — carries the
+            RFC 9728 `WWW-Authenticate` challenge (`_auth_required`).
         RuntimeError: the app was built without a `session_factory` (a DB-less `create_app()`) —
             mirrors `require_admin`'s own guard.
     """
@@ -307,12 +368,51 @@ def _resolve_bearer_principal(request: Request, raw_token: str) -> AdminPrincipa
     session = session_factory()
     try:
         principal = resolve_bearer_token(session, raw_token, settings)
+        if principal is not None:
+            session.commit()
     finally:
         session.close()
 
     if principal is None:
-        raise AuthRequiredError("Sign in required.")
+        raise _auth_required(request)
     return principal
+
+
+def _require_admin_with_challenge(request: Request) -> AdminPrincipal:
+    """Resolve the admin session cookie, re-raising a failed `require_admin` with the RFC 9728
+    `WWW-Authenticate` challenge attached.
+
+    mcp-oauth plan, task 03 (DESIGN.md §"Security / threat model", §"End-to-end flow" step 1):
+    `require_admin` (`app.auth.deps`) is the shared cookie-auth dependency every REST admin route
+    also depends on, and its `AuthRequiredError` must stay headerless there — a REST 401 has no
+    use for an MCP-specific discovery pointer (`test_rest_401_has_no_www_authenticate`). This
+    thin wrapper is `app.mcp`'s own seam: it calls `require_admin` unchanged, and on its ONE
+    failure mode (`AuthRequiredError` — the DB-less `RuntimeError` guard is untouched, propagating
+    straight through) re-raises via `_auth_required(request)` instead, attaching the challenge
+    only for the MCP caller.
+
+    The `try/except` here is deliberate and reviewed: CONVENTIONS.md §4's "routes contain no
+    `try/except`" rule is scoped to `app.routes` (route handlers, whose rollback/mapping already
+    happens in the session dependency and the registered error handlers) — this function lives in
+    `app.mcp`, a different layer with no such rule, and the plan's own task-03 brief calls out
+    this exact wrapper as the sanctioned exception. mcp-oauth task 05 replaces the body with a call
+    to a forthcoming `resolve_admin(request)` without touching any test that exercises this
+    function today.
+
+    Args:
+        request: the incoming request; forwarded to both `require_admin` and `_auth_required`.
+
+    Raises:
+        AuthRequiredError: no/invalid/expired cookie, unknown or soft-deleted user, or a stale
+            session epoch (see `require_admin`'s own docstring) — always carries the
+            `WWW-Authenticate` challenge here, unlike `require_admin`'s own headerless raise.
+        RuntimeError: the app was built without a `session_factory` (`require_admin`'s own
+            DB-less guard) — propagates unchanged, not wrapped.
+    """
+    try:
+        return require_admin(request)
+    except AuthRequiredError as exc:
+        raise _auth_required(request) from exc
 
 
 class _AdminGatedMcpApp:
@@ -402,11 +502,17 @@ class _AdminGatedMcpApp:
         ASGI callable uncaught, through the app's normal exception-handling middleware
         (`app.routes.errors.register_error_handlers`), the same path any `Depends(require_admin)`
         route failure takes — CONVENTIONS.md §4's "routes contain no try/except" extends here:
-        this mount has no try/except around the auth check either.
+        this method itself has no try/except around the auth check either. (mcp-oauth task 03:
+        the cookie path now calls `_require_admin_with_challenge`, a separate module-level
+        function that DOES wrap `require_admin` in a `try/except AuthRequiredError` to attach the
+        RFC 9728 challenge — see that function's own docstring for why living in `app.mcp` rather
+        than `app.routes` makes that a sanctioned exception to the same rule, not a violation of
+        it.)
 
-        Fix round 1, finding C1: `require_admin` itself runs a synchronous DB query
-        (`app/auth/deps.py`) — offloaded to a worker thread the same way tool execution is
-        (`_handle_call_tool`), so this coroutine never blocks the event loop either.
+        Fix round 1, finding C1: `require_admin` (via `_require_admin_with_challenge` since
+        mcp-oauth task 03) runs a synchronous DB query (`app/auth/deps.py`) — offloaded to a
+        worker thread the same way tool execution is (`_handle_call_tool`), so this coroutine
+        never blocks the event loop either.
         Phase-6 task-04: `_resolve_bearer_principal` is offloaded to a worker thread the same way,
         for the same reason — it also runs a synchronous DB query.
 
@@ -441,7 +547,7 @@ class _AdminGatedMcpApp:
                 _resolve_bearer_principal, request, bearer_token
             )
         else:
-            principal = await anyio.to_thread.run_sync(require_admin, request)
+            principal = await anyio.to_thread.run_sync(_require_admin_with_challenge, request)
 
         session_factory = cast(sessionmaker[Session], request.app.state.session_factory)
         pipeline = cast(ChunkPipeline, request.app.state.chunk_pipeline)

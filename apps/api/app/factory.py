@@ -22,6 +22,7 @@ from app.rag.synthesis import ChatLLM
 from app.routes.agent_routes import router as agent_router
 from app.routes.auth_routes import router as auth_router
 from app.routes.content_routes import router as content_router
+from app.routes.discovery_routes import router as discovery_router
 from app.routes.errors import register_error_handlers
 from app.routes.health_routes import router as health_router
 from app.routes.metrics import LatencyMiddleware, LatencyTracker
@@ -169,6 +170,13 @@ def create_app(
     )
 
     register_error_handlers(app)
+
+    # mcp-oauth task-02: the ONE sanctioned exception to "all routes live under /api/v1"
+    # (CONVENTIONS.md §5) — RFC 9728 §3 / RFC 8414 §3 mandate these two discovery documents at
+    # the domain root. No prefix; unconditional (unlike `mount_mcp_http` below, NOT gated on
+    # `mcp_http_enabled` — a client must be able to discover this server's OAuth wiring even
+    # before the MCP endpoint itself is turned on).
+    app.include_router(discovery_router)
 
     app.include_router(health_router, prefix=_API_PREFIX)
     app.include_router(auth_router, prefix=_API_PREFIX)

@@ -476,6 +476,57 @@
   },
   "openapi": "3.1.0",
   "paths": {
+    "/.well-known/oauth-authorization-server": {
+      "get": {
+        "description": "RFC 8414 authorization-server metadata for this co-hosted OAuth 2.1 server.",
+        "operationId": "oauth_authorization_server_metadata",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Get Authorization Server Metadata"
+      }
+    },
+    "/.well-known/oauth-protected-resource": {
+      "get": {
+        "description": "RFC 9728 protected-resource metadata for the `/api/v1/mcp` resource.",
+        "operationId": "oauth_protected_resource_metadata",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Get Protected Resource Metadata"
+      }
+    },
+    "/.well-known/oauth-protected-resource/api/v1/mcp": {
+      "get": {
+        "description": "RFC 9728 \u00a73.1 path-suffixed form: identical document, for clients that probe it first.",
+        "operationId": "oauth_protected_resource_metadata_mcp_path",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Get Protected Resource Metadata Mcp Path"
+      }
+    },
     "/api/v1/agent/chat": {
       "post": {
         "description": "PRD \u00a75.4: stateless agent exchange \u2014 resent history in, typed SSE tool-loop events out.\n\n`pipeline` is `app.state.chunk_pipeline` (t02 amendment, `get_chunk_pipeline`) \u2014 threaded\nstraight into `run_agent`, so an agent-driven publish/archive/delete/edit-of-published runs\nthe SAME chunk-rebuild path the REST `/content/{id}/...` routes do, never silently a no-op.",

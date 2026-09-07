@@ -185,6 +185,7 @@ source_modules = [
     "app.config",
     "app.db",
     "app.seed",
+    "app.eval",
 ]
 forbidden_modules = ["app.main", "app.factory"]
 

@@ -2,7 +2,7 @@
 id: task-02
 phase: phase-7-evaluation
 depends_on: [phase-4-rag-assistant/task-04, phase-4-rag-assistant/task-02]
-status: planned
+status: built
 spec: advisordesk-prd.md §8.1, §10 Phase 7, §9.1
 ---
 

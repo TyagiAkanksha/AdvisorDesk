@@ -262,6 +262,28 @@ pnpm -C apps/client type-check
 pnpm -C apps/client test
 ```
 
+## Metrics
+
+PRD §9.1's four metrics, **measured on the local seeded stack** (dedicated database
+`advisordesk_p7verify`, OpenAI provider — `text-embedding-3-small@1024` + `gpt-4o-mini`,
+`SIMILARITY_THRESHOLD=0.5`), captured 2026-09-07. Raw command output:
+`.superpowers/sdd/phase-7-evaluation/task-03a-metrics-capture.md` (gitignored working notes) and
+`docs/plans/phase-7-evaluation/verification-record.md` (the committed record).
+
+| Metric | Value |
+|---|---|
+| Seeded documents (content) | 21 total (17 published + 4 drafts) |
+| Seeded chunks | 100 |
+| MCP tools | 9 (8 core + `report_content_gaps`) |
+| Groundedness | 58.8% fully supported (10/17 answerable); refusals 4/4 correct |
+| First-token latency, `/public/chat` | p50 = 717 ms, p95 = 1602 ms (n=30, nearest-rank) |
+
+**Groundedness note:** all 17 answerable eval questions retrieved the correct source article —
+retrieval is sound. The sub-100% figure comes from the `gpt-4o-mini` judge scoring some answer
+sentences as unsupported by the cited chunks; this is an evaluation signal the harness is
+designed to surface (PRD §7 phase 7), not a retrieval bug, and is flagged for owner review rather
+than hidden or rounded up.
+
 ## Deployment
 
 AWS deployment scripts and step-by-step console walkthroughs live in `infra/deploy/`:

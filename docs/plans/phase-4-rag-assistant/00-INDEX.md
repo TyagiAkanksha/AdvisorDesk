@@ -63,4 +63,4 @@ question → cited streamed answer; ask an uncovered one → refusal; hammer the
 
 ## Status
 
-planned — snapshot only; git history is authoritative.
+built — snapshot only; git history is authoritative.

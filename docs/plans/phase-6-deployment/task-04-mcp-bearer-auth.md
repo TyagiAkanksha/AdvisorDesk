@@ -2,7 +2,7 @@
 id: task-04
 phase: phase-6-deployment
 depends_on: [phase-5-mcp-agent/task-01]
-status: planned
+status: built
 spec: advisordesk-prd.md §3 (MCP exposure), §9 (auth security) + owner decision 2026-08-08 (streamable-HTTP exposure for Claude connectors)
 ---
 

@@ -2,7 +2,7 @@
 id: task-01
 phase: phase-3-publish-client-content
 depends_on: []
-status: planned
+status: built
 spec: advisordesk-prd.md §7.1, §9
 ---
 

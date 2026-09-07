@@ -46,4 +46,4 @@ shape retrieval (phase 4) reads; task-03 pins the public DTOs task-04 renders.
 
 ## Status
 
-planned — snapshot only; git history is authoritative.
+built — snapshot only; git history is authoritative.

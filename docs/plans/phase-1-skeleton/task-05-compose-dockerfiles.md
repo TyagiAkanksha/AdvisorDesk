@@ -2,7 +2,7 @@
 id: task-05
 phase: phase-1-skeleton
 depends_on: [task-03, task-04]
-status: planned
+status: built
 spec: advisordesk-prd.md §3.1, §9, §10 Phase 1
 ---
 

@@ -2,7 +2,7 @@
 id: task-02
 phase: phase-5-mcp-agent
 depends_on: [task-00, task-01]
-status: planned
+status: built
 spec: advisordesk-prd.md §6, §4.1
 ---
 

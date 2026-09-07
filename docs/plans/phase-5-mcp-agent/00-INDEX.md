@@ -68,4 +68,4 @@ the live tool events. Use superpowers:requesting-code-review for the phase diff.
 
 ## Status
 
-planned — snapshot only; git history is authoritative.
+built — snapshot only; git history is authoritative.

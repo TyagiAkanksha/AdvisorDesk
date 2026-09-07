@@ -2,7 +2,7 @@
 id: task-05
 phase: phase-6-deployment
 depends_on: [task-04]
-status: planned
+status: built
 spec: advisordesk-prd.md §9 (auth security) — phase-2 review findings t01-M6 (logout does not revoke) and t01-M7 (OAuth state not verified), owner-ratified for pre-deploy fix 2026-08-08
 ---
 

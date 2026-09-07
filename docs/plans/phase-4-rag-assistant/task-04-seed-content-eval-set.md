@@ -2,7 +2,7 @@
 id: task-04
 phase: phase-4-rag-assistant
 depends_on: [phase-3-publish-client-content/task-02]
-status: planned
+status: built
 spec: advisordesk-prd.md §8, §8.1, §4.1
 ---
 

@@ -64,4 +64,4 @@ task-04's bearer-gated MCP endpoint, and task-05's hardened auth; the README (3)
 
 ## Status
 
-planned — snapshot only; git history is authoritative.
+built — snapshot only; git history is authoritative.

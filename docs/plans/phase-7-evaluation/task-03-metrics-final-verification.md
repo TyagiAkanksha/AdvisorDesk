@@ -2,7 +2,7 @@
 id: task-03
 phase: phase-7-evaluation
 depends_on: [task-01, task-02, phase-6-deployment/task-03]
-status: planned
+status: built
 spec: advisordesk-prd.md §9.1, §10 (definition of done)
 ---
 

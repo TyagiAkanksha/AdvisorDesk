@@ -60,4 +60,4 @@ task in phases 2–7.
 
 ## Status
 
-planned — snapshot only; git history is authoritative.
+built — snapshot only; git history is authoritative.

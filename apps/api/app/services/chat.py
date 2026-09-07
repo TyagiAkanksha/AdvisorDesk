@@ -17,9 +17,12 @@ from __future__ import annotations
 
 import uuid
 from collections.abc import Sequence
+from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 from typing import Protocol
 
-from sqlalchemy.orm import Session
+from sqlalchemy import and_, func, select
+from sqlalchemy.orm import Session, aliased
 
 from app.models import ChatMessage, ChatSession
 
@@ -149,3 +152,86 @@ def record_assistant_message(
     session.add(message)
     session.flush()
     return message
+
+
+@dataclass(frozen=True)
+class GapRow:
+    """One §6 content gap: a user question whose next reply found no matching content."""
+
+    question: str
+    asked_at: datetime
+    session_id: uuid.UUID
+
+
+def content_gaps(session: Session, *, days: int = 30, limit: int = 20) -> list[GapRow]:
+    """`report_content_gaps`'s query (PRD §6, normative): user messages whose following
+    assistant message (same session, next by `created_at`) has `retrieval_found = False`.
+
+    Pairing: for each `role="user"` row, its partner is the `role="assistant"` row in the
+    SAME `session_id` with the smallest `created_at` strictly greater than the user row's own
+    — found here via a correlated `MIN(created_at)` scalar subquery, then joined back on that
+    exact value, rather than a `LIMIT 1`-per-row approach (SQLAlchemy has no clean per-row
+    "top 1 correlated" without a `LATERAL` join, and the `MIN(...)` + equality-join shape is
+    the ordinary, portable way to express "next row by column" in SQL). A user row with no
+    following assistant row at all correlates to `MIN(...) = NULL`, which the join's equality
+    condition can never satisfy — SQL's three-valued `NULL = NULL -> NULL` (never `TRUE`)
+    excludes it from the join for free, which is exactly the "no following assistant message
+    -> not a gap" rule (task-01 brief Step 1).
+
+    The join's `retrieval_found.is_(False)` (not `.isnot(True)`, which NULL would also satisfy)
+    is what keeps a lone user message — one with no assistant row anywhere, hence no partner
+    row's `retrieval_found` to inspect at all — out of the result, and separately guards
+    against ever treating NULL as "uncovered" if this predicate is ever reused elsewhere.
+
+    The `days` window applies to the user message's own `created_at` (the question's
+    `asked_at`, not the paired reply's) — the brief's "last `days` days" reads on when the
+    question was ASKED.
+
+    Args:
+        session: the caller's `Session`.
+        days: only gaps asked within the last `days` days (from now) are returned.
+        limit: caps the number of gaps returned, newest-first.
+
+    Returns:
+        `GapRow`s ordered newest-`asked_at`-first, at most `limit` of them.
+    """
+    user_msg = aliased(ChatMessage)
+    reply_msg = aliased(ChatMessage)
+
+    next_reply_created_at = (
+        select(func.min(reply_msg.created_at))
+        .where(
+            reply_msg.session_id == user_msg.session_id,
+            reply_msg.role == "assistant",
+            reply_msg.created_at > user_msg.created_at,
+        )
+        .correlate(user_msg)
+        .scalar_subquery()
+    )
+
+    cutoff = datetime.now(UTC) - timedelta(days=days)
+
+    stmt = (
+        select(user_msg.content, user_msg.created_at, user_msg.session_id)
+        .join(
+            reply_msg,
+            and_(
+                reply_msg.session_id == user_msg.session_id,
+                reply_msg.role == "assistant",
+                reply_msg.created_at == next_reply_created_at,
+            ),
+        )
+        .where(
+            user_msg.role == "user",
+            user_msg.created_at >= cutoff,
+            reply_msg.retrieval_found.is_(False),
+        )
+        .order_by(user_msg.created_at.desc())
+        .limit(limit)
+    )
+
+    rows = session.execute(stmt).all()
+    return [
+        GapRow(question=row.content, asked_at=row.created_at, session_id=row.session_id)
+        for row in rows
+    ]

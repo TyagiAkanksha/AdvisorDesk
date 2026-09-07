@@ -2,7 +2,7 @@
 id: task-03
 phase: phase-3-publish-client-content
 depends_on: [phase-2-auth-cms-crud/task-03]
-status: planned
+status: built
 spec: advisordesk-prd.md §5.3, §4.1
 ---
 

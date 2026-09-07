@@ -60,10 +60,12 @@ separate reviewer.)
 | 4 | [`phase-4-rag-assistant/`](phase-4-rag-assistant/00-INDEX.md) | Retrieval (similarity convention), `/public/chat` SSE + persistence + refusal, rate limiting, seed articles + eval set, client chat UI | 3 | merged |
 | 5 | [`phase-5-mcp-agent/`](phase-5-mcp-agent/00-INDEX.md) | In-process MCP server + 8 core tools, agent loop + stateless `/agent/chat`, admin agent panel | 4 | merged |
 | 6 | [`phase-6-deployment/`](phase-6-deployment/00-INDEX.md) | Metrics middleware, AWS deployment (single-host EC2 + Caddy + Supabase; App Runner plan superseded at execution — see 00-INDEX amendment), README + demo script | 5 | merged |
-| 7 | [`phase-7-evaluation/`](phase-7-evaluation/00-INDEX.md) | `report_content_gaps` tool (#9), groundedness harness, §9.1 metrics + definition-of-done walk | 6 (tasks 01–02 only need 4–5) | planned |
+| 7 | [`phase-7-evaluation/`](phase-7-evaluation/00-INDEX.md) | `report_content_gaps` tool (#9), groundedness harness, §9.1 metrics + definition-of-done walk | 6 (tasks 01–02 only need 4–5) | built |
 
 Statuses here and in each INDEX are a snapshot; **git history is authoritative**. As of this
-writing, phases 1–6 are merged to `main` (PRs #1–#6); phase 7 has not started.
+writing, phases 1–6 are merged to `main` (PRs #1–#6); phase 7 is built on this branch (tasks
+01–03 complete — local verification pass; the deployed demo walk, merge-to-main, and prod
+redeploy remain owner-gated, see `docs/plans/phase-7-evaluation/verification-record.md`).
 
 ## Standing gates (from the moment they exist)
 

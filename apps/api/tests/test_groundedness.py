@@ -69,9 +69,9 @@ from pathlib import Path
 from typing import Literal
 
 import yaml
-from app.eval.groundedness import EvalReport, run_eval
 from sqlalchemy.orm import Session
 
+from app.eval.groundedness import EvalReport, run_eval
 from app.models import Content
 from app.models.chunks import Chunk
 from app.rag.retrieval import RetrievedChunk

@@ -1,6 +1,7 @@
 # MCP OAuth 2.1 Authorization Server — Design Spec
 
-**Status:** draft for owner review (2026-09-07). Not yet a plan; no code until approved.
+**Status:** **approved by owner 2026-09-07** ("go ahead, ensure everything is well set"). Implementation
+plan: `docs/plans/mcp-oauth/00-INDEX.md` + task files.
 **Goal:** make claude.ai's remote-connector **"Connect"** button work end-to-end against
 `https://api.advisordesk.tyagiakanksha.com/api/v1/mcp` — an allowlisted admin clicks Connect,
 signs in with Google, approves a consent screen, and Claude gets a rotating OAuth token. Replaces
@@ -147,7 +148,14 @@ Suggested order + phasing; each is a three-agent SDD task, **Opus review on ever
 - No CIMD and no static-client path (DCR is the one registration method). CLI mint (`scripts/mint_mcp_token.py`) is **kept** as an ops/CI fallback.
 - Access-token format stays opaque `adk_` (not JWT) — simpler, and validation already exists.
 
-## Open decisions to confirm at plan time
-- Exact access-token TTL (proposal: 60 min) and refresh TTL (proposal: 30 days, rotating).
-- Consent screen: server-rendered on the API (recommended) vs a route in the admin app.
-- Whether to ship in two phases (core, then polish) or one plan.
+## Decisions pinned at plan time (owner: "go ahead, ensure everything is well set", 2026-09-07)
+- **Token lifetimes:** access token **60 min**; refresh token **30 days**, rotated on every use
+  (a rotated refresh token inherits the *remaining* 30-day window — the chain does not extend
+  forever; re-consent after 30 days of the original grant).
+- **Authorization-code TTL:** 60 s, single-use.
+- **Consent screen:** server-rendered HTML on the API (`/api/v1/oauth/authorize` continuation),
+  not a route in the admin app.
+- **Phasing:** **one plan, one branch (`feat/mcp-oauth`), one PR.** Tasks are ordered core-first
+  (1–5, 7) so a working Connect exists mid-branch, but the branch ships only when the polish
+  (6, 8, 9) and the real-connect e2e (10) are green. Rationale: owner chose "Full polish"; a
+  second PR/deploy round buys nothing for a solo owner.

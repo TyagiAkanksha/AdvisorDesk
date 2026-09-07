@@ -278,5 +278,30 @@
       "type": "object"
     },
     "name": "archive"
+  },
+  {
+    "description": "Report client questions the content didn't cover: user messages whose next assistant reply found no matching content (retrieval_found=false), asked within the last `days` days, newest first.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "description": "`report_content_gaps`'s arguments (PRD \u00a76): `days`/`limit`, both optional.",
+      "properties": {
+        "days": {
+          "default": 30,
+          "minimum": 1,
+          "title": "Days",
+          "type": "integer"
+        },
+        "limit": {
+          "default": 20,
+          "maximum": 100,
+          "minimum": 1,
+          "title": "Limit",
+          "type": "integer"
+        }
+      },
+      "title": "ReportContentGapsArgs",
+      "type": "object"
+    },
+    "name": "report_content_gaps"
   }
 ]

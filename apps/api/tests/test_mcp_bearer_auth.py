@@ -81,7 +81,8 @@ _INITIALIZE_BODY = {
 }
 
 # task-01 (search_content, count_content) + task-02 (create_draft, edit_content,
-# delete_content, tag_content, publish, archive) — the full registry as of this task.
+# delete_content, tag_content, publish, archive) + phase-7 task-01 (report_content_gaps) —
+# the full registry as of this task.
 _EXPECTED_TOOL_NAMES = {
     "search_content",
     "count_content",
@@ -91,6 +92,7 @@ _EXPECTED_TOOL_NAMES = {
     "tag_content",
     "publish",
     "archive",
+    "report_content_gaps",
 }
 
 _SCRIPTS_DIR = Path(__file__).resolve().parent.parent / "scripts"
@@ -198,11 +200,11 @@ def test_get_mcp_returns_405() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_bearer_token_initialize_succeeds_and_tools_list_returns_eight_tools(
+def test_bearer_token_initialize_succeeds_and_tools_list_returns_nine_tools(
     tmp_engine: Engine,
 ) -> None:
     """A minted bearer token opens the MCP endpoint with NO cookie at all: `initialize` succeeds
-    and `tools/list` enumerates the full 8-tool registry, exactly as a cookie-authenticated caller
+    and `tools/list` enumerates the full 9-tool registry, exactly as a cookie-authenticated caller
     sees. RED today: `app.auth.tokens` doesn't exist, so `mint_token()` raises
     `ModuleNotFoundError` before any HTTP call happens."""
     from app.auth.tokens import mint_token

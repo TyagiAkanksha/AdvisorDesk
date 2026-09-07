@@ -226,6 +226,60 @@ def test_bearer_rejected_revoked_never_logs_token_hash(
     )
 
 
+def test_bearer_rejected_wrong_audience_never_logs_token_hash(
+    tmp_engine: Engine, caplog: pytest.LogCaptureFixture
+) -> None:
+    """mcp-oauth task 03 fix round 1, review finding M-4: the new `wrong-audience` reason
+    (`app.auth.tokens.resolve_bearer_token`, mcp-oauth task 03) gets the same hash-absence guard
+    as every other rejection reason in this file — see `_assert_hash_never_logged`.
+
+    `wrong-audience` is only reachable via an OAuth-issued token (`client_id` set) scoped to the
+    WRONG resource — `scripts/mint_mcp_token.py::mint` never sets `client_id` (see that function's
+    own docstring: "this script mints directly for an admin, with no OAuth client in the
+    picture"), so this test constructs the `OAuthClient`/`ApiToken` rows directly rather than
+    going through `_import_mint_script()`/`mint()`, mirroring `tests/test_mcp_www_authenticate.py
+    ::_insert_bearer_token`'s own construction (duplicated locally, not imported, per this file's
+    own no-cross-test-file-dependency precedent — module docstring)."""
+    from app.auth.tokens import mint_token
+    from app.models.api_tokens import ApiToken
+    from app.models.oauth import OAuthClient
+
+    email = "log-hygiene-wrong-audience@example.com"
+    client, _ = _build_client(tmp_engine, admin_emails=email)
+
+    session = make_session_factory(tmp_engine)()
+    try:
+        owner = User(email=email, name="Log Hygiene Wrong Audience Owner")
+        session.add(owner)
+        session.flush()
+        session.add(
+            OAuthClient(
+                client_id="log-hygiene-wrong-audience-client",
+                client_name="Log Hygiene Wrong Audience Client",
+                redirect_uris=["https://example.com/callback"],
+            )
+        )
+        session.flush()
+        raw, token_hash = mint_token()
+        session.add(
+            ApiToken(
+                user_id=owner.id,
+                token_hash=token_hash,
+                name="log-hygiene-wrong-audience",
+                client_id="log-hygiene-wrong-audience-client",
+                resource="https://other.example/api/v1/mcp",
+                session_epoch=owner.session_epoch,
+            )
+        )
+        session.commit()
+    finally:
+        session.close()
+
+    _assert_hash_never_logged(
+        client, {**_MCP_HEADERS, "Authorization": f"Bearer {raw}"}, raw, caplog
+    )
+
+
 def test_bearer_rejected_inactive_user_never_logs_token_hash(
     tmp_engine: Engine, caplog: pytest.LogCaptureFixture
 ) -> None:

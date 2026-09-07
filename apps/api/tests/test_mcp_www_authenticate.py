@@ -333,6 +333,35 @@ def test_cli_token_null_resource_accepted(tmp_engine: Engine) -> None:
     assert response.status_code < 400, response.text
 
 
+def test_cli_token_canonical_resource_accepted(tmp_engine: Engine) -> None:
+    """Fix round 1, review finding I-1 (Important): a `client_id IS NULL` token whose `resource`
+    is stamped to EXACTLY `settings.mcp_resource_url` must authenticate — this is the SIXTH cell
+    of the audience rule's 2x3 (`client_id` in {set, NULL} x `resource` in {matching, wrong,
+    NULL}) input matrix, and it is the shape every CLI token minted by
+    `scripts/mint_mcp_token.py::mint` has had since mcp-oauth task 01 (`mint()` always stamps
+    `resource=settings.mcp_resource_url, client_id=None` — see that function's own docstring),
+    not merely the `resource IS NULL` legacy carve-out `test_cli_token_null_resource_accepted`
+    already guards. Review: a one-token mutation of the audience rule's `elif` branch
+    (`token.resource is not None` instead of `token.resource not in (None,
+    settings.mcp_resource_url)`) passed every other test in this file and the whole 599-test
+    suite while silently 401-ing this exact, currently-deployed production shape."""
+    email = "cli-canonical-resource@example.com"
+    app = _build_app(tmp_engine, admin_emails=email)
+    raw = _insert_bearer_token(
+        make_session_factory(tmp_engine),
+        email=email,
+        client_id=None,
+        resource=_RIGHT_RESOURCE,
+    )
+    client = TestClient(app)
+    headers = {**_MCP_HEADERS, "Authorization": f"Bearer {raw}"}
+
+    response = client.post(_MCP_PATH, json=_INITIALIZE_BODY, headers=headers)
+
+    assert response.status_code < 400, response.text
+    assert "result" in response.json()
+
+
 def test_cli_token_wrong_resource_rejected(tmp_engine: Engine) -> None:
     """A `client_id IS NULL` token whose `resource` is set to a DIFFERENT resource (not `NULL`,
     not a match) must 401 with the challenge — the Global Constraints table's "anything else ->
@@ -416,6 +445,39 @@ def test_successful_resolve_stamps_last_used_at(tmp_engine: Engine) -> None:
             select(ApiToken).where(ApiToken.token_hash == token_hash)
         ).scalar_one()
         assert token_row.last_used_at is not None
+    finally:
+        verify_session.close()
+
+
+def test_rejected_resolve_does_not_stamp_last_used_at(tmp_engine: Engine) -> None:
+    """Fix round 1, review finding M-1 (Minor): a REJECTED resolve (a wrong-audience OAuth token)
+    must NOT stamp `ApiToken.last_used_at` — the negative half of the "stamped only on success"
+    acceptance criterion; `test_successful_resolve_stamps_last_used_at` above only proves the
+    positive half. Re-reads the row through a BRAND NEW session after the 401 call, mirroring
+    that test's own fresh-session-read technique (never the session that inserted the row, so a
+    stale identity map can't produce a false pass)."""
+    email = "rejected-no-stamp@example.com"
+    app = _build_app(tmp_engine, admin_emails=email)
+    session_factory = make_session_factory(tmp_engine)
+    raw = _insert_bearer_token(
+        session_factory,
+        email=email,
+        client_id="client-rejected-no-stamp",
+        resource=_WRONG_RESOURCE,
+    )
+    token_hash = hashlib.sha256(raw.encode()).hexdigest()
+
+    client = TestClient(app)
+    headers = {**_MCP_HEADERS, "Authorization": f"Bearer {raw}"}
+    response = client.post(_MCP_PATH, json=_INITIALIZE_BODY, headers=headers)
+    assert response.status_code == 401
+
+    verify_session = session_factory()
+    try:
+        token_row = verify_session.execute(
+            select(ApiToken).where(ApiToken.token_hash == token_hash)
+        ).scalar_one()
+        assert token_row.last_used_at is None
     finally:
         verify_session.close()
 

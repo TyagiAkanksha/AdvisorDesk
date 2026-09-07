@@ -75,3 +75,17 @@ def test_issuer_must_be_http_url() -> None:
         Settings(oauth_issuer_url="x.example")
 
     assert exc_info.value.errors()[0]["type"] == "value_error"
+
+
+def test_issuer_rejects_embedded_whitespace() -> None:
+    """Fix round 1, review finding M-3 (Minor, defence-in-depth): the validator rejects any
+    whitespace/control character REMAINING after `.strip()` trims the two ends — `.strip()` alone
+    would let an embedded `\\r\\n` (e.g. an operator accidentally pasting a raw HTTP header line
+    into `OAUTH_ISSUER_URL`) survive validation and later be emitted verbatim into the RFC 9728
+    `WWW-Authenticate` response header. Mirrors `test_issuer_must_be_http_url`'s own
+    `errors()[0]["type"] == "value_error"` technique to confirm this is a genuine value-level
+    rejection, not an incidental failure for some other reason."""
+    with pytest.raises(ValidationError) as exc_info:
+        Settings(oauth_issuer_url="https://x.example\r\nX: y")
+
+    assert exc_info.value.errors()[0]["type"] == "value_error"

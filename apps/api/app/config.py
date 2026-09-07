@@ -217,16 +217,29 @@ class Settings(BaseSettings):
         whitespace. Then strips exactly one trailing slash so a copy-pasted issuer URL with a
         trailing `/` doesn't compose into an accidental `//api/v1/mcp`.
 
+        mcp-oauth task-03 fix round 1 (review finding M-3, defence-in-depth): after stripping the
+        ends, rejects any REMAINING whitespace/control character anywhere in the value — `.strip()`
+        alone only trims the two ends, so an embedded `\r\n` (or any other interior whitespace)
+        would otherwise survive validation and later be emitted verbatim into the RFC 9728
+        `WWW-Authenticate` response header (`app.auth.oauth_discovery.www_authenticate_challenge`,
+        `app.mcp.server._auth_required`) and the `.well-known/oauth-*` metadata documents. This
+        value is operator-supplied deployment config, not attacker-reachable, and h11/uvicorn
+        already reject CR/LF in header values at the wire layer — so this is defence-in-depth, not
+        a fix for a reachable vulnerability — but a bad `OAUTH_ISSUER_URL` should fail loudly at
+        startup rather than silently propagate into every OAuth-related response.
+
         Raises:
-            ValueError: `value` doesn't start with `http://` or `https://` — surfaces to the
-                caller as a pydantic `ValidationError` with `errors()[0]["type"] ==
-                "value_error"`.
+            ValueError: `value` doesn't start with `http://` or `https://`, or contains any
+                whitespace/control character after the ends are stripped — surfaces to the caller
+                as a pydantic `ValidationError` with `errors()[0]["type"] == "value_error"`.
         """
         value = value.strip()
         if not (value.startswith("http://") or value.startswith("https://")):
             raise ValueError(
                 f"oauth_issuer_url must start with http:// or https://, got {value!r}."
             )
+        if any(char.isspace() for char in value):
+            raise ValueError(f"oauth_issuer_url must not contain whitespace, got {value!r}.")
         return value.removesuffix("/")
 
     @model_validator(mode="after")

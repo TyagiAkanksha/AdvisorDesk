@@ -21,6 +21,17 @@ predates this column stays `NULL` forever, never force-expired). `scripts/mint_m
 stamps every FRESH token with `now() + Settings.mcp_token_ttl_days`;
 `app.auth.tokens.resolve_bearer_token` rejects a token whose `expires_at` is not `NULL` and is in
 the past.
+
+mcp-oauth plan, task-01 (migration 0007; docs/plans/mcp-oauth/DESIGN.md §"Token & data model"):
+`client_id`, `resource`, `last_used_at` are additive, all NULLABLE so every existing
+`ApiToken(...)` call site across the codebase keeps constructing rows exactly as before.
+`client_id` links a token minted through the new OAuth authorization-code/refresh-token flow
+(`app.models.oauth.OAuthClient`) back to the client that obtained it — `NULL` for every token
+minted the old way, by `scripts/mint_mcp_token.py` directly, which has no OAuth client at all.
+`resource` records the RFC 8707 resource indicator the token is scoped to (now stamped by
+`scripts/mint_mcp_token.py::mint` too, via `Settings.mcp_resource_url`, even for the non-OAuth
+mint path). `last_used_at` is a last-seen stamp nothing in this task writes yet — a later
+mcp-oauth task updates it on successful resolution.
 """
 
 from __future__ import annotations
@@ -74,3 +85,12 @@ class ApiToken(Base, TimestampMixin):
     # `app.auth.tokens.resolve_bearer_token` rejects a token whose `expires_at` is not `NULL` and
     # has passed.
     expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # mcp-oauth plan, task-01 (migration 0007) — see the class docstring's final paragraph.
+    client_id: Mapped[str | None] = mapped_column(
+        Text,
+        ForeignKey("oauth_clients.client_id", ondelete="CASCADE"),
+        nullable=True,
+        index=True,
+    )
+    resource: Mapped[str | None] = mapped_column(Text, nullable=True)
+    last_used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

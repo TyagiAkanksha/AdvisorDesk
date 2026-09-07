@@ -14,7 +14,6 @@ from __future__ import annotations
 
 import hashlib
 import logging
-import secrets
 from datetime import UTC, datetime
 
 from sqlalchemy import select
@@ -23,6 +22,7 @@ from sqlalchemy.orm import Session
 from app.auth.deps import AdminPrincipal
 from app.config import Settings
 from app.models.api_tokens import ApiToken
+from app.services.token_hashing import generate_token
 from app.services.users import get_active_user
 
 logger = logging.getLogger(__name__)
@@ -40,13 +40,15 @@ def mint_token() -> tuple[str, str]:
     responsibility to store (the mint script prints it once and never again); this module itself
     never writes it anywhere.
 
+    mcp-oauth plan, task-01: delegates to the shared `app.services.token_hashing.generate_token`
+    leaf — the new OAuth authorization-code/refresh-token rows hash their own secrets the same
+    way — with this function's return shape (and `_TOKEN_PREFIX`) UNCHANGED.
+
     Returns:
         `(raw_token, token_hash)` — the caller decides what to do with each: `raw_token` is shown
         to the operator once, `token_hash` is the row's persisted value.
     """
-    raw_token = _TOKEN_PREFIX + secrets.token_urlsafe(32)
-    token_hash = hashlib.sha256(raw_token.encode()).hexdigest()
-    return raw_token, token_hash
+    return generate_token(_TOKEN_PREFIX)
 
 
 def resolve_bearer_token(

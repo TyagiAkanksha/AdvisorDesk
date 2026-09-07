@@ -68,6 +68,13 @@ def mint(
     `expires_at = now() + ttl_days` — `app.auth.tokens.resolve_bearer_token` rejects it once that
     passes.
 
+    mcp-oauth plan, task-01: the new row is also stamped with `resource=settings.
+    mcp_resource_url` (or a bare `Settings()`'s value when `settings` is omitted, mirroring the
+    `ttl_days`/`resolved_settings` fallback above) and `client_id=None` — this script mints
+    directly for an admin, with no OAuth client in the picture at all; `client_id` is reserved for
+    tokens later minted through the OAuth authorization-code/refresh-token flow
+    (`app.models.oauth.OAuthClient`).
+
     P7 remediation (fresh-review M4): also rejects (before ever inserting a row) an active user
     whose email is NOT in the CURRENT `ADMIN_EMAILS` allowlist — `resolve_bearer_token`
     (`app.auth.tokens`) already re-checks the SAME allowlist at every resolve, so minting for a
@@ -130,6 +137,8 @@ def mint(
             name=name,
             session_epoch=user.session_epoch,
             expires_at=datetime.now(UTC) + timedelta(days=resolved_ttl_days),
+            resource=resolved_settings.mcp_resource_url,
+            client_id=None,
         )
     )
     session.flush()

@@ -68,6 +68,7 @@ from app.db import make_engine, make_session_factory
 from app.models import Chunk, Content
 from app.rag.embeddings import OpenAICompatibleEmbedder
 from app.rag.pipeline import EmbeddingChunkPipeline
+from app.seed_paths import seed_data_dir
 from app.services.content import create_draft, publish_content
 from app.services.lifecycle import ChunkPipeline
 
@@ -77,16 +78,11 @@ logger = logging.getLogger(__name__)
 # is called with when a caller does not override it (brief Interfaces pin: `seed_all(session,
 # pipeline, content_dir=Path("seed/sample_content"))`). Relative to whatever process cwd `seed_all`
 # is called from — every test in `tests/test_seed.py` passes `content_dir` explicitly instead (a
-# test's cwd is not guaranteed to be the repo root), and `_run_from_cli` below does too, computed
-# off `_REPO_ROOT` rather than this bare relative default, since the task's own pinned Real Run
-# command (`cd apps/api && ... && uv run python -m app.seed`) runs with `apps/api` as the process
-# cwd, not the repo root this literal string would resolve against.
+# test's cwd is not guaranteed to be the repo root), and `_run_from_cli` below does too, resolving
+# the seed dir via `app.seed_paths.seed_data_dir()` rather than this bare relative default, since
+# the task's own pinned Real Run command (`cd apps/api && ... && uv run python -m app.seed`) runs
+# with `apps/api` as the process cwd, not the repo root this literal string would resolve against.
 _DEFAULT_CONTENT_DIR: Path = Path("seed/sample_content")
-
-# `app/seed.py` -> `app/` -> `apps/api/` -> `apps/` -> repo root: four `.parent`s up, mirroring
-# `tests/test_seed.py`'s own `_REPO_ROOT` computation (same file depth: both live at
-# `apps/api/<dir>/<file>.py`).
-_REPO_ROOT: Path = Path(__file__).resolve().parents[3]
 
 # Matches the test-author's own `_FRONTMATTER_RE` (tests/test_seed.py) byte-for-byte: a leading
 # `---` line, the YAML frontmatter block, a closing `---` line, then the Markdown body — the
@@ -291,7 +287,7 @@ def _run_from_cli() -> None:
 
     session = session_factory()
     try:
-        report = seed_all(session, pipeline, content_dir=_REPO_ROOT / "seed" / "sample_content")
+        report = seed_all(session, pipeline, content_dir=seed_data_dir() / "sample_content")
         session.commit()
     except Exception:
         session.rollback()

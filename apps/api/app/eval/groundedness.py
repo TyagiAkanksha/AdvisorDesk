@@ -44,6 +44,7 @@ from app.db import make_engine, make_session_factory
 from app.rag.embeddings import Embedder, OpenAICompatibleEmbedder
 from app.rag.retrieval import retrieve
 from app.rag.synthesis import SYSTEM_PROMPT, ChatLLM, OpenAICompatibleChatLLM
+from app.seed_paths import seed_data_dir
 
 __all__ = [
     "EvalReport",
@@ -53,11 +54,12 @@ __all__ = [
     "run_eval",
 ]
 
-# `apps/api/app/eval/groundedness.py` -> `app/eval/` -> `app/` -> `apps/api/` -> `apps/` -> repo
-# root: mirrors `app/seed.py`'s own `_REPO_ROOT` computation, one `.parent` deeper since this
-# module lives one directory below `app/seed.py`'s (`app/eval/` vs `app/`).
-_REPO_ROOT: Path = Path(__file__).resolve().parents[4]
-_DEFAULT_QUESTIONS_PATH: Path = _REPO_ROOT / "seed" / "eval_questions.yaml"
+# Resolved via `app.seed_paths.seed_data_dir()` so both host dev and the container image find the
+# corpus without this module doing a `parents[...]` walk (which went out of range under the
+# container's `/app/app/eval/...` layout and crashed on import). On host, `seed_data_dir()` resolves
+# to the repo-root `seed/`; in the container it reads `$SEED_DATA_DIR=/app/seed`. Computing this at
+# module scope is safe now — `seed_data_dir()` never does path math when the env var is set.
+_DEFAULT_QUESTIONS_PATH: Path = seed_data_dir() / "eval_questions.yaml"
 
 # A dependency-free sentence splitter: `.`/`!`/`?` followed by whitespace. Good enough for the
 # short, single-paragraph answers this harness judges sentence-by-sentence (brief: "call the judge

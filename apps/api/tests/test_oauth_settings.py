@@ -1,5 +1,6 @@
 """Unit tests for the six new OAuth `Settings` fields, the `mcp_resource_url` property, and the
-`oauth_issuer_url` validator (docs/plans/mcp-oauth/task-01-brief.md, Interfaces block).
+`oauth_issuer_url` validator (docs/plans/mcp-oauth/task-01-data-model-migration.md; DESIGN.md
+§"Token & data model").
 
 `Settings()` must stay zero-env-var constructible (CONVENTIONS.md §5) — the six new fields all
 ship with defaults. `oauth_issuer_url`'s validator strips exactly one trailing slash and rejects
@@ -44,6 +45,15 @@ def test_issuer_trailing_slash_stripped() -> None:
     issuer URL with a trailing `/` still composes correctly with `mcp_resource_url`'s own
     `f"{oauth_issuer_url}/api/v1/mcp"` (no accidental `//api/v1/mcp`)."""
     settings = Settings(oauth_issuer_url="https://x.example/")
+
+    assert settings.oauth_issuer_url == "https://x.example"
+
+
+def test_issuer_whitespace_stripped() -> None:
+    """The `oauth_issuer_url` validator strips leading/trailing whitespace before validating the
+    scheme and stripping the trailing slash — a hand-edited `.env` value with a stray space (fix
+    round 1, M2) must not produce a rejected or malformed issuer URL."""
+    settings = Settings(oauth_issuer_url=" https://x.example/ ")
 
     assert settings.oauth_issuer_url == "https://x.example"
 

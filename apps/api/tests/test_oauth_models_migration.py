@@ -1,6 +1,7 @@
 """DB tests for the OAuth data model: migration 0007's four new tables, the three new nullable
 `api_tokens` columns, cascade/uniqueness constraints, and the mint script's new `resource`/
-`client_id` stamping (docs/plans/mcp-oauth/task-01-brief.md).
+`client_id` stamping (docs/plans/mcp-oauth/task-01-data-model-migration.md; DESIGN.md §"Token &
+data model").
 
 All tests use the `db_session`/`tmp_engine` fixtures (`tests/conftest.py`, CONVENTIONS.md §10) —
 a throwaway `advisordesk_test_<hex8>` Postgres schema migrated to `alembic upgrade head`, so

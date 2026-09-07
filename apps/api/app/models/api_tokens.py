@@ -32,6 +32,14 @@ minted the old way, by `scripts/mint_mcp_token.py` directly, which has no OAuth 
 `scripts/mint_mcp_token.py::mint` too, via `Settings.mcp_resource_url`, even for the non-OAuth
 mint path). `last_used_at` is a last-seen stamp nothing in this task writes yet — a later
 mcp-oauth task updates it on successful resolution.
+
+`resource`'s `NULL` meaning, pinned here (mirrors migration 0006's `expires_at` NULL note, PRD
+§9): every `api_tokens` row minted before migration 0007 ever ran has `resource IS NULL` —
+PERMANENTLY, like `expires_at`'s pre-0006 NULL rows, never backfilled by this migration. A future
+task's audience check (task 03) treats a `client_id IS NULL` row (every token minted by
+`scripts/mint_mcp_token.py`, OAuth or not) as legacy-compatible when `resource IS NULL OR resource
+== settings.mcp_resource_url`; a `client_id IS NOT NULL` row (minted through the OAuth
+authorization-code/refresh-token flow) must always have `resource == settings.mcp_resource_url`.
 """
 
 from __future__ import annotations

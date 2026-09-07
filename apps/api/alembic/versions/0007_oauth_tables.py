@@ -177,7 +177,9 @@ def upgrade() -> None:
             ondelete="CASCADE",
         ),
         sa.PrimaryKeyConstraint("id", name=op.f("pk_oauth_consents")),
-        sa.UniqueConstraint("user_id", "client_id", name="uq_oauth_consents_user_id_client_id"),
+        sa.UniqueConstraint(
+            "user_id", "client_id", name=op.f("uq_oauth_consents_user_id_client_id")
+        ),
     )
 
     op.add_column("api_tokens", sa.Column("client_id", sa.Text(), nullable=True))

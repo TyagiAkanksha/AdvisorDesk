@@ -210,14 +210,19 @@ class Settings(BaseSettings):
         `mcp_resource_url` below does exactly that — so a bare hostname or a relative path would
         silently produce a malformed URI everywhere downstream instead of failing loudly here.
 
-        Strips exactly one trailing slash so a copy-pasted issuer URL with a trailing `/` doesn't
-        compose into an accidental `//api/v1/mcp`.
+        Strips leading/trailing whitespace first — mirrors this same file's other defensive
+        normalizers (`is_dev`'s `self.environment.strip().lower()`, `admin_email_set`'s
+        `email.strip().lower()`) — so a hand-edited `.env` value with a stray trailing space (a
+        known local gotcha in this repo) is rejected/accepted on its real content, not on
+        whitespace. Then strips exactly one trailing slash so a copy-pasted issuer URL with a
+        trailing `/` doesn't compose into an accidental `//api/v1/mcp`.
 
         Raises:
             ValueError: `value` doesn't start with `http://` or `https://` — surfaces to the
                 caller as a pydantic `ValidationError` with `errors()[0]["type"] ==
                 "value_error"`.
         """
+        value = value.strip()
         if not (value.startswith("http://") or value.startswith("https://")):
             raise ValueError(
                 f"oauth_issuer_url must start with http:// or https://, got {value!r}."

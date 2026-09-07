@@ -1,5 +1,6 @@
 """Unit tests for `app.services.token_hashing` — the shared token-hash/generate leaf the
-mcp-oauth plan introduces (docs/plans/mcp-oauth/task-01-brief.md, Interfaces block).
+mcp-oauth plan introduces (docs/plans/mcp-oauth/task-01-data-model-migration.md; DESIGN.md
+§"Token & data model").
 
 `app.auth.tokens.mint_token` currently inlines its own `secrets.token_urlsafe(32)` +
 `hashlib.sha256(...).hexdigest()` pair. Task 01 pulls that into a provider-neutral leaf

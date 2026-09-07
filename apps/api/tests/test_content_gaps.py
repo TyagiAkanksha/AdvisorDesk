@@ -314,6 +314,45 @@ def test_lone_user_messages_with_no_assistant_rows_never_appear_as_gaps(
     assert gaps == []
 
 
+def test_user_message_followed_by_null_retrieval_found_reply_is_excluded(
+    db_session: Session,
+) -> None:
+    """Fix round 1 (Important finding): NULL `retrieval_found` must NOT count as false —
+    pinned against a REAL paired assistant reply this time, not an absent one.
+
+    `test_lone_user_messages_with_no_assistant_rows_never_appear_as_gaps` above seeds ZERO
+    assistant rows, so its user messages are excluded by the pairing JOIN itself before the
+    `retrieval_found` predicate is ever reached — `.is_(False)` and `.isnot(True)` both pass
+    that test identically, so it can't catch a regression from one to the other. This test
+    seeds a real assistant reply (same session, next by `created_at`) with `retrieval_found`
+    explicitly `None` (via `_add_message`'s default), so the pairing JOIN succeeds and the
+    `retrieval_found` predicate is the only thing standing between this row and being (wrongly)
+    reported as a gap. With `.isnot(True)` in place of `.is_(False)`, NULL satisfies
+    `isnot(True)` too, and this test fails.
+    """
+    chat_session = _add_session(db_session)
+    now = datetime.now(UTC)
+    _add_message(
+        db_session,
+        chat_session.id,
+        role="user",
+        content="Question with an unset outcome",
+        created_at=now,
+    )
+    _add_message(
+        db_session,
+        chat_session.id,
+        role="assistant",
+        content="Reply with unset retrieval_found.",
+        created_at=now + timedelta(seconds=1),
+        # retrieval_found intentionally omitted -> None (see _add_message's default).
+    )
+
+    gaps = content_gaps(db_session, days=30, limit=20)
+
+    assert gaps == []
+
+
 def test_days_window_excludes_rows_older_than_cutoff(db_session: Session) -> None:
     """`days` bounds the window: a gap older than the cutoff is excluded, one inside it
     is kept."""

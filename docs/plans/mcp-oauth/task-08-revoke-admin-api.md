@@ -2,7 +2,7 @@
 id: mcp-oauth-t08
 phase: mcp-oauth
 depends_on: [mcp-oauth-t07]
-status: planned
+status: built
 spec: docs/plans/mcp-oauth/DESIGN.md
 review: opus
 ---

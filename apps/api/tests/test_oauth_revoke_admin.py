@@ -68,9 +68,11 @@ Per-test notes for the less self-explanatory cases:
 
 from __future__ import annotations
 
+import logging
 from datetime import UTC, datetime, timedelta
 
 import httpx
+import pytest
 from auth_helpers import FakeGoogleOAuthClient, login_as
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -413,6 +415,32 @@ def test_revoke_rate_limited(tmp_engine: Engine) -> None:
     assert second.json()["error"]["code"] == "rate_limited"
 
 
+def test_revoke_logs_client_id_never_the_token(
+    tmp_engine: Engine, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Final fix round 1, P13: a successful `POST /oauth/revoke` emits one INFO audit line naming
+    `client_id` — the one security-relevant action that previously left no trace — and the raw
+    token string appears in NO emitted record. Mirrors `tests/test_auth_log_hygiene.py:123-131`'s
+    own `caplog`-around-one-call, assert-token-absent-everywhere pattern."""
+    app = _build_app(tmp_engine)
+    client = TestClient(app)
+    result = complete_authorization(client)
+    exchange = _exchange(client, result)
+    assert exchange.status_code == 200, exchange.text
+    refresh_token = exchange.json()["refresh_token"]
+
+    caplog.clear()
+    with caplog.at_level(logging.INFO):
+        response = _revoke(client, token=refresh_token, client_id=result.client_id)
+    assert response.status_code == 200, response.text
+
+    assert all(refresh_token not in r.getMessage() for r in caplog.records)
+    assert any(
+        "oauth token revoked" in r.getMessage() and result.client_id in r.getMessage()
+        for r in caplog.records
+    )
+
+
 # ---------------------------------------------------------------------------
 # GET /api/v1/oauth/clients — admin connected-apps list
 # ---------------------------------------------------------------------------
@@ -614,6 +642,34 @@ def test_admin_revoke_client_204_and_cascade(tmp_engine: Engine, db_session: Ses
     refresh_response = _refresh(client, refresh_token, result.client_id)
     assert refresh_response.status_code == 401, refresh_response.text
     assert refresh_response.json()["error"] == "invalid_client"
+
+
+def test_admin_delete_logs_client_id_never_the_token(
+    tmp_engine: Engine, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Final fix round 1, P13: a successful admin `DELETE /oauth/clients/{client_id}` emits one
+    INFO audit line naming `client_id` and neither the raw access token nor the raw refresh token
+    appears in any emitted record. Same `caplog` pattern as `test_revoke_logs_client_id_never_the_
+    token` above and `tests/test_auth_log_hygiene.py:123-131`."""
+    app = _build_app(tmp_engine)
+    client = TestClient(app)
+    result = complete_authorization(client)
+    exchange = _exchange(client, result)
+    assert exchange.status_code == 200, exchange.text
+    access_token = exchange.json()["access_token"]
+    refresh_token = exchange.json()["refresh_token"]
+
+    caplog.clear()
+    with caplog.at_level(logging.INFO):
+        response = client.delete(f"{_ADMIN_CLIENTS_PATH}/{result.client_id}")
+    assert response.status_code == 204, response.text
+
+    assert all(access_token not in r.getMessage() for r in caplog.records)
+    assert all(refresh_token not in r.getMessage() for r in caplog.records)
+    assert any(
+        "oauth client deleted" in r.getMessage() and result.client_id in r.getMessage()
+        for r in caplog.records
+    )
 
 
 def test_admin_revoke_unknown_404(tmp_engine: Engine) -> None:

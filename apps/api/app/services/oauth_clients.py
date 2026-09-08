@@ -93,6 +93,14 @@ def validate_redirect_uri(uri: str) -> None:
       URI ending in a lone `#`. Testing the raw string for `"#"` (rather than the parsed
       `.fragment`) catches an empty fragment too.
 
+    Final fix round 1 (finding F-13): `urlsplit` silently strips `\t`/`\r`/`\n` from its input
+    before parsing, while the RAW string (containing them) is what gets persisted and later
+    composed into a `Location` header on the eventual redirect — the same parser-differential
+    class I-2/M-1 above already guard against, for a different character class. Not exploitable
+    today (Starlette percent-encodes the header value, and browsers strip the same characters), but
+    closed here for the same reason the rest of this function is defence-in-depth: rejects any
+    control character or whitespace anywhere in the raw string, before it ever reaches `urlsplit`.
+
     Args:
         uri: one candidate redirect URI from the registration request.
 
@@ -104,6 +112,12 @@ def validate_redirect_uri(uri: str) -> None:
         raise OAuthError(
             "invalid_redirect_uri",
             f"redirect_uris: {uri!r} is longer than {MAX_REDIRECT_URI_LENGTH} characters.",
+        )
+
+    if any(ord(c) < 0x20 or c.isspace() for c in uri):
+        raise OAuthError(
+            "invalid_redirect_uri",
+            f"redirect_uris: {uri!r} must not contain whitespace or control characters.",
         )
 
     try:

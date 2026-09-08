@@ -3,9 +3,9 @@
 §"Token & data model").
 
 `Settings()` must stay zero-env-var constructible (CONVENTIONS.md §5) — the six new fields all
-ship with defaults. `oauth_issuer_url`'s validator strips exactly one trailing slash and rejects
-a value that isn't a full `http://`/`https://` URL; `mcp_resource_url` derives the canonical MCP
-resource URI from it (`f"{oauth_issuer_url}/api/v1/mcp"`).
+ship with defaults. `oauth_issuer_url`'s validator strips ALL trailing slashes (final fix round 1,
+F-14) and rejects a value that isn't a full `http://`/`https://` URL; `mcp_resource_url` derives
+the canonical MCP resource URI from it (`f"{oauth_issuer_url}/api/v1/mcp"`).
 
 Neither test touches a database. RED today: none of `oauth_issuer_url`,
 `oauth_access_token_ttl_minutes`, `oauth_refresh_token_ttl_days`, `oauth_auth_code_ttl_seconds`,
@@ -41,12 +41,22 @@ def test_defaults_are_zero_env() -> None:
 
 
 def test_issuer_trailing_slash_stripped() -> None:
-    """The `oauth_issuer_url` validator strips exactly one trailing slash, so a copy-pasted
-    issuer URL with a trailing `/` still composes correctly with `mcp_resource_url`'s own
-    `f"{oauth_issuer_url}/api/v1/mcp"` (no accidental `//api/v1/mcp`)."""
+    """The `oauth_issuer_url` validator strips ALL trailing slashes (not just one), so a
+    copy-pasted issuer URL with a trailing `/` still composes correctly with `mcp_resource_url`'s
+    own `f"{oauth_issuer_url}/api/v1/mcp"` (no accidental `//api/v1/mcp`)."""
     settings = Settings(oauth_issuer_url="https://x.example/")
 
     assert settings.oauth_issuer_url == "https://x.example"
+
+
+def test_issuer_doubled_trailing_slash_stripped() -> None:
+    """Final fix round 1, F-14: a DOUBLED trailing slash (`removesuffix("/")`'s old blind spot —
+    it stripped exactly one, leaving `https://host/` and composing into `https://host//api/v1/mcp`)
+    is now fully normalised too, by `value.rstrip("/")`."""
+    settings = Settings(oauth_issuer_url="https://x.example//")
+
+    assert settings.oauth_issuer_url == "https://x.example"
+    assert settings.mcp_resource_url == "https://x.example/api/v1/mcp"
 
 
 def test_issuer_whitespace_stripped() -> None:

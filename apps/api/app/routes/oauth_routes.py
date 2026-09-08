@@ -36,6 +36,7 @@ undeclared here would reintroduce it just for this one route.
 from __future__ import annotations
 
 import hmac
+import logging
 from datetime import UTC, datetime
 from typing import Annotated
 from urllib.parse import urlencode
@@ -75,6 +76,8 @@ from app.services.oauth_clients import (
 from app.services.oauth_codes import issue_authorization_code
 from app.services.oauth_consents import find_active_consent, record_consent
 from app.services.oauth_tokens import redeem_authorization_code, revoke_token, rotate_refresh_token
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/oauth", tags=["oauth"])
 
@@ -528,6 +531,13 @@ def oauth_authorize_decision(
         return response
 
     if decision == "approve":
+        # Final fix round 1, F-12: mirrors the sibling check at `oauth_authorize_continue` above
+        # (`client = get_client(...); if client is None: raise OAuthError(...)`) — the client can
+        # be deleted between rendering this consent page and the browser POSTing the decision
+        # back; without this re-check, `record_consent`'s `oauth_consents.client_id` FK insert
+        # would raise an uncaught `IntegrityError` (a 500), not this route's documented 400.
+        if get_client(session, pending.client_id) is None:
+            raise OAuthError("invalid_client", "Unknown client.")
         record_consent(
             session,
             user_id=principal.user_id,
@@ -739,6 +749,7 @@ def oauth_revoke(
         raise OAuthError("invalid_client", "Unknown client.", status_code=401)
 
     revoke_token(session, raw_token=token, client_id=client_id, now=datetime.now(UTC))
+    logger.info("oauth token revoked: client_id=%s", client_id)
 
     return Response(
         status_code=200,

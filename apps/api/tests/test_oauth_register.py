@@ -251,6 +251,31 @@ def test_register_rejects_backslash_or_userinfo_redirect_uri(tmp_engine: Engine)
         assert response.headers.get("cache-control") == "no-store"
 
 
+def test_register_rejects_control_character_or_whitespace_redirect_uri(tmp_engine: Engine) -> None:
+    """Final fix round 1, finding F-13: `urlsplit` silently strips `\\t`/`\\r`/`\\n` before
+    parsing, while the RAW string (still containing them) is what gets persisted and later
+    composed into a `Location` header — the same parser-differential class I-2/M-1 above already
+    guard against, for a different character class (a control character or embedded whitespace
+    instead of a backslash/userinfo component). `validate_redirect_uri` now rejects any control
+    character or whitespace anywhere in the raw string before it ever reaches `urlsplit`.
+    """
+    app = _build_app(tmp_engine)
+    client = TestClient(app)
+
+    for uri in (
+        "http://localhost:1/cb\n",
+        "https://a.example/cb\t",
+        "https://a.example/c b",
+    ):
+        response = client.post("/api/v1/oauth/register", json={"redirect_uris": [uri]})
+
+        assert response.status_code == 400, response.text
+        body = response.json()
+        assert body["error"] == "invalid_redirect_uri"
+        assert "error_description" in body
+        assert response.headers.get("cache-control") == "no-store"
+
+
 def test_register_rejects_empty_fragment(tmp_engine: Engine) -> None:
     """Fix round 1, finding I-3: `https://a.example/cb#` (a lone trailing `#`, no fragment text)
     previously passed the original `if parts.fragment:` truthiness check — `urlsplit(...)
@@ -540,6 +565,11 @@ def test_register_rate_limited(tmp_engine: Engine) -> None:
     envelope = second.json()
     assert envelope["error"]["code"] == "rate_limited"
     assert isinstance(envelope["error"]["message"], str) and envelope["error"]["message"]
+    # Final fix round 1, F-10/P7: the OAuth rate-limit window's 429 now carries the same
+    # no-store/no-cache pair every other `/oauth/*` error response carries, closing the one
+    # Global Constraints gap the whole-branch review found.
+    assert second.headers["cache-control"] == "no-store"
+    assert second.headers["pragma"] == "no-cache"
 
 
 # ---------------------------------------------------------------------------

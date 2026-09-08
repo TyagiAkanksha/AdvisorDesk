@@ -463,7 +463,10 @@ class RateLimiter:
             while window and now - window[0] >= _MINUTE_SECONDS:
                 window.popleft()
             if len(window) >= self._settings.oauth_rate_limit_per_min:
-                raise RateLimitedError(_OAUTH_RATE_LIMIT_MESSAGE)
+                raise RateLimitedError(
+                    _OAUTH_RATE_LIMIT_MESSAGE,
+                    headers={"Cache-Control": "no-store", "Pragma": "no-cache"},
+                )
 
             window.append(now)
 

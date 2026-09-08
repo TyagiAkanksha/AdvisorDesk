@@ -9,12 +9,13 @@ import type { ConnectedAppDto } from '@/types/api/connectedApps';
 
 // docs/plans/mcp-oauth/task-09-admin-connected-apps-ui.md: owns the list query + the confirm
 // dialog's revoke flow so ConnectedAppsScreen stays dumb (docs/FRONTEND-CONVENTIONS.md §3).
-// `hasData`/`refreshErrorMessage` mirror useContentList's semantics exactly — `hasData` is
-// `true` once a page has ever loaded, so a LATER background refetch failure (e.g. another tab's
-// revoke invalidating `ConnectedApps` tag while this screen is still mounted) doesn't blank an
-// already-rendered list back to a full-screen error.
+// `hasData` is `true` once a page has ever loaded, so a LATER background refetch failure (e.g.
+// another tab's revoke invalidating the `ConnectedApps` tag while this screen is still mounted)
+// doesn't blank an already-rendered list back to a full-screen error — UNLIKE `useContentList`/
+// `useDashboardStats`, this hook does not surface that background-failure case at all today (no
+// Snackbar, no dismiss action): a background refetch failure here is currently silent (final
+// fix round 1, F-5).
 const REVOKE_ERROR_FALLBACK = "Couldn't revoke this app. Please try again.";
-const REFRESH_ERROR_FALLBACK = "Couldn't refresh connected apps — showing the last loaded list.";
 // Brief's Screen-behaviour section pins `isError && !hasData` -> `<ErrorState message=…>` to the
 // PRD §9 envelope's own message where the failed response carries one (task-09 brief's
 // Component.test.tsx: a 500 first load with `{"error":{"message":"boom"}}` must surface "boom",
@@ -30,8 +31,6 @@ export interface UseConnectedAppsResult {
   hasData: boolean;
   /** §9-friendly message for the first (non-cached) load's failure — `null` once `hasData`. */
   errorMessage: string | null;
-  /** §9-friendly message for a background list-refetch failure with data still cached. */
-  refreshErrorMessage: string | null;
   /** The app the confirm dialog is open for, else `null`. */
   pendingRevoke: ConnectedAppDto | null;
   requestRevoke: (app: ConnectedAppDto) => void;
@@ -44,14 +43,6 @@ export interface UseConnectedAppsResult {
 export function useConnectedApps(): UseConnectedAppsResult {
   const { data, error, isLoading, isError } = useGetConnectedAppsQuery();
   const hasData = data !== undefined;
-
-  // Same reset idiom as useContentList's `refreshErrorDismissed`: once `isError` clears, forget
-  // the dismissal so a LATER, distinct background-refetch failure gets its own message.
-  const [refreshErrorDismissed, setRefreshErrorDismissed] = useState(false);
-  if (!isError && refreshErrorDismissed) {
-    setRefreshErrorDismissed(false);
-  }
-  const backgroundRefetchFailed = hasData && isError && !refreshErrorDismissed;
 
   const [pendingRevoke, setPendingRevoke] = useState<ConnectedAppDto | null>(null);
   const [triggerRevoke, { isLoading: isRevoking }] = useRevokeConnectedAppMutation();
@@ -88,7 +79,6 @@ export function useConnectedApps(): UseConnectedAppsResult {
     isError,
     hasData,
     errorMessage: !hasData && isError ? extractErrorMessage(error, LOAD_ERROR_FALLBACK) : null,
-    refreshErrorMessage: backgroundRefetchFailed ? REFRESH_ERROR_FALLBACK : null,
     pendingRevoke,
     requestRevoke,
     cancelRevoke,

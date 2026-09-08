@@ -15,6 +15,7 @@ CONVENTIONS.md §4: this router contains no `try/except` — `NotFoundError`
 
 from __future__ import annotations
 
+import logging
 from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends
@@ -27,6 +28,8 @@ from app.models.schemas.oauth import ConnectedApp, ConnectedAppsResponse
 from app.routes.deps import get_session
 from app.services.errors import NotFoundError
 from app.services.oauth_clients import delete_client, list_connected_apps
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(
     prefix="/oauth/clients",
@@ -74,4 +77,5 @@ def oauth_client_revoke(client_id: str, session: Session = Depends(get_session))
     deleted = delete_client(session, client_id)
     if not deleted:
         raise NotFoundError("Client not found.")
+    logger.info("oauth client deleted: client_id=%s", client_id)
     return Response(status_code=204)

@@ -49,6 +49,7 @@ from app.db import make_session_factory
 from app.factory import create_app
 from app.models import User
 from app.models.oauth import OAuthAuthorizationCode, OAuthClient, OAuthConsent
+from app.services.oauth_clients import delete_client
 
 _ISSUER = "https://api.example"
 _ADMIN_APP_URL = "https://admin.example"
@@ -324,6 +325,45 @@ def test_approve_records_consent_and_issues_code(tmp_engine: Engine, db_session:
     assert code_row.consumed_at is None
 
     assert _AUTHORIZE_COOKIE_NAME not in client.cookies
+
+
+def test_approve_deleted_client_400_not_500(tmp_engine: Engine, db_session: Session) -> None:
+    """Final fix round 1, F-12: if the client is deleted between rendering the consent page and
+    the browser POSTing the approve decision back, the approve branch now re-checks the client
+    still exists — the same `get_client(...) is None` guard `oauth_authorize_continue` already
+    has (pinned above by `test_continue_unknown_client_invalid_client`) — and answers this route's
+    documented 400 `invalid_client`, `Cache-Control: no-store`, instead of letting `record_consent`
+    raise an uncaught `IntegrityError` (a 500) on the FK insert.
+    """
+    app = _build_app(tmp_engine)
+    client = TestClient(app)
+    client_id = _register(client, client_name="Claude")
+
+    authorize_response = client.get(
+        _AUTHORIZE_PATH, params=_authorize_params(client_id), follow_redirects=False
+    )
+    assert authorize_response.status_code == 303, authorize_response.text
+    login_as(client, "admin@example.com")
+    continue_response = client.get(_CONTINUE_PATH, follow_redirects=False)
+    assert continue_response.status_code == 200, continue_response.text
+    nonce_match = _NONCE_RE.search(continue_response.text)
+    assert nonce_match is not None, continue_response.text
+
+    deleted = delete_client(db_session, client_id)
+    assert deleted is True
+    db_session.commit()
+
+    response = client.post(
+        _DECISION_PATH,
+        data={"decision": "approve", "nonce": nonce_match.group(1)},
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 400, response.text
+    body = response.json()
+    assert body["error"] == "invalid_client"
+    assert body["error_description"] == "Unknown client."
+    assert response.headers.get("cache-control") == "no-store"
 
 
 def test_repeat_authorization_skips_consent(tmp_engine: Engine, db_session: Session) -> None:

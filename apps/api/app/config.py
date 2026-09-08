@@ -214,8 +214,10 @@ class Settings(BaseSettings):
         normalizers (`is_dev`'s `self.environment.strip().lower()`, `admin_email_set`'s
         `email.strip().lower()`) — so a hand-edited `.env` value with a stray trailing space (a
         known local gotcha in this repo) is rejected/accepted on its real content, not on
-        whitespace. Then strips exactly one trailing slash so a copy-pasted issuer URL with a
-        trailing `/` doesn't compose into an accidental `//api/v1/mcp`.
+        whitespace. Then strips ALL trailing slashes (final fix round 1, F-14: `removesuffix("/")`
+        stripped only one, so a doubled `https://host//` still composed into an accidental
+        `//api/v1/mcp` — `rstrip("/")` closes that) so a copy-pasted issuer URL with a trailing
+        `/` (however many) doesn't compose into an accidental extra slash.
 
         mcp-oauth task-03 fix round 1 (review finding M-3, defence-in-depth): after stripping the
         ends, rejects any REMAINING whitespace/control character anywhere in the value — `.strip()`
@@ -240,7 +242,7 @@ class Settings(BaseSettings):
             )
         if any(char.isspace() for char in value):
             raise ValueError(f"oauth_issuer_url must not contain whitespace, got {value!r}.")
-        return value.removesuffix("/")
+        return value.rstrip("/")
 
     @model_validator(mode="after")
     def _warn_on_provider_base_url_mismatch(self) -> Settings:

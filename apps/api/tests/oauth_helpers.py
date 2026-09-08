@@ -29,10 +29,28 @@ Task 06 (consent screen) is the ONE task allowed to extend this module — to cl
 consent screen `complete_authorization` will need to drive through once it exists (task 05's own
 brief: "No consent screen yet ... this task's `continue` goes straight to the code"). Every other
 later task imports `complete_authorization`/`AuthorizationResult` unchanged.
+
+mcp-oauth plan, task 06 (docs/plans/mcp-oauth/task-06-consent-screen.md): `continue` now renders an
+HTML consent page instead of issuing a code immediately, the FIRST time a given `(user, client)`
+pair authorizes — `complete_authorization` handles both shapes `continue` can now answer with. When
+the response is 302 (consent already on file for this `(user, client)` pair — every call after the
+first one `complete_authorization` itself drove for the same `email`), behavior is byte-identical
+to before this task. When it is 200 `text/html` (the first-ever authorization for this pair), the
+helper parses the consent form's `nonce` out of the page (`name="nonce" value="([^"]+)"` — the exact
+hidden-input shape `app.routes.oauth_consent_html.render_consent_page` renders), then
+`POST /oauth/authorize/decision` with `decision=approve` and that nonce, and reads the resulting
+302's `code`/`state` instead — same downstream contract, one extra hop. Every existing caller
+(`tests/test_oauth_authorize.py::test_full_bridge_issues_code`, all of `tests/test_oauth_token.py`
++ `tests/test_oauth_token_fk.py`) keeps working unmodified: this module's own signature and return
+type (`AuthorizationResult`) are unchanged, and a fresh `client`/`email` pair on a fresh app/DB
+always hits the first-authorization (200 HTML) branch, so every existing call site transparently
+starts exercising the approve hop instead of skipping it — never a behavior IT can observe as
+different, since the four fields on `AuthorizationResult` mean exactly what they always have.
 """
 
 from __future__ import annotations
 
+import re
 import urllib.parse
 from dataclasses import dataclass
 
@@ -42,6 +60,11 @@ from fastapi.testclient import TestClient
 _REGISTER_PATH = "/api/v1/oauth/register"
 _AUTHORIZE_PATH = "/api/v1/oauth/authorize"
 _CONTINUE_PATH = "/api/v1/oauth/authorize/continue"
+_DECISION_PATH = "/api/v1/oauth/authorize/decision"
+
+#: `app.routes.oauth_consent_html.render_consent_page`'s hidden nonce input, e.g.
+#: `<input type="hidden" name="nonce" value="AbC123...">` — task-06 brief's own pinned shape.
+_NONCE_RE = re.compile(r'name="nonce" value="([^"]+)"')
 
 #: The redirect URI every `complete_authorization` caller's client is registered with — a
 #: realistic claude.ai-shaped callback, matching `tests/test_oauth_register.py`'s own examples.
@@ -99,8 +122,12 @@ def complete_authorization(
     3. `login_as(client, email)` -> the Google bridge leg (registers a fresh fake identity,
        drives `/auth/login` + `/auth/callback`), landing a live admin session cookie alongside
        the still-pending authorization cookie.
-    4. `GET /oauth/authorize/continue` -> asserts 302, and parses the redirect `Location`'s
-       `code`/`state` query params.
+    4. `GET /oauth/authorize/continue` -> either a 302 straight to a code (consent already on
+       file for this `(user, client)` pair), or (mcp-oauth task 06: the FIRST authorization for
+       this pair) a 200 HTML consent page.
+    5. Task 06's consent hop, only when step 4 answered 200: parse the page's `nonce`, then
+       `POST /oauth/authorize/decision` with `decision=approve` and that nonce -> asserts 302,
+       and reads `code`/`state` from THIS redirect instead of step 4's.
 
     Args:
         client: a `TestClient` over an app built with a `FakeGoogleOAuthClient` injected as
@@ -113,9 +140,9 @@ def complete_authorization(
         An `AuthorizationResult` carrying the minted code plus everything needed to redeem it.
 
     Raises:
-        AssertionError: the register/authorize/continue call sequence did not reach the expected
-            303/302 status at each step — surfaces exactly where the flow broke, the same
-            fail-fast contract `login_as` itself gives its callers.
+        AssertionError: the register/authorize/(consent-decision)/continue call sequence did not
+            reach the expected 303/200/302 status at each step — surfaces exactly where the flow
+            broke, the same fail-fast contract `login_as` itself gives its callers.
     """
     register_response = client.post(_REGISTER_PATH, json={"redirect_uris": [_REDIRECT_URI]})
     assert register_response.status_code == 201, register_response.text
@@ -140,9 +167,24 @@ def complete_authorization(
     login_as(client, email)
 
     continue_response = client.get(_CONTINUE_PATH, follow_redirects=False)
-    assert continue_response.status_code == 302, continue_response.text
+    assert continue_response.status_code in (200, 302), continue_response.text
 
-    location = continue_response.headers["location"]
+    if continue_response.status_code == 200:
+        assert continue_response.headers["content-type"].startswith("text/html"), (
+            continue_response.headers["content-type"]
+        )
+        nonce_match = _NONCE_RE.search(continue_response.text)
+        assert nonce_match is not None, continue_response.text
+        decision_response = client.post(
+            _DECISION_PATH,
+            data={"decision": "approve", "nonce": nonce_match.group(1)},
+            follow_redirects=False,
+        )
+        assert decision_response.status_code == 302, decision_response.text
+        location = decision_response.headers["location"]
+    else:
+        location = continue_response.headers["location"]
+
     query = urllib.parse.parse_qs(urllib.parse.urlparse(location).query)
 
     return AuthorizationResult(

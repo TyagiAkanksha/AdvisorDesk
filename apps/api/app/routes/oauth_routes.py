@@ -1,7 +1,8 @@
 """RFC 7591 dynamic client registration route — `POST /oauth/register` (mcp-oauth plan, task 04);
 `GET /oauth/authorize` + `GET /oauth/authorize/continue` (mcp-oauth plan, task 05; RFC 6749 §4.1,
 RFC 7636 PKCE); `POST /oauth/token` (mcp-oauth plan, task 07; RFC 6749 §4.1.3/§4.1.4 code grant,
-§6 refresh grant).
+§6 refresh grant); the consent screen + `POST /oauth/authorize/decision` (mcp-oauth plan, task 06;
+docs/plans/mcp-oauth/task-06-consent-screen.md).
 
 docs/plans/mcp-oauth/DESIGN.md §"End-to-end flow" step 4: "Claude -> POST /register (DCR) with
 its redirect_uris + name -> { client_id, ... } (public client, no secret)". CONVENTIONS.md §4:
@@ -30,15 +31,16 @@ undeclared here would reintroduce it just for this one route.
 
 from __future__ import annotations
 
+import hmac
 from datetime import UTC, datetime
 from typing import Annotated
 from urllib.parse import urlencode
 
 from fastapi import APIRouter, Depends, Form, Request, Response
-from fastapi.responses import JSONResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from sqlalchemy.orm import Session
 
-from app.auth.deps import AdminPrincipal, resolve_admin
+from app.auth.deps import AdminPrincipal, require_admin, resolve_admin
 from app.auth.oauth_authorize import validate_authorize_request
 from app.auth.oauth_request import (
     AUTHORIZE_COOKIE_NAME,
@@ -56,6 +58,7 @@ from app.models.schemas.oauth import (
     TokenResponse,
 )
 from app.routes.deps import get_oauth_token_session, get_rate_limiter, get_session, get_settings
+from app.routes.oauth_consent_html import CONSENT_CSP, render_consent_page
 from app.routes.ratelimit import RateLimiter
 from app.services.errors import OAuthError, OAuthRedirectError
 from app.services.oauth_clients import (
@@ -66,6 +69,7 @@ from app.services.oauth_clients import (
     validate_redirect_uri,
 )
 from app.services.oauth_codes import issue_authorization_code
+from app.services.oauth_consents import find_active_consent, record_consent
 from app.services.oauth_tokens import redeem_authorization_code, rotate_refresh_token
 
 router = APIRouter(prefix="/oauth", tags=["oauth"])
@@ -241,6 +245,20 @@ def oauth_authorize(
     return response
 
 
+def _redirect_with_params(redirect_uri: str, params: dict[str, str]) -> str:
+    """Append `params` to `redirect_uri` as a query string, `&`-joining onto an existing one.
+
+    mcp-oauth task 06 (t05 review finding M-4): a registered `redirect_uri` may already carry its
+    own query string (e.g. a multi-tenant client's `?tenant=x`) — appending with a bare `?` in
+    that case would produce a second, malformed `?` rather than joining onto the first. Shared by
+    `_issue_code_and_redirect`'s success redirect and `oauth_authorize_decision`'s deny redirect
+    below, so both success and error paths use the identical separator logic (duplication is the
+    thing t05's review flagged, not the existence of two call sites).
+    """
+    separator = "&" if "?" in redirect_uri else "?"
+    return f"{redirect_uri}{separator}{urlencode(params)}"
+
+
 def _issue_code_and_redirect(
     session: Session,
     pending: PendingAuthorization,
@@ -251,7 +269,9 @@ def _issue_code_and_redirect(
 
     Module-level (not a route) so mcp-oauth task 06's consent-approval endpoint can reuse this
     exact issuance-and-redirect step once a consent decision has been recorded, without
-    duplicating it.
+    duplicating it. Task 06 controller carry-over (t05 review I-1): for a client WITHOUT an active
+    consent, this function is now reachable ONLY from `oauth_authorize_decision`'s approve branch —
+    `oauth_authorize_continue` calls it directly ONLY when `find_active_consent` already found one.
 
     Clears the pending-authorization cookie on the SAME response (single-use — the parked request
     this helper just consumed can never be replayed to mint a second code).
@@ -271,9 +291,8 @@ def _issue_code_and_redirect(
     params: dict[str, str] = {"code": code}
     if pending.state is not None:
         params["state"] = pending.state
-    separator = "&" if "?" in pending.redirect_uri else "?"
     response = RedirectResponse(
-        f"{pending.redirect_uri}{separator}{urlencode(params)}",
+        _redirect_with_params(pending.redirect_uri, params),
         status_code=302,
         headers={"Cache-Control": "no-store", "Pragma": "no-cache"},
     )
@@ -285,6 +304,14 @@ def _issue_code_and_redirect(
     "/authorize/continue",
     operation_id="oauth_authorize_continue",
     responses={
+        200: {
+            "description": (
+                "The consent page: the FIRST authorization for this (user, client) pair "
+                "(mcp-oauth task 06) — the admin must Approve or Deny via "
+                "POST /api/v1/oauth/authorize/decision before a code is issued."
+            ),
+            "content": {"text/html": {}},
+        },
         307: {
             "description": (
                 "No admin session yet — redirects to /api/v1/auth/login (the Google-login "
@@ -294,13 +321,14 @@ def _issue_code_and_redirect(
         302: {
             "description": (
                 "Either a single-use authorization code was issued (redirects to the client's "
-                "own redirect_uri with code/state), or the resolved admin is not allowlisted "
-                "(redirects with error=access_denied/state)."
+                "own redirect_uri with code/state, when consent is already on file), or the "
+                "resolved admin is not allowlisted (redirects with error=access_denied/state)."
             ),
         },
         400: {
             "description": (
-                "OAuth error — no (or an invalid/expired/tampered) pending-authorization cookie."
+                "OAuth error — no (or an invalid/expired/tampered) pending-authorization cookie, "
+                "or the pending request's own client was deleted mid-flow."
             ),
             "content": {
                 "application/json": {
@@ -320,7 +348,7 @@ def oauth_authorize_continue(
     settings: Settings = Depends(get_settings),
     limiter: RateLimiter = Depends(get_rate_limiter),
 ) -> Response:
-    """Resume a parked `/authorize` request: bridge to Google login if needed, then issue a code.
+    """Resume a parked `/authorize` request: bridge to Google login, then gate on consent.
 
     DESIGN.md §"End-to-end flow" steps 5-6, §"Google bridge + consent": reads the signed
     pending-authorization cookie `/authorize` set. No cookie (missing, tampered, or expired) is a
@@ -332,12 +360,17 @@ def oauth_authorize_continue(
     admin` itself does not — only `/auth/callback` and this route's own check do) before issuing
     the code, since a session minted while still allowlisted can outlive a later allowlist edit.
 
-    No consent screen yet (mcp-oauth task 06 inserts one here); this task's `continue` goes
-    straight from a resolved, allowlisted admin to a minted code, so the core flow is provable in
-    task 07's `/token` exchange.
+    mcp-oauth task 06 (docs/plans/mcp-oauth/task-06-consent-screen.md): if an ACTIVE consent
+    already exists for this `(user, client)` pair (`find_active_consent`), issues the code
+    immediately, exactly as before this task. Otherwise renders the server-rendered Approve/Deny
+    consent page (`app.routes.oauth_consent_html.render_consent_page`) instead — task-06 controller
+    carry-over (t05 review I-1): a code is NEVER issued from this GET for a client lacking an
+    active consent; only `POST /authorize/decision`'s approve branch can do that.
 
     Raises:
-        OAuthError: no valid pending-authorization cookie (`"invalid_request"`, 400).
+        OAuthError: no valid pending-authorization cookie (`"invalid_request"`, 400), or the
+            pending request's own `client_id` no longer names a registered client (`"invalid_
+            client"`, 400 — the client was deleted mid-flow, between `/authorize` and this call).
         OAuthRedirectError: the resolved admin's email is not in `settings.admin_email_set`
             (`"access_denied"`) — redirects to the pending request's own `redirect_uri`.
     """
@@ -360,7 +393,144 @@ def oauth_authorize_continue(
             pending.state,
         )
 
-    return _issue_code_and_redirect(session, pending, principal, settings)
+    active_consent = find_active_consent(
+        session, user_id=principal.user_id, client_id=pending.client_id
+    )
+    if active_consent is not None:
+        return _issue_code_and_redirect(session, pending, principal, settings)
+
+    client = get_client(session, pending.client_id)
+    if client is None:
+        raise OAuthError("invalid_client", "Unknown client.")
+
+    consent_page = render_consent_page(
+        client_name=client.client_name,
+        user_email=principal.email,
+        action_path="/api/v1/oauth/authorize/decision",
+        nonce=pending.nonce,
+    )
+    return HTMLResponse(
+        consent_page,
+        headers={
+            "Cache-Control": "no-store",
+            "Pragma": "no-cache",
+            "Content-Security-Policy": CONSENT_CSP,
+        },
+    )
+
+
+@router.post(
+    "/authorize/decision",
+    operation_id="oauth_authorize_decision",
+    responses={
+        302: {
+            "description": (
+                "Approve: a single-use authorization code was issued (redirects to the client's "
+                "own redirect_uri with code/state). Deny: redirects with "
+                "error=access_denied/error_description/state, and no code is issued."
+            ),
+        },
+        400: {
+            "description": (
+                "OAuth error — no pending-authorization cookie, a missing/mismatched consent "
+                "form nonce, or a decision value other than approve/deny."
+            ),
+            "content": {
+                "application/json": {
+                    "example": {
+                        "error": "invalid_request",
+                        "error_description": "…",
+                    }
+                }
+            },
+        },
+        422: {"model": ErrorEnvelope},
+        429: {"model": ErrorEnvelope},
+    },
+)
+def oauth_authorize_decision(
+    request: Request,
+    decision: Annotated[str | None, Form()] = None,
+    nonce: Annotated[str | None, Form()] = None,
+    session: Session = Depends(get_session),
+    settings: Settings = Depends(get_settings),
+    limiter: RateLimiter = Depends(get_rate_limiter),
+) -> Response:
+    """Handle the consent page's Approve/Deny submission (mcp-oauth plan, task 06).
+
+    docs/plans/mcp-oauth/task-06-consent-screen.md: guarded by `require_admin` (raise-on-failure),
+    NOT `resolve_admin` (which `oauth_authorize_continue` uses to bridge to a 307 login redirect) —
+    a session that vanished between rendering the consent page and submitting the form must answer
+    401, never loop back through Google login (task-06 controller carry-over, t05 review context).
+    The submitted `nonce` is compared against the pending request's own `PendingAuthorization.
+    nonce` with `hmac.compare_digest` — an absent `nonce` is rejected up front (never passed to
+    `compare_digest` as `None`) — binding this POST to the exact pending request the consent page
+    was rendered for, the CSRF-style guard `nonce` exists for (`app.auth.oauth_request`'s own
+    module docstring).
+
+    Approve records an `OAuthConsent` row (`app.services.oauth_consents.record_consent`) and then
+    issues the code via `_issue_code_and_redirect`, identically to `oauth_authorize_continue`'s own
+    already-consented path. Deny redirects to the pending request's own `redirect_uri` with
+    `error=access_denied` and clears the pending cookie — records no consent, issues no code — so a
+    second `GET /authorize/continue` right after is NOT resumable (400 `invalid_request`, since the
+    cookie is already gone).
+
+    Raises:
+        OAuthError: no valid pending-authorization cookie (`"invalid_request"`, 400); the
+            submitted `nonce` is missing or does not match the pending request's own
+            (`"invalid_request"`, "Consent form token mismatch.", 400); `decision` is neither
+            `"approve"` nor `"deny"` (`"invalid_request"`, 400).
+        OAuthRedirectError: the resolved admin's email is not in `settings.admin_email_set`
+            (`"access_denied"`) — redirects to the pending request's own `redirect_uri`.
+        AuthRequiredError: no valid admin session (`require_admin`) — 401 §9 `auth_required`
+            envelope.
+    """
+    client_ip = request.client.host if request.client is not None else "unknown"
+    limiter.check_oauth_request(client_ip)
+
+    pending = read_pending_authorization(request.cookies.get(AUTHORIZE_COOKIE_NAME), settings)
+    if pending is None:
+        raise OAuthError("invalid_request", "No pending authorization request.")
+
+    principal = require_admin(request)
+
+    if principal.email.lower() not in settings.admin_email_set:
+        raise OAuthRedirectError(
+            "access_denied",
+            "This account is not permitted to authorize MCP access.",
+            pending.redirect_uri,
+            pending.state,
+        )
+
+    if nonce is None or not hmac.compare_digest(nonce, pending.nonce):
+        raise OAuthError("invalid_request", "Consent form token mismatch.")
+
+    if decision == "deny":
+        params: dict[str, str] = {
+            "error": "access_denied",
+            "error_description": "The user denied the request.",
+        }
+        if pending.state is not None:
+            params["state"] = pending.state
+        response = RedirectResponse(
+            _redirect_with_params(pending.redirect_uri, params),
+            status_code=302,
+            headers={"Cache-Control": "no-store", "Pragma": "no-cache"},
+        )
+        clear_pending_cookie(response)
+        return response
+
+    if decision == "approve":
+        record_consent(
+            session,
+            user_id=principal.user_id,
+            client_id=pending.client_id,
+            scope=pending.scope,
+            now=datetime.now(UTC),
+        )
+        return _issue_code_and_redirect(session, pending, principal, settings)
+
+    raise OAuthError("invalid_request", "decision must be approve or deny.")
 
 
 @router.post(

@@ -434,7 +434,7 @@ export interface paths {
         };
         /**
          * Oauth Authorize Continue
-         * @description Resume a parked `/authorize` request: bridge to Google login if needed, then issue a code.
+         * @description Resume a parked `/authorize` request: bridge to Google login, then gate on consent.
          *
          *     DESIGN.md §"End-to-end flow" steps 5-6, §"Google bridge + consent": reads the signed
          *     pending-authorization cookie `/authorize` set. No cookie (missing, tampered, or expired) is a
@@ -446,18 +446,70 @@ export interface paths {
          *     admin` itself does not — only `/auth/callback` and this route's own check do) before issuing
          *     the code, since a session minted while still allowlisted can outlive a later allowlist edit.
          *
-         *     No consent screen yet (mcp-oauth task 06 inserts one here); this task's `continue` goes
-         *     straight from a resolved, allowlisted admin to a minted code, so the core flow is provable in
-         *     task 07's `/token` exchange.
+         *     mcp-oauth task 06 (docs/plans/mcp-oauth/task-06-consent-screen.md): if an ACTIVE consent
+         *     already exists for this `(user, client)` pair (`find_active_consent`), issues the code
+         *     immediately, exactly as before this task. Otherwise renders the server-rendered Approve/Deny
+         *     consent page (`app.routes.oauth_consent_html.render_consent_page`) instead — task-06 controller
+         *     carry-over (t05 review I-1): a code is NEVER issued from this GET for a client lacking an
+         *     active consent; only `POST /authorize/decision`'s approve branch can do that.
          *
          *     Raises:
-         *         OAuthError: no valid pending-authorization cookie (`"invalid_request"`, 400).
+         *         OAuthError: no valid pending-authorization cookie (`"invalid_request"`, 400), or the
+         *             pending request's own `client_id` no longer names a registered client (`"invalid_
+         *             client"`, 400 — the client was deleted mid-flow, between `/authorize` and this call).
          *         OAuthRedirectError: the resolved admin's email is not in `settings.admin_email_set`
          *             (`"access_denied"`) — redirects to the pending request's own `redirect_uri`.
          */
         get: operations["oauth_authorize_continue"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/oauth/authorize/decision": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Oauth Authorize Decision
+         * @description Handle the consent page's Approve/Deny submission (mcp-oauth plan, task 06).
+         *
+         *     docs/plans/mcp-oauth/task-06-consent-screen.md: guarded by `require_admin` (raise-on-failure),
+         *     NOT `resolve_admin` (which `oauth_authorize_continue` uses to bridge to a 307 login redirect) —
+         *     a session that vanished between rendering the consent page and submitting the form must answer
+         *     401, never loop back through Google login (task-06 controller carry-over, t05 review context).
+         *     The submitted `nonce` is compared against the pending request's own `PendingAuthorization.
+         *     nonce` with `hmac.compare_digest` — an absent `nonce` is rejected up front (never passed to
+         *     `compare_digest` as `None`) — binding this POST to the exact pending request the consent page
+         *     was rendered for, the CSRF-style guard `nonce` exists for (`app.auth.oauth_request`'s own
+         *     module docstring).
+         *
+         *     Approve records an `OAuthConsent` row (`app.services.oauth_consents.record_consent`) and then
+         *     issues the code via `_issue_code_and_redirect`, identically to `oauth_authorize_continue`'s own
+         *     already-consented path. Deny redirects to the pending request's own `redirect_uri` with
+         *     `error=access_denied` and clears the pending cookie — records no consent, issues no code — so a
+         *     second `GET /authorize/continue` right after is NOT resumable (400 `invalid_request`, since the
+         *     cookie is already gone).
+         *
+         *     Raises:
+         *         OAuthError: no valid pending-authorization cookie (`"invalid_request"`, 400); the
+         *             submitted `nonce` is missing or does not match the pending request's own
+         *             (`"invalid_request"`, "Consent form token mismatch.", 400); `decision` is neither
+         *             `"approve"` nor `"deny"` (`"invalid_request"`, 400).
+         *         OAuthRedirectError: the resolved admin's email is not in `settings.admin_email_set`
+         *             (`"access_denied"`) — redirects to the pending request's own `redirect_uri`.
+         *         AuthRequiredError: no valid admin session (`require_admin`) — 401 §9 `auth_required`
+         *             envelope.
+         */
+        post: operations["oauth_authorize_decision"];
         delete?: never;
         options?: never;
         head?: never;
@@ -721,6 +773,13 @@ export interface components {
              * @enum {string}
              */
             role: "user" | "assistant";
+        };
+        /** Body_oauth_authorize_decision */
+        Body_oauth_authorize_decision: {
+            /** Decision */
+            decision?: string | null;
+            /** Nonce */
+            nonce?: string | null;
         };
         /** Body_oauth_token */
         Body_oauth_token: {
@@ -1737,16 +1796,17 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Successful Response */
+            /** @description The consent page: the FIRST authorization for this (user, client) pair (mcp-oauth task 06) — the admin must Approve or Deny via POST /api/v1/oauth/authorize/decision before a code is issued. */
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
                     "application/json": unknown;
+                    "text/html": unknown;
                 };
             };
-            /** @description Either a single-use authorization code was issued (redirects to the client's own redirect_uri with code/state), or the resolved admin is not allowlisted (redirects with error=access_denied/state). */
+            /** @description Either a single-use authorization code was issued (redirects to the client's own redirect_uri with code/state, when consent is already on file), or the resolved admin is not allowlisted (redirects with error=access_denied/state). */
             302: {
                 headers: {
                     [name: string]: unknown;
@@ -1760,7 +1820,7 @@ export interface operations {
                 };
                 content?: never;
             };
-            /** @description OAuth error — no (or an invalid/expired/tampered) pending-authorization cookie. */
+            /** @description OAuth error — no (or an invalid/expired/tampered) pending-authorization cookie, or the pending request's own client was deleted mid-flow. */
             400: {
                 headers: {
                     [name: string]: unknown;
@@ -1773,6 +1833,70 @@ export interface operations {
                      *     }
                      */
                     "application/json": unknown;
+                };
+            };
+            /** @description Too Many Requests */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    oauth_authorize_decision: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/x-www-form-urlencoded": components["schemas"]["Body_oauth_authorize_decision"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Approve: a single-use authorization code was issued (redirects to the client's own redirect_uri with code/state). Deny: redirects with error=access_denied/error_description/state, and no code is issued. */
+            302: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description OAuth error — no pending-authorization cookie, a missing/mismatched consent form nonce, or a decision value other than approve/deny. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "error": "invalid_request",
+                     *       "error_description": "…"
+                     *     }
+                     */
+                    "application/json": unknown;
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
             /** @description Too Many Requests */

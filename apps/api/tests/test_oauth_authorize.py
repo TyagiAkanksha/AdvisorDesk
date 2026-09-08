@@ -40,6 +40,7 @@ deliberately off-app and unreachable from the test process.
 
 from __future__ import annotations
 
+import re
 import urllib.parse
 
 from auth_helpers import FakeGoogleOAuthClient, begin_login, login_as
@@ -64,6 +65,15 @@ _MCP_PATH = "/api/v1/mcp"
 #: Not yet exported by any existing module (`app.auth.oauth_request` lands this task's GREEN
 #: step) — defined locally per this file's own module docstring.
 _AUTHORIZE_COOKIE_NAME = "advisordesk_oauth_authz"
+
+#: mcp-oauth task 06 (consent screen): `continue` now 200s with a consent page the FIRST time a
+#: given `(user, client)` pair authorizes, instead of the 302 this file's tests originally pinned.
+#: `oauth_helpers.complete_authorization` handles this for every test that goes through it;
+#: `test_absent_scope_and_resource_default` below hand-rolls its own `continue` call (to pass
+#: `scope=None, resource=None` overrides `complete_authorization` doesn't support) and needs the
+#: same one-hop consent approval inline — same hidden-input shape
+#: `app.routes.oauth_consent_html.render_consent_page` renders.
+_NONCE_RE = re.compile(r'name="nonce" value="([^"]+)"')
 
 _REDIRECT_URI = "https://claude.ai/api/mcp/auth_callback"
 #: RFC 7636 Appendix B's worked example: `S256(_CODE_VERIFIER) == _CODE_CHALLENGE`.
@@ -363,6 +373,16 @@ def test_absent_scope_and_resource_default(tmp_engine: Engine, db_session: Sessi
     login_as(client, "admin@example.com")
 
     continue_response = client.get("/api/v1/oauth/authorize/continue", follow_redirects=False)
+    if continue_response.status_code == 200:
+        # mcp-oauth task 06: first authorization for this (user, client) pair — approve the
+        # consent page inline (see `_NONCE_RE`'s own comment above) rather than a bare 302.
+        nonce_match = _NONCE_RE.search(continue_response.text)
+        assert nonce_match is not None, continue_response.text
+        continue_response = client.post(
+            "/api/v1/oauth/authorize/decision",
+            data={"decision": "approve", "nonce": nonce_match.group(1)},
+            follow_redirects=False,
+        )
     assert continue_response.status_code == 302, continue_response.text
 
     row = db_session.execute(select(OAuthAuthorizationCode)).scalar_one()

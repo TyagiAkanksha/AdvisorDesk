@@ -135,6 +135,43 @@ class OAuthError(AppError):
         self.status_code = status_code
 
 
+class OAuthRedirectError(AppError):
+    """An `/oauth/authorize` validation failure that is SAFE to redirect (mcp-oauth plan, task
+    05; RFC 6749 §4.1.2.1).
+
+    Raised only AFTER `client_id`/`redirect_uri` have already been verified against the
+    registered client (`app.auth.oauth_authorize.validate_authorize_request`'s steps 1-2) — every
+    other validation failure (bad PKCE, unsupported `response_type`, bad `scope`/`resource`) is
+    reported by redirecting back to that now-trusted `redirect_uri` with `error`/
+    `error_description`/`state` query params, per RFC 6749 §4.1.2.1, rather than the bare JSON
+    `OAuthError` shape — a caller mid-authorization-flow expects to land back at its own
+    `redirect_uri`, not see a JSON body. Rendered by
+    `app.routes.errors._oauth_redirect_error_handler`, registered separately from `OAuthError`'s
+    own handler (same MRO-walk reasoning as that class's own docstring: Starlette resolves the
+    most-specific registered handler first).
+
+    Args:
+        error: the RFC 6749 §4.1.2.1 machine-readable error code (e.g. `"invalid_request"`,
+            `"unsupported_response_type"`, `"invalid_scope"`, `"invalid_target"`,
+            `"access_denied"`).
+        description: a human-readable explanation, carried as the redirect's `error_description`.
+        redirect_uri: the ALREADY-VERIFIED redirect URI to send the caller back to — never an
+            unverified, caller-supplied value (that would be exactly the open redirect RFC 6749
+            §4.1.2.1's "never redirect an unknown client/redirect_uri" rule exists to prevent).
+        state: the caller's `state`, echoed back on the redirect when not `None` (RFC 6749
+            §4.1.2).
+    """
+
+    code = "oauth_redirect_error"
+
+    def __init__(self, error: str, description: str, redirect_uri: str, state: str | None) -> None:
+        super().__init__(description)
+        self.error = error
+        self.description = description
+        self.redirect_uri = redirect_uri
+        self.state = state
+
+
 class ToolInputError(AppError):
     """An MCP tool call's `arguments` failed its Pydantic args-model validation — maps to 422.
 

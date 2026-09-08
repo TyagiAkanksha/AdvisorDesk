@@ -77,7 +77,7 @@ from starlette.requests import Request
 from starlette.routing import Route
 from starlette.types import Receive, Scope, Send
 
-from app.auth.deps import AdminPrincipal, require_admin
+from app.auth.deps import AdminPrincipal, resolve_admin
 from app.auth.oauth_discovery import www_authenticate_challenge
 from app.auth.tokens import resolve_bearer_token
 from app.config import Settings
@@ -379,40 +379,38 @@ def _resolve_bearer_principal(request: Request, raw_token: str) -> AdminPrincipa
 
 
 def _require_admin_with_challenge(request: Request) -> AdminPrincipal:
-    """Resolve the admin session cookie, re-raising a failed `require_admin` with the RFC 9728
-    `WWW-Authenticate` challenge attached.
+    """Resolve the admin session cookie, raising with the RFC 9728 `WWW-Authenticate` challenge
+    attached when it doesn't resolve.
 
     mcp-oauth plan, task 03 (DESIGN.md §"Security / threat model", §"End-to-end flow" step 1):
     `require_admin` (`app.auth.deps`) is the shared cookie-auth dependency every REST admin route
     also depends on, and its `AuthRequiredError` must stay headerless there — a REST 401 has no
     use for an MCP-specific discovery pointer (`test_rest_401_has_no_www_authenticate`). This
-    thin wrapper is `app.mcp`'s own seam: it calls `require_admin` unchanged, and on its ONE
-    failure mode (`AuthRequiredError` — the DB-less `RuntimeError` guard is untouched, propagating
-    straight through) re-raises via `_auth_required(request)` instead, attaching the challenge
-    only for the MCP caller.
+    thin wrapper is `app.mcp`'s own seam, mirroring `require_admin`'s own resolve-or-raise shape
+    but attaching the challenge only for the MCP caller.
 
-    The `try/except` here is deliberate and reviewed: CONVENTIONS.md §4's "routes contain no
-    `try/except`" rule is scoped to `app.routes` (route handlers, whose rollback/mapping already
-    happens in the session dependency and the registered error handlers) — this function lives in
-    `app.mcp`, a different layer with no such rule, and the plan's own task-03 brief calls out
-    this exact wrapper as the sanctioned exception. mcp-oauth task 05 replaces the body with a call
-    to a forthcoming `resolve_admin(request)` without touching any test that exercises this
-    function today.
+    mcp-oauth plan, task 05: now calls `resolve_admin(request)` directly (rather than wrapping
+    `require_admin` in a `try/except AuthRequiredError`, this function's own earlier shape) and
+    raises `_auth_required(request)` on `None` — a simplification enabled by `resolve_admin`
+    existing as its own seam (`app.auth.deps`, split out of `require_admin` for
+    `GET /oauth/authorize/continue`'s Google-bridge branch), with byte-identical observable
+    behavior: same WARNING logs, same rejection reasons, same `RuntimeError` DB-less guard
+    (`resolve_admin` raises it exactly where `require_admin` did).
 
     Args:
-        request: the incoming request; forwarded to both `require_admin` and `_auth_required`.
+        request: the incoming request; forwarded to both `resolve_admin` and `_auth_required`.
 
     Raises:
         AuthRequiredError: no/invalid/expired cookie, unknown or soft-deleted user, or a stale
-            session epoch (see `require_admin`'s own docstring) — always carries the
+            session epoch (see `resolve_admin`'s own docstring) — always carries the
             `WWW-Authenticate` challenge here, unlike `require_admin`'s own headerless raise.
-        RuntimeError: the app was built without a `session_factory` (`require_admin`'s own
+        RuntimeError: the app was built without a `session_factory` (`resolve_admin`'s own
             DB-less guard) — propagates unchanged, not wrapped.
     """
-    try:
-        return require_admin(request)
-    except AuthRequiredError as exc:
-        raise _auth_required(request) from exc
+    principal = resolve_admin(request)
+    if principal is None:
+        raise _auth_required(request)
+    return principal
 
 
 class _AdminGatedMcpApp:

@@ -393,6 +393,77 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/oauth/authorize": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Oauth Authorize
+         * @description Validate an OAuth 2.1 authorization request, then park it pending the Google-login bridge
+         *     (RFC 6749 §4.1.1; DESIGN.md §"End-to-end flow" step 5).
+         *
+         *     `validate_authorize_request` (`app.auth.oauth_authorize`) does the actual validation, in its
+         *     own pinned order — an unknown client or unregistered redirect_uri answers 400 JSON and never
+         *     redirects (RFC 6749 §4.1.2.1); every later failure (unsupported response_type, missing/invalid
+         *     PKCE challenge, unsupported scope/resource) redirects to the now-verified redirect_uri with
+         *     `error`/`error_description`/`state`. A fully valid request 303s to `/authorize/continue` with
+         *     the validated request signed into an `HttpOnly` pending-authorization cookie — no admin
+         *     identity is resolved or consulted here; that happens on `continue`, after (if needed) the
+         *     Google-login detour.
+         *
+         *     No consent screen yet (mcp-oauth task 06 inserts it into `/authorize/continue`).
+         */
+        get: operations["oauth_authorize"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/oauth/authorize/continue": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Oauth Authorize Continue
+         * @description Resume a parked `/authorize` request: bridge to Google login if needed, then issue a code.
+         *
+         *     DESIGN.md §"End-to-end flow" steps 5-6, §"Google bridge + consent": reads the signed
+         *     pending-authorization cookie `/authorize` set. No cookie (missing, tampered, or expired) is a
+         *     400 `invalid_request` — never a 500. With a valid pending request but no admin session yet,
+         *     307-redirects to `/api/v1/auth/login` (`app.routes.auth_routes.auth_login`) — the SAME cookie
+         *     survives that detour (`Path=/api/v1`, and `/auth/callback`'s own success redirect lands back
+         *     here, per that route's own amendment) so a second visit to this route, post-login, resumes
+         *     exactly where it left off. Once an admin session resolves, re-checks the allowlist (`resolve_
+         *     admin` itself does not — only `/auth/callback` and this route's own check do) before issuing
+         *     the code, since a session minted while still allowlisted can outlive a later allowlist edit.
+         *
+         *     No consent screen yet (mcp-oauth task 06 inserts one here); this task's `continue` goes
+         *     straight from a resolved, allowlisted admin to a minted code, so the core flow is provable in
+         *     task 07's `/token` exchange.
+         *
+         *     Raises:
+         *         OAuthError: no valid pending-authorization cookie (`"invalid_request"`, 400).
+         *         OAuthRedirectError: the resolved admin's email is not in `settings.admin_email_set`
+         *             (`"access_denied"`) — redirects to the pending request's own `redirect_uri`.
+         */
+        get: operations["oauth_authorize_continue"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/oauth/register": {
         parameters: {
             query?: never;
@@ -1507,6 +1578,131 @@ export interface operations {
                     "application/json": {
                         [key: string]: string;
                     };
+                };
+            };
+        };
+    };
+    oauth_authorize: {
+        parameters: {
+            query?: {
+                response_type?: string | null;
+                client_id?: string | null;
+                redirect_uri?: string | null;
+                code_challenge?: string | null;
+                code_challenge_method?: string | null;
+                scope?: string | null;
+                resource?: string | null;
+                state?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Request validation failed (past the client_id/redirect_uri check): redirects to the client's own redirect_uri with error/error_description/state (RFC 6749 §4.1.2.1). */
+            302: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Successful Response */
+            303: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description OAuth error — unknown client_id or unregistered redirect_uri. Never redirected (RFC 6749 §4.1.2.1: neither is safe to redirect to). */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "error": "invalid_client",
+                     *       "error_description": "…"
+                     *     }
+                     */
+                    "application/json": unknown;
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too Many Requests */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    oauth_authorize_continue: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Either a single-use authorization code was issued (redirects to the client's own redirect_uri with code/state), or the resolved admin is not allowlisted (redirects with error=access_denied/state). */
+            302: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description No admin session yet — redirects to /api/v1/auth/login (the Google-login bridge); the pending-authorization cookie is left in place. */
+            307: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description OAuth error — no (or an invalid/expired/tampered) pending-authorization cookie. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "error": "invalid_request",
+                     *       "error_description": "…"
+                     *     }
+                     */
+                    "application/json": unknown;
+                };
+            };
+            /** @description Too Many Requests */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
         };

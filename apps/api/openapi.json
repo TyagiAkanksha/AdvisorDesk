@@ -1345,6 +1345,232 @@
         "summary": "Healthz"
       }
     },
+    "/api/v1/oauth/authorize": {
+      "get": {
+        "description": "Validate an OAuth 2.1 authorization request, then park it pending the Google-login bridge\n(RFC 6749 \u00a74.1.1; DESIGN.md \u00a7\"End-to-end flow\" step 5).\n\n`validate_authorize_request` (`app.auth.oauth_authorize`) does the actual validation, in its\nown pinned order \u2014 an unknown client or unregistered redirect_uri answers 400 JSON and never\nredirects (RFC 6749 \u00a74.1.2.1); every later failure (unsupported response_type, missing/invalid\nPKCE challenge, unsupported scope/resource) redirects to the now-verified redirect_uri with\n`error`/`error_description`/`state`. A fully valid request 303s to `/authorize/continue` with\nthe validated request signed into an `HttpOnly` pending-authorization cookie \u2014 no admin\nidentity is resolved or consulted here; that happens on `continue`, after (if needed) the\nGoogle-login detour.\n\nNo consent screen yet (mcp-oauth task 06 inserts it into `/authorize/continue`).",
+        "operationId": "oauth_authorize",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "response_type",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Response Type"
+            }
+          },
+          {
+            "in": "query",
+            "name": "client_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Client Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "redirect_uri",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Redirect Uri"
+            }
+          },
+          {
+            "in": "query",
+            "name": "code_challenge",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Code Challenge"
+            }
+          },
+          {
+            "in": "query",
+            "name": "code_challenge_method",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Code Challenge Method"
+            }
+          },
+          {
+            "in": "query",
+            "name": "scope",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Scope"
+            }
+          },
+          {
+            "in": "query",
+            "name": "resource",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Resource"
+            }
+          },
+          {
+            "in": "query",
+            "name": "state",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "State"
+            }
+          }
+        ],
+        "responses": {
+          "302": {
+            "description": "Request validation failed (past the client_id/redirect_uri check): redirects to the client's own redirect_uri with error/error_description/state (RFC 6749 \u00a74.1.2.1)."
+          },
+          "303": {
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": "invalid_client",
+                  "error_description": "\u2026"
+                }
+              }
+            },
+            "description": "OAuth error \u2014 unknown client_id or unregistered redirect_uri. Never redirected (RFC 6749 \u00a74.1.2.1: neither is safe to redirect to)."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          }
+        },
+        "summary": "Oauth Authorize",
+        "tags": [
+          "oauth"
+        ]
+      }
+    },
+    "/api/v1/oauth/authorize/continue": {
+      "get": {
+        "description": "Resume a parked `/authorize` request: bridge to Google login if needed, then issue a code.\n\nDESIGN.md \u00a7\"End-to-end flow\" steps 5-6, \u00a7\"Google bridge + consent\": reads the signed\npending-authorization cookie `/authorize` set. No cookie (missing, tampered, or expired) is a\n400 `invalid_request` \u2014 never a 500. With a valid pending request but no admin session yet,\n307-redirects to `/api/v1/auth/login` (`app.routes.auth_routes.auth_login`) \u2014 the SAME cookie\nsurvives that detour (`Path=/api/v1`, and `/auth/callback`'s own success redirect lands back\nhere, per that route's own amendment) so a second visit to this route, post-login, resumes\nexactly where it left off. Once an admin session resolves, re-checks the allowlist (`resolve_\nadmin` itself does not \u2014 only `/auth/callback` and this route's own check do) before issuing\nthe code, since a session minted while still allowlisted can outlive a later allowlist edit.\n\nNo consent screen yet (mcp-oauth task 06 inserts one here); this task's `continue` goes\nstraight from a resolved, allowlisted admin to a minted code, so the core flow is provable in\ntask 07's `/token` exchange.\n\nRaises:\n    OAuthError: no valid pending-authorization cookie (`\"invalid_request\"`, 400).\n    OAuthRedirectError: the resolved admin's email is not in `settings.admin_email_set`\n        (`\"access_denied\"`) \u2014 redirects to the pending request's own `redirect_uri`.",
+        "operationId": "oauth_authorize_continue",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "302": {
+            "description": "Either a single-use authorization code was issued (redirects to the client's own redirect_uri with code/state), or the resolved admin is not allowlisted (redirects with error=access_denied/state)."
+          },
+          "307": {
+            "description": "No admin session yet \u2014 redirects to /api/v1/auth/login (the Google-login bridge); the pending-authorization cookie is left in place."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": "invalid_request",
+                  "error_description": "\u2026"
+                }
+              }
+            },
+            "description": "OAuth error \u2014 no (or an invalid/expired/tampered) pending-authorization cookie."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          }
+        },
+        "summary": "Oauth Authorize Continue",
+        "tags": [
+          "oauth"
+        ]
+      }
+    },
     "/api/v1/oauth/register": {
       "post": {
         "description": "Register a new OAuth client (RFC 7591 \u00a73.1 request / \u00a73.2.1 response).\n\nAfter this call, `claude.ai` (or any other MCP client) holds a `client_id` it can use to\nstart the authorization-code flow a later mcp-oauth task implements; nothing here can\nauthorize a user or mint a token.",

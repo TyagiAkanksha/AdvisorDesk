@@ -181,6 +181,9 @@ _PER_DAY_MESSAGE = "This session has reached its daily message limit. Please try
 _SESSION_CREATE_MESSAGE = (
     "Too many new sessions started from this IP today. Please try again tomorrow."
 )
+_OAUTH_RATE_LIMIT_MESSAGE = (
+    "Too many authorization requests from this IP in the last minute. Please slow down."
+)
 
 
 class RateLimiter:
@@ -427,6 +430,42 @@ class RateLimiter:
         with self._lock:
             self._prune_stale_entries(now, day_bucket)
             self._increment_session_create_locked(ip, day_bucket)
+
+    def check_oauth_request(self, ip: str) -> None:
+        """Admit or reject one `/api/v1/oauth/*` request (mcp-oauth plan, task 04).
+
+        docs/plans/mcp-oauth/DESIGN.md §"Security / threat model": "Rate-limit `/register`,
+        `/authorize`, and `/token` (reuse `app.routes.ratelimit`)" — a sliding one-minute window,
+        per IP, capped at `Settings.oauth_rate_limit_per_min` (default 30).
+
+        Shares `_minute_windows` (and its `_MAX_TRACKED_IPS`-bounded LRU eviction via
+        `_touch_minute_window`, and the `_prune_stale_entries` sweep) with `check_message`'s own
+        per-IP message cap, rather than introducing a second store — but keys its window
+        `f"oauth:{ip}"`, disjoint from `check_message`'s plain-`ip` keys, so admitting/rejecting
+        an OAuth request never consumes or is consumed by the public-chat message cap for the
+        same IP (`tests/test_ratelimit_oauth.py::
+        test_oauth_window_independent_of_message_window`).
+
+        Args:
+            ip: the caller's IP address (`request.client.host`, per-IP key for this cap).
+
+        Raises:
+            RateLimitedError: `oauth_rate_limit_per_min` requests have already been admitted from
+                `ip` in the trailing 60 seconds. Nothing is recorded when this raises.
+        """
+        now = self._clock()
+        day_bucket = self._day_bucket(now)
+        key = f"oauth:{ip}"
+        with self._lock:
+            self._prune_stale_entries(now, day_bucket)
+
+            window = self._touch_minute_window(key)
+            while window and now - window[0] >= _MINUTE_SECONDS:
+                window.popleft()
+            if len(window) >= self._settings.oauth_rate_limit_per_min:
+                raise RateLimitedError(_OAUTH_RATE_LIMIT_MESSAGE)
+
+            window.append(now)
 
     def reserve_session_create(self, ip: str) -> None:
         """Atomically check-and-record one `SESSION_CREATE_PER_DAY` slot for `ip`.

@@ -104,6 +104,37 @@ class ToolNotFoundError(AppError):
     code = "tool_not_found"
 
 
+class OAuthError(AppError):
+    """RFC 6749 §5.2-shaped error for /api/v1/oauth/* endpoints (rendered by app.routes.errors).
+
+    Unlike every other `AppError` subclass — which renders through the generic PRD §9
+    `{"error": {"code", "message"}}` envelope built by `app.routes.errors._make_handler` — this
+    one renders as RFC 6749 §5.2's own bare `{"error": "<code>", "error_description":
+    "<description>"}` shape (mcp-oauth plan, task 04; docs/plans/mcp-oauth/DESIGN.md §"Error
+    handling"). `app.routes.errors._oauth_error_handler` is registered specifically for this
+    type, via `app.add_exception_handler(OAuthError, _oauth_error_handler)` — Starlette resolves
+    a registered handler by walking `type(exc).__mro__` and picking the first match, most
+    specific first, so this handler wins over the generic `AppError` one (this class's own base)
+    regardless of which order `register_error_handlers` adds them in.
+
+    Args:
+        error: the RFC 6749 §5.2 / RFC 7591 §3 machine-readable error code (e.g.
+            `"invalid_client_metadata"`, `"invalid_redirect_uri"`, `"invalid_scope"`).
+        description: a human-readable explanation, returned verbatim as `error_description`.
+        status_code: the HTTP status this error renders as. Defaults to 400 (RFC 6749 §5.2's
+            default for a malformed/invalid registration request); e.g. an `"invalid_client"`
+            error uses 401 instead.
+    """
+
+    code = "oauth_error"
+
+    def __init__(self, error: str, description: str, *, status_code: int = 400) -> None:
+        super().__init__(description)
+        self.error = error
+        self.description = description
+        self.status_code = status_code
+
+
 class ToolInputError(AppError):
     """An MCP tool call's `arguments` failed its Pydantic args-model validation — maps to 422.
 

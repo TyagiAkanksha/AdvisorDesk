@@ -393,6 +393,30 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/oauth/register": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Oauth Register
+         * @description Register a new OAuth client (RFC 7591 §3.1 request / §3.2.1 response).
+         *
+         *     After this call, `claude.ai` (or any other MCP client) holds a `client_id` it can use to
+         *     start the authorization-code flow a later mcp-oauth task implements; nothing here can
+         *     authorize a user or mint a token.
+         */
+        post: operations["oauth_register"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/public/chat": {
         parameters: {
             query?: never;
@@ -611,6 +635,69 @@ export interface components {
             message: string;
             /** Session Id */
             session_id?: string | null;
+        };
+        /**
+         * ClientRegistrationRequest
+         * @description RFC 7591 §3.1 client registration request — only the fields this server understands.
+         *
+         *     `extra="ignore"`: a real DCR client (e.g. claude.ai) sends additional RFC 7591 §2 metadata
+         *     fields this server has no use for (`client_uri`, `contacts`, `logo_uri`, ...). Ignoring them
+         *     — rather than 422ing on an unrecognized field — is this task's own acceptance criterion:
+         *     "claude.ai's extra DCR fields ... never 422".
+         *
+         *     `redirect_uris` is `list[str] | None` rather than a required, non-empty field: "required" is
+         *     enforced at the ROUTE level as an RFC-shaped `invalid_client_metadata` `OAuthError`, not a
+         *     generic Pydantic 422 — the two failure shapes render differently
+         *     (`app.routes.errors._oauth_error_handler` vs. `_validation_error_handler`), and RFC 7591 §3.2.2
+         *     reserves `invalid_client_metadata` for exactly this "a required field is missing" case.
+         */
+        ClientRegistrationRequest: {
+            /** Client Name */
+            client_name?: string | null;
+            /** Grant Types */
+            grant_types?: string[] | null;
+            /** Redirect Uris */
+            redirect_uris?: string[] | null;
+            /** Response Types */
+            response_types?: string[] | null;
+            /** Scope */
+            scope?: string | null;
+            /** Token Endpoint Auth Method */
+            token_endpoint_auth_method?: string | null;
+        };
+        /**
+         * ClientRegistrationResponse
+         * @description RFC 7591 §3.2.1 client information response — `POST /register`'s 201 wire shape.
+         *
+         *     This server issues only public clients (`token_endpoint_auth_method == "none"`, no client
+         *     secret — DESIGN.md's end-to-end flow), scoped to `mcp` — both fixed by a `Literal` default
+         *     rather than echoed from the request, since this server never issues anything else.
+         */
+        ClientRegistrationResponse: {
+            /** Client Id */
+            client_id: string;
+            /** Client Id Issued At */
+            client_id_issued_at: number;
+            /** Client Name */
+            client_name: string;
+            /** Grant Types */
+            grant_types: string[];
+            /** Redirect Uris */
+            redirect_uris: string[];
+            /** Response Types */
+            response_types: string[];
+            /**
+             * Scope
+             * @default mcp
+             * @constant
+             */
+            scope: "mcp";
+            /**
+             * Token Endpoint Auth Method
+             * @default none
+             * @constant
+             */
+            token_endpoint_auth_method: "none";
         };
         /**
          * ContentCreate
@@ -1420,6 +1507,63 @@ export interface operations {
                     "application/json": {
                         [key: string]: string;
                     };
+                };
+            };
+        };
+    };
+    oauth_register: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ClientRegistrationRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ClientRegistrationResponse"];
+                };
+            };
+            /** @description OAuth error */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "error": "invalid_client_metadata",
+                     *       "error_description": "…"
+                     *     }
+                     */
+                    "application/json": unknown;
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too Many Requests */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
         };

@@ -69,6 +69,149 @@
         "title": "ChatRequest",
         "type": "object"
       },
+      "ClientRegistrationRequest": {
+        "description": "RFC 7591 \u00a73.1 client registration request \u2014 only the fields this server understands.\n\n`extra=\"ignore\"`: a real DCR client (e.g. claude.ai) sends additional RFC 7591 \u00a72 metadata\nfields this server has no use for (`client_uri`, `contacts`, `logo_uri`, ...). Ignoring them\n\u2014 rather than 422ing on an unrecognized field \u2014 is this task's own acceptance criterion:\n\"claude.ai's extra DCR fields ... never 422\".\n\n`redirect_uris` is `list[str] | None` rather than a required, non-empty field: \"required\" is\nenforced at the ROUTE level as an RFC-shaped `invalid_client_metadata` `OAuthError`, not a\ngeneric Pydantic 422 \u2014 the two failure shapes render differently\n(`app.routes.errors._oauth_error_handler` vs. `_validation_error_handler`), and RFC 7591 \u00a73.2.2\nreserves `invalid_client_metadata` for exactly this \"a required field is missing\" case.",
+        "properties": {
+          "client_name": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Client Name"
+          },
+          "grant_types": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Grant Types"
+          },
+          "redirect_uris": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Redirect Uris"
+          },
+          "response_types": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Response Types"
+          },
+          "scope": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Scope"
+          },
+          "token_endpoint_auth_method": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Token Endpoint Auth Method"
+          }
+        },
+        "title": "ClientRegistrationRequest",
+        "type": "object"
+      },
+      "ClientRegistrationResponse": {
+        "description": "RFC 7591 \u00a73.2.1 client information response \u2014 `POST /register`'s 201 wire shape.\n\nThis server issues only public clients (`token_endpoint_auth_method == \"none\"`, no client\nsecret \u2014 DESIGN.md's end-to-end flow), scoped to `mcp` \u2014 both fixed by a `Literal` default\nrather than echoed from the request, since this server never issues anything else.",
+        "properties": {
+          "client_id": {
+            "title": "Client Id",
+            "type": "string"
+          },
+          "client_id_issued_at": {
+            "title": "Client Id Issued At",
+            "type": "integer"
+          },
+          "client_name": {
+            "title": "Client Name",
+            "type": "string"
+          },
+          "grant_types": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Grant Types",
+            "type": "array"
+          },
+          "redirect_uris": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Redirect Uris",
+            "type": "array"
+          },
+          "response_types": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Response Types",
+            "type": "array"
+          },
+          "scope": {
+            "const": "mcp",
+            "default": "mcp",
+            "title": "Scope",
+            "type": "string"
+          },
+          "token_endpoint_auth_method": {
+            "const": "none",
+            "default": "none",
+            "title": "Token Endpoint Auth Method",
+            "type": "string"
+          }
+        },
+        "required": [
+          "client_id",
+          "client_id_issued_at",
+          "client_name",
+          "redirect_uris",
+          "grant_types",
+          "response_types"
+        ],
+        "title": "ClientRegistrationResponse",
+        "type": "object"
+      },
       "ContentCreate": {
         "description": "`POST /content`'s request body: a new draft (PRD \u00a75.2, \u00a74 slug rules).\n\n`title` is `min_length=1` (review round 1, finding F4): an empty title\nnow 422s instead of creating a degenerate row. Final review, finding F6\n(t03 whitespace titles): `min_length=1` alone still passed a\nwhitespace-only title (`\"   \"`) \u2014 `_title_not_whitespace_only` closes\nthat gap by rejecting a title that is empty *after* `.strip()`, so a\nhuman-blank title 422s the same way a byte-empty one already did.",
         "properties": {
@@ -1200,6 +1343,69 @@
           }
         },
         "summary": "Healthz"
+      }
+    },
+    "/api/v1/oauth/register": {
+      "post": {
+        "description": "Register a new OAuth client (RFC 7591 \u00a73.1 request / \u00a73.2.1 response).\n\nAfter this call, `claude.ai` (or any other MCP client) holds a `client_id` it can use to\nstart the authorization-code flow a later mcp-oauth task implements; nothing here can\nauthorize a user or mint a token.",
+        "operationId": "oauth_register",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ClientRegistrationRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientRegistrationResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": "invalid_client_metadata",
+                  "error_description": "\u2026"
+                }
+              }
+            },
+            "description": "OAuth error"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          }
+        },
+        "summary": "Oauth Register",
+        "tags": [
+          "oauth"
+        ]
       }
     },
     "/api/v1/public/chat": {

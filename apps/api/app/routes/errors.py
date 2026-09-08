@@ -30,6 +30,7 @@ from app.services.errors import (
     EmbeddingFailedError,
     ForbiddenError,
     NotFoundError,
+    OAuthError,
     OAuthExchangeError,
     RateLimitedError,
     ToolInputError,
@@ -84,6 +85,34 @@ def _make_handler(status_code: int) -> Callable[[Request, Exception], JSONRespon
         return JSONResponse(status_code=status_code, content=envelope, headers=headers)
 
     return _handler
+
+
+def _oauth_error_handler(_: Request, exc: Exception) -> JSONResponse:
+    """Render an `OAuthError` as RFC 6749 §5.2's bare `{"error", "error_description"}` shape.
+
+    mcp-oauth plan, task 04 (docs/plans/mcp-oauth/DESIGN.md §"Error handling"): every
+    `/api/v1/oauth/*` endpoint answers a 4xx with this bare two-field body — never the rest of
+    the app's nested PRD §9 `{"error": {"code", "message"}}` envelope — plus `Cache-Control:
+    no-store` / `Pragma: no-cache` so an intermediary never caches a response body that can carry
+    sensitive authorization-flow detail.
+
+    Registered against `OAuthError` specifically (`register_error_handlers` below), not folded
+    into the generic `_STATUS_BY_ERROR` loop above: Starlette resolves a registered exception
+    handler by walking `type(exc).__mro__` and picking the first match, most-specific type
+    first — so this handler wins over the generic `AppError` handler (`OAuthError`'s own base
+    class) for any `OAuthError` instance, regardless of which order the two get registered in.
+
+    The exception is typed as the base `Exception` (not `OAuthError`) for the same
+    `Starlette.ExceptionHandler`-signature reason `_make_handler` above documents — only
+    `OAuthError` itself is ever registered against this handler, so the `isinstance` assertion
+    below always holds at runtime; it exists to narrow the type for mypy.
+    """
+    assert isinstance(exc, OAuthError)
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={"error": exc.error, "error_description": exc.description},
+        headers={"Cache-Control": "no-store", "Pragma": "no-cache"},
+    )
 
 
 def _validation_error_handler(request: Request, exc: Exception) -> JSONResponse:
@@ -192,6 +221,12 @@ def register_error_handlers(app: FastAPI) -> None:
     """
     for error_type, status_code in _STATUS_BY_ERROR.items():
         app.add_exception_handler(error_type, _make_handler(status_code))
+
+    # mcp-oauth plan, task 04: registered separately from the generic `AppError` family above,
+    # even though `OAuthError` IS an `AppError` subclass — Starlette resolves handlers by walking
+    # `type(exc).__mro__` and picking the first match, most-specific type first, so this handler
+    # wins over the generic one for any `OAuthError` regardless of registration order.
+    app.add_exception_handler(OAuthError, _oauth_error_handler)
 
     app.add_exception_handler(RequestValidationError, _validation_error_handler)
     app.add_exception_handler(StarletteHTTPException, _http_exception_handler)

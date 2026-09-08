@@ -40,43 +40,35 @@ class AdminPrincipal:
     name: str | None
 
 
-def require_admin(request: Request) -> AdminPrincipal:
-    """Resolve the signed session cookie into an `AdminPrincipal`, or raise `AuthRequiredError`.
+def resolve_admin(request: Request) -> AdminPrincipal | None:
+    """Resolve the signed session cookie into an `AdminPrincipal`, or `None` if it doesn't.
 
-    PRD §9: 401s when there is no/invalid/expired session cookie, or when
-    the session's `User` row is soft-deleted — re-checked on **every**
-    request via `app.services.users.get_active_user` (never a row cached
-    from login time), so a mid-session deactivation takes effect on the
-    very next request.
+    Everything `require_admin` does (PRD §9: 401s when there is no/invalid/expired session
+    cookie, or when the session's `User` row is soft-deleted — re-checked on **every** request via
+    `app.services.users.get_active_user`, never a row cached from login time, so a mid-session
+    deactivation takes effect on the very next request; phase-6 task-05 logout revocation, review
+    finding t01-M6: also rejects a cookie whose signed `epoch` no longer matches
+    `User.session_epoch`), returning `None` instead of raising — same WARNING logs, same reasons
+    (`reason=soft-deleted`, `reason=revoked-cookie`; phase-6 remediation task-03, WR-05 audit
+    logging; P7 remediation fresh-review M1), unchanged.
 
-    Phase-6 task-05 (logout revocation, review finding t01-M6): also 401s when the cookie's
-    signed `epoch` no longer matches `User.session_epoch` — `/auth/logout` bumps that counter
-    (`app.services.users.bump_session_epoch`), so every cookie signed before the bump is dead
-    on its very next use, not just cleared from the browser that logged out.
-
-    Phase-6 remediation task-03 (WR-05, audit logging): when `get_active_user` excludes a row
-    (the "soft-deleted" branch below — an UNKNOWN user id has no row to look up at all, so it
-    logs nothing), a second, non-`active_select` lookup (`app.services.users.get_user_by_id`)
-    recovers that row's email so the WARNING can name who was rejected — `get_active_user` alone
-    cannot, since it excludes the very row this needs.
-
-    P7 remediation (fresh-review M1): the cookie-epoch-stale branch below now ALSO logs a WARNING
-    (`reason=revoked-cookie`) — this task's own six pinned audit events predate WR-02's bearer-side
-    epoch revocation (`app.auth.tokens.resolve_bearer_token`'s `reason=revoked` line), which left
-    the cookie path as the one authentication-failure branch with no audit trail at all: a
-    captured/stolen admin cookie replayed after `/auth/logout` correctly 401s but previously left
-    zero trace in `docker logs`. The WARNING carries `user.id` only — never the raw cookie value or
-    its signature — mirroring the bearer path's log hygiene (`resolve_bearer_token` never logs
-    `raw_token`/`token_hash`).
+    mcp-oauth plan, task 05: split out of `require_admin` so `GET /oauth/authorize/continue` can
+    branch on "no admin session yet" (bridge to Google login) without treating that as an error
+    the way `require_admin`'s raise would; `app.mcp.server._require_admin_with_challenge` also
+    calls this directly, replacing its earlier `try/except AuthRequiredError` wrapper around
+    `require_admin`.
 
     Args:
-        request: the incoming request; reads `app.state.settings` and
+        request: the incoming request; reads
+            `app.state.settings` and
             `app.state.session_factory` directly (see module docstring).
 
+    Returns:
+        The resolved `AdminPrincipal`, or `None` if there is no/invalid/expired cookie, the
+        user id is unknown, the user row is soft-deleted, or the cookie's epoch is stale
+        relative to `User.session_epoch`.
+
     Raises:
-        AuthRequiredError: no/invalid/expired cookie, unknown user id, a
-            soft-deleted user row, or a cookie epoch stale relative to
-            `User.session_epoch` (revoked by a since-run `/auth/logout`).
         RuntimeError: the app was built without a `session_factory` (a
             DB-less `create_app()`) — this dependency must fail loudly
             rather than silently skip the auth check.
@@ -84,13 +76,13 @@ def require_admin(request: Request) -> AdminPrincipal:
     settings = cast(Settings, request.app.state.settings)
     session_data = read_session(request, settings)
     if session_data is None:
-        raise AuthRequiredError("Sign in required.")
+        return None
     user_id, cookie_epoch = session_data
 
     session_factory = getattr(request.app.state, "session_factory", None)
     if session_factory is None:
         raise RuntimeError(
-            "require_admin() requires app.state.session_factory, but none was "
+            "resolve_admin() requires app.state.session_factory, but none was "
             "configured — this app was built by create_app() without a "
             "session_factory (DB-less mode). Only app/main.py wires a real one."
         )
@@ -111,10 +103,36 @@ def require_admin(request: Request) -> AdminPrincipal:
         session.close()
 
     if user is None:
-        raise AuthRequiredError("Sign in required.")
+        return None
 
     if cookie_epoch != user.session_epoch:
         logger.warning("Login rejected: user_id=%s reason=revoked-cookie", user.id)
-        raise AuthRequiredError("Sign in required.")
+        return None
 
     return AdminPrincipal(user_id=user.id, email=user.email, name=user.name)
+
+
+def require_admin(request: Request) -> AdminPrincipal:
+    """Resolve the signed session cookie into an `AdminPrincipal`, or raise `AuthRequiredError`.
+
+    mcp-oauth plan, task 05: now a thin wrapper over `resolve_admin` — every REST admin route
+    depends on this exact raise-on-failure contract, so `resolve_admin`'s `None` is turned into
+    the same `AuthRequiredError("Sign in required.")` this function has always raised. See
+    `resolve_admin`'s own docstring for the full set of rejection reasons and their audit-log
+    lines.
+
+    Args:
+        request: the incoming request; forwarded to `resolve_admin` unchanged.
+
+    Raises:
+        AuthRequiredError: no/invalid/expired cookie, unknown user id, a
+            soft-deleted user row, or a cookie epoch stale relative to
+            `User.session_epoch` (revoked by a since-run `/auth/logout`).
+        RuntimeError: the app was built without a `session_factory` (a
+            DB-less `create_app()`) — this dependency must fail loudly
+            rather than silently skip the auth check.
+    """
+    principal = resolve_admin(request)
+    if principal is None:
+        raise AuthRequiredError("Sign in required.")
+    return principal

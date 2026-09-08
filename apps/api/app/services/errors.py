@@ -8,6 +8,8 @@ every subtype to an HTTP status and builds the PRD §9 envelope
 
 from __future__ import annotations
 
+from collections.abc import Mapping
+
 
 class AppError(Exception):
     """Base of AdvisorDesk's typed error family (CONVENTIONS.md §4).
@@ -15,12 +17,20 @@ class AppError(Exception):
     Args:
         message: human-readable text returned verbatim as the §9 envelope's
             `message` field.
+        headers: optional extra HTTP response headers to forward verbatim onto the rendered
+            §9 envelope response (`app.routes.errors._make_handler`). `None` (the default) for
+            every pre-existing raise site — additive, keyword-only, backward compatible.
+            mcp-oauth plan, task 03: `app.mcp.server` raises `AuthRequiredError` with
+            `headers={"WWW-Authenticate": ...}` (RFC 9728 §5.1) so a claude.ai connector can
+            discover the protected-resource metadata document from a bare 401, without this
+            base class (or any other `AppError` subclass) needing to know that concept exists.
     """
 
     code: str = "error"
 
-    def __init__(self, message: str) -> None:
+    def __init__(self, message: str, *, headers: Mapping[str, str] | None = None) -> None:
         super().__init__(message)
+        self.headers: Mapping[str, str] | None = headers
 
 
 class NotFoundError(AppError):
@@ -92,6 +102,74 @@ class ToolNotFoundError(AppError):
     """
 
     code = "tool_not_found"
+
+
+class OAuthError(AppError):
+    """RFC 6749 §5.2-shaped error for /api/v1/oauth/* endpoints (rendered by app.routes.errors).
+
+    Unlike every other `AppError` subclass — which renders through the generic PRD §9
+    `{"error": {"code", "message"}}` envelope built by `app.routes.errors._make_handler` — this
+    one renders as RFC 6749 §5.2's own bare `{"error": "<code>", "error_description":
+    "<description>"}` shape (mcp-oauth plan, task 04; docs/plans/mcp-oauth/DESIGN.md §"Error
+    handling"). `app.routes.errors._oauth_error_handler` is registered specifically for this
+    type, via `app.add_exception_handler(OAuthError, _oauth_error_handler)` — Starlette resolves
+    a registered handler by walking `type(exc).__mro__` and picking the first match, most
+    specific first, so this handler wins over the generic `AppError` one (this class's own base)
+    regardless of which order `register_error_handlers` adds them in.
+
+    Args:
+        error: the RFC 6749 §5.2 / RFC 7591 §3 machine-readable error code (e.g.
+            `"invalid_client_metadata"`, `"invalid_redirect_uri"`, `"invalid_scope"`).
+        description: a human-readable explanation, returned verbatim as `error_description`.
+        status_code: the HTTP status this error renders as. Defaults to 400 (RFC 6749 §5.2's
+            default for a malformed/invalid registration request); e.g. an `"invalid_client"`
+            error uses 401 instead.
+    """
+
+    code = "oauth_error"
+
+    def __init__(self, error: str, description: str, *, status_code: int = 400) -> None:
+        super().__init__(description)
+        self.error = error
+        self.description = description
+        self.status_code = status_code
+
+
+class OAuthRedirectError(AppError):
+    """An `/oauth/authorize` validation failure that is SAFE to redirect (mcp-oauth plan, task
+    05; RFC 6749 §4.1.2.1).
+
+    Raised only AFTER `client_id`/`redirect_uri` have already been verified against the
+    registered client (`app.auth.oauth_authorize.validate_authorize_request`'s steps 1-2) — every
+    other validation failure (bad PKCE, unsupported `response_type`, bad `scope`/`resource`) is
+    reported by redirecting back to that now-trusted `redirect_uri` with `error`/
+    `error_description`/`state` query params, per RFC 6749 §4.1.2.1, rather than the bare JSON
+    `OAuthError` shape — a caller mid-authorization-flow expects to land back at its own
+    `redirect_uri`, not see a JSON body. Rendered by
+    `app.routes.errors._oauth_redirect_error_handler`, registered separately from `OAuthError`'s
+    own handler (same MRO-walk reasoning as that class's own docstring: Starlette resolves the
+    most-specific registered handler first).
+
+    Args:
+        error: the RFC 6749 §4.1.2.1 machine-readable error code (e.g. `"invalid_request"`,
+            `"unsupported_response_type"`, `"invalid_scope"`, `"invalid_target"`,
+            `"access_denied"`).
+        description: a human-readable explanation, carried as the redirect's `error_description`.
+        redirect_uri: the ALREADY-VERIFIED redirect URI to send the caller back to — never an
+            unverified, caller-supplied value (that would be exactly the open redirect RFC 6749
+            §4.1.2.1's "never redirect an unknown client/redirect_uri" rule exists to prevent).
+        state: the caller's `state`, echoed back on the redirect when not `None` (RFC 6749
+            §4.1.2).
+    """
+
+    code = "oauth_redirect_error"
+
+    def __init__(self, error: str, description: str, redirect_uri: str, state: str | None) -> None:
+        super().__init__(description)
+        self.error = error
+        self.description = description
+        self.redirect_uri = redirect_uri
+        self.state = state
 
 
 class ToolInputError(AppError):

@@ -16,6 +16,7 @@ from sqlalchemy.orm import Session
 
 from app.auth.deps import AdminPrincipal, require_admin
 from app.auth.oauth import GoogleOAuthClient
+from app.auth.oauth_request import AUTHORIZE_COOKIE_NAME
 from app.auth.sessions import clear_cookie, issue_cookie, read_session
 from app.auth.state import STATE_COOKIE_NAME, STATE_MAX_AGE_SECONDS, mint_state, verify_state
 from app.config import Settings
@@ -158,7 +159,16 @@ def auth_callback(
     user = upsert_from_google(session, normalized_identity)
     logger.info("Login succeeded: email=%s", user.email)
 
-    response = RedirectResponse(settings.admin_app_url, status_code=303)
+    # mcp-oauth plan, task 05: a pending `/oauth/authorize` request (the Google-bridge detour,
+    # DESIGN.md §"Google bridge + consent") lands the login back at `/oauth/authorize/continue`
+    # instead of the admin app, so the parked authorization request can resume; a plain login (no
+    # pending cookie) is unaffected and still lands at `settings.admin_app_url`.
+    landing_url = (
+        "/api/v1/oauth/authorize/continue"
+        if request.cookies.get(AUTHORIZE_COOKIE_NAME) is not None
+        else settings.admin_app_url
+    )
+    response = RedirectResponse(landing_url, status_code=303)
     issue_cookie(response, user.id, user.session_epoch, settings)
     # The state cookie is single-use: delete it on the same response that lands the session
     # cookie (Interfaces §ii) so a captured/replayed callback URL can't be re-submitted with a

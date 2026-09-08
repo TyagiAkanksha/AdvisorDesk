@@ -13,6 +13,9 @@ api.advisordesk.tyagiakanksha.com {
 		X-Frame-Options "DENY"
 		Content-Security-Policy "frame-ancestors 'none'"
 	}
+	# MCP OAuth (docs/plans/mcp-oauth): the RFC 9728/8414 discovery documents live at the domain
+	# root (/.well-known/oauth-protected-resource, /.well-known/oauth-authorization-server) and
+	# are served by the API itself — this block already proxies every path, so nothing to add.
 	reverse_proxy api:8000 {
 		# Overwrite (not append) X-Forwarded-For with the real client IP.
 		# Caddy faces the internet directly (Cloudflare grey-cloud), so {remote_host}

@@ -20,6 +20,7 @@ services:
       GOOGLE_REDIRECT_URI: https://api.advisordesk.tyagiakanksha.com/api/v1/auth/callback
       ADMIN_APP_URL: https://admin.advisordesk.tyagiakanksha.com
       MCP_HTTP_ENABLED: "true"
+      OAUTH_ISSUER_URL: https://api.advisordesk.tyagiakanksha.com
       # LLM provider — switched to OpenAI 2026-09-06 (NVIDIA NIM embedding + chat
       # models both reached end-of-life Aug 2026). text-embedding-3-small@1024 dims
       # is a drop-in for the existing vector(1024) schema; gpt-4o-mini handles chat

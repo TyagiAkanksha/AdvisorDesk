@@ -42,6 +42,167 @@
         "title": "AgentMessage",
         "type": "object"
       },
+      "Body_oauth_authorize_decision": {
+        "properties": {
+          "decision": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Decision"
+          },
+          "nonce": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Nonce"
+          }
+        },
+        "title": "Body_oauth_authorize_decision",
+        "type": "object"
+      },
+      "Body_oauth_revoke": {
+        "properties": {
+          "client_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Client Id"
+          },
+          "token": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Token"
+          },
+          "token_type_hint": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Token Type Hint"
+          }
+        },
+        "title": "Body_oauth_revoke",
+        "type": "object"
+      },
+      "Body_oauth_token": {
+        "properties": {
+          "client_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Client Id"
+          },
+          "code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Code"
+          },
+          "code_verifier": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Code Verifier"
+          },
+          "grant_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Grant Type"
+          },
+          "redirect_uri": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Redirect Uri"
+          },
+          "refresh_token": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Refresh Token"
+          },
+          "resource": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Resource"
+          },
+          "scope": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Scope"
+          }
+        },
+        "title": "Body_oauth_token",
+        "type": "object"
+      },
       "ChatRequest": {
         "description": "`POST /public/chat`'s request body (PRD \u00a75.3, exact field set).\n\n`session_id` absent or referencing an unknown session both mean \"start a new session\" (\u00a75.3)\n\u2014 `app.services.chat.get_or_create_session` handles both cases identically once this schema\nhas parsed a syntactically valid UUID (or `None`) out of the request body.\n\n`message` is `min_length=1` plus a whitespace-only rejection (review round 1, finding M-5) \u2014\nmirrors `app.models.schemas.content.ContentCreate.title`'s established two-guard pattern\nexactly: `min_length=1` alone still lets a whitespace-only string (`\"   \"`) through, since\nPydantic's length check counts characters, not content. An empty/blank message would otherwise\nstill burn an LLM call and a \u00a79 rate-limit slot, and poison phase-7's `report_content_gaps`\nwith empty \"questions\" (probe P7).",
         "properties": {
@@ -67,6 +228,248 @@
           "message"
         ],
         "title": "ChatRequest",
+        "type": "object"
+      },
+      "ClientRegistrationRequest": {
+        "description": "RFC 7591 \u00a73.1 client registration request \u2014 only the fields this server understands.\n\n`extra=\"ignore\"`: a real DCR client (e.g. claude.ai) sends additional RFC 7591 \u00a72 metadata\nfields this server has no use for (`client_uri`, `contacts`, `logo_uri`, ...). Ignoring them\n\u2014 rather than 422ing on an unrecognized field \u2014 is this task's own acceptance criterion:\n\"claude.ai's extra DCR fields ... never 422\".\n\n`redirect_uris` is `list[str] | None` rather than a required, non-empty field: \"required\" is\nenforced at the ROUTE level as an RFC-shaped `invalid_client_metadata` `OAuthError`, not a\ngeneric Pydantic 422 \u2014 the two failure shapes render differently\n(`app.routes.errors._oauth_error_handler` vs. `_validation_error_handler`), and RFC 7591 \u00a73.2.2\nreserves `invalid_client_metadata` for exactly this \"a required field is missing\" case.",
+        "properties": {
+          "client_name": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Client Name"
+          },
+          "grant_types": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Grant Types"
+          },
+          "redirect_uris": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Redirect Uris"
+          },
+          "response_types": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Response Types"
+          },
+          "scope": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Scope"
+          },
+          "token_endpoint_auth_method": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Token Endpoint Auth Method"
+          }
+        },
+        "title": "ClientRegistrationRequest",
+        "type": "object"
+      },
+      "ClientRegistrationResponse": {
+        "description": "RFC 7591 \u00a73.2.1 client information response \u2014 `POST /register`'s 201 wire shape.\n\nThis server issues only public clients (`token_endpoint_auth_method == \"none\"`, no client\nsecret \u2014 DESIGN.md's end-to-end flow), scoped to `mcp` \u2014 both fixed by a `Literal` default\nrather than echoed from the request, since this server never issues anything else.",
+        "properties": {
+          "client_id": {
+            "title": "Client Id",
+            "type": "string"
+          },
+          "client_id_issued_at": {
+            "title": "Client Id Issued At",
+            "type": "integer"
+          },
+          "client_name": {
+            "title": "Client Name",
+            "type": "string"
+          },
+          "grant_types": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Grant Types",
+            "type": "array"
+          },
+          "redirect_uris": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Redirect Uris",
+            "type": "array"
+          },
+          "response_types": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Response Types",
+            "type": "array"
+          },
+          "scope": {
+            "const": "mcp",
+            "default": "mcp",
+            "title": "Scope",
+            "type": "string"
+          },
+          "token_endpoint_auth_method": {
+            "const": "none",
+            "default": "none",
+            "title": "Token Endpoint Auth Method",
+            "type": "string"
+          }
+        },
+        "required": [
+          "client_id",
+          "client_id_issued_at",
+          "client_name",
+          "redirect_uris",
+          "grant_types",
+          "response_types"
+        ],
+        "title": "ClientRegistrationResponse",
+        "type": "object"
+      },
+      "ConnectedApp": {
+        "description": "`GET /api/v1/oauth/clients`'s per-client wire shape (mcp-oauth plan, task 08).\n\n`model_config = ConfigDict(from_attributes=True)`: maps directly from an\n`app.services.oauth_clients.ConnectedAppRow` (a frozen dataclass with the exact same field\nnames) \u2014 field-for-field, no manual construction call site needed.",
+        "properties": {
+          "active_access_tokens": {
+            "title": "Active Access Tokens",
+            "type": "integer"
+          },
+          "active_refresh_tokens": {
+            "title": "Active Refresh Tokens",
+            "type": "integer"
+          },
+          "client_id": {
+            "title": "Client Id",
+            "type": "string"
+          },
+          "client_name": {
+            "title": "Client Name",
+            "type": "string"
+          },
+          "consent_granted_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Consent Granted At"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "last_used_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Used At"
+          },
+          "latest_expires_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Latest Expires At"
+          },
+          "redirect_uris": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Redirect Uris",
+            "type": "array"
+          }
+        },
+        "required": [
+          "client_id",
+          "client_name",
+          "redirect_uris",
+          "created_at",
+          "consent_granted_at",
+          "active_access_tokens",
+          "active_refresh_tokens",
+          "last_used_at",
+          "latest_expires_at"
+        ],
+        "title": "ConnectedApp",
+        "type": "object"
+      },
+      "ConnectedAppsResponse": {
+        "description": "`GET /api/v1/oauth/clients`'s top-level wire shape \u2014 one `items` list, task-08 brief.",
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/ConnectedApp"
+            },
+            "title": "Items",
+            "type": "array"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "title": "ConnectedAppsResponse",
         "type": "object"
       },
       "ContentCreate": {
@@ -467,6 +870,41 @@
         ],
         "title": "TagWithCount",
         "type": "object"
+      },
+      "TokenResponse": {
+        "description": "RFC 6749 \u00a74.1.4/\u00a75.1 access token response \u2014 `POST /api/v1/oauth/token`'s 200 wire shape.\n\nReturned for BOTH the `authorization_code` and `refresh_token` grants (mcp-oauth plan, task\n07) \u2014 a refresh always mints a brand-new pair (rotation), so the response shape never needs to\ndistinguish which grant produced it.",
+        "properties": {
+          "access_token": {
+            "title": "Access Token",
+            "type": "string"
+          },
+          "expires_in": {
+            "title": "Expires In",
+            "type": "integer"
+          },
+          "refresh_token": {
+            "title": "Refresh Token",
+            "type": "string"
+          },
+          "scope": {
+            "title": "Scope",
+            "type": "string"
+          },
+          "token_type": {
+            "const": "Bearer",
+            "default": "Bearer",
+            "title": "Token Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "access_token",
+          "expires_in",
+          "refresh_token",
+          "scope"
+        ],
+        "title": "TokenResponse",
+        "type": "object"
       }
     }
   },
@@ -476,6 +914,57 @@
   },
   "openapi": "3.1.0",
   "paths": {
+    "/.well-known/oauth-authorization-server": {
+      "get": {
+        "description": "RFC 8414 authorization-server metadata for this co-hosted OAuth 2.1 server.",
+        "operationId": "oauth_authorization_server_metadata",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Get Authorization Server Metadata"
+      }
+    },
+    "/.well-known/oauth-protected-resource": {
+      "get": {
+        "description": "RFC 9728 protected-resource metadata for the `/api/v1/mcp` resource.",
+        "operationId": "oauth_protected_resource_metadata",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Get Protected Resource Metadata"
+      }
+    },
+    "/.well-known/oauth-protected-resource/api/v1/mcp": {
+      "get": {
+        "description": "RFC 9728 \u00a73.1 path-suffixed form: identical document, for clients that probe it first.",
+        "operationId": "oauth_protected_resource_metadata_mcp_path",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Get Protected Resource Metadata Mcp Path"
+      }
+    },
     "/api/v1/agent/chat": {
       "post": {
         "description": "PRD \u00a75.4: stateless agent exchange \u2014 resent history in, typed SSE tool-loop events out.\n\n`pipeline` is `app.state.chunk_pipeline` (t02 amendment, `get_chunk_pipeline`) \u2014 threaded\nstraight into `run_agent`, so an agent-driven publish/archive/delete/edit-of-published runs\nthe SAME chunk-rebuild path the REST `/content/{id}/...` routes do, never silently a no-op.",
@@ -1149,6 +1638,586 @@
           }
         },
         "summary": "Healthz"
+      }
+    },
+    "/api/v1/oauth/authorize": {
+      "get": {
+        "description": "Validate an OAuth 2.1 authorization request, then park it pending the Google-login bridge\n(RFC 6749 \u00a74.1.1; DESIGN.md \u00a7\"End-to-end flow\" step 5).\n\n`validate_authorize_request` (`app.auth.oauth_authorize`) does the actual validation, in its\nown pinned order \u2014 an unknown client or unregistered redirect_uri answers 400 JSON and never\nredirects (RFC 6749 \u00a74.1.2.1); every later failure (unsupported response_type, missing/invalid\nPKCE challenge, unsupported scope/resource) redirects to the now-verified redirect_uri with\n`error`/`error_description`/`state`. A fully valid request 303s to `/authorize/continue` with\nthe validated request signed into an `HttpOnly` pending-authorization cookie \u2014 no admin\nidentity is resolved or consulted here; that happens on `continue`, after (if needed) the\nGoogle-login detour.\n\nNo consent screen yet (mcp-oauth task 06 inserts it into `/authorize/continue`).",
+        "operationId": "oauth_authorize",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "response_type",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Response Type"
+            }
+          },
+          {
+            "in": "query",
+            "name": "client_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Client Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "redirect_uri",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Redirect Uri"
+            }
+          },
+          {
+            "in": "query",
+            "name": "code_challenge",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Code Challenge"
+            }
+          },
+          {
+            "in": "query",
+            "name": "code_challenge_method",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Code Challenge Method"
+            }
+          },
+          {
+            "in": "query",
+            "name": "scope",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Scope"
+            }
+          },
+          {
+            "in": "query",
+            "name": "resource",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Resource"
+            }
+          },
+          {
+            "in": "query",
+            "name": "state",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "State"
+            }
+          }
+        ],
+        "responses": {
+          "302": {
+            "description": "Request validation failed (past the client_id/redirect_uri check): redirects to the client's own redirect_uri with error/error_description/state (RFC 6749 \u00a74.1.2.1)."
+          },
+          "303": {
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": "invalid_client",
+                  "error_description": "\u2026"
+                }
+              }
+            },
+            "description": "OAuth error \u2014 unknown client_id or unregistered redirect_uri. Never redirected (RFC 6749 \u00a74.1.2.1: neither is safe to redirect to)."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          }
+        },
+        "summary": "Oauth Authorize",
+        "tags": [
+          "oauth"
+        ]
+      }
+    },
+    "/api/v1/oauth/authorize/continue": {
+      "get": {
+        "description": "Resume a parked `/authorize` request: bridge to Google login, then gate on consent.\n\nDESIGN.md \u00a7\"End-to-end flow\" steps 5-6, \u00a7\"Google bridge + consent\": reads the signed\npending-authorization cookie `/authorize` set. No cookie (missing, tampered, or expired) is a\n400 `invalid_request` \u2014 never a 500. With a valid pending request but no admin session yet,\n307-redirects to `/api/v1/auth/login` (`app.routes.auth_routes.auth_login`) \u2014 the SAME cookie\nsurvives that detour (`Path=/api/v1`, and `/auth/callback`'s own success redirect lands back\nhere, per that route's own amendment) so a second visit to this route, post-login, resumes\nexactly where it left off. Once an admin session resolves, re-checks the allowlist (`resolve_\nadmin` itself does not \u2014 only `/auth/callback` and this route's own check do) before issuing\nthe code, since a session minted while still allowlisted can outlive a later allowlist edit.\n\nmcp-oauth task 06 (docs/plans/mcp-oauth/task-06-consent-screen.md): if an ACTIVE consent\nalready exists for this `(user, client)` pair (`find_active_consent`), issues the code\nimmediately, exactly as before this task. Otherwise renders the server-rendered Approve/Deny\nconsent page (`app.routes.oauth_consent_html.render_consent_page`) instead \u2014 task-06 controller\ncarry-over (t05 review I-1): a code is NEVER issued from this GET for a client lacking an\nactive consent; only `POST /authorize/decision`'s approve branch can do that.\n\nRaises:\n    OAuthError: no valid pending-authorization cookie (`\"invalid_request\"`, 400), or the\n        pending request's own `client_id` no longer names a registered client (`\"invalid_\n        client\"`, 400 \u2014 the client was deleted mid-flow, between `/authorize` and this call).\n    OAuthRedirectError: the resolved admin's email is not in `settings.admin_email_set`\n        (`\"access_denied\"`) \u2014 redirects to the pending request's own `redirect_uri`.",
+        "operationId": "oauth_authorize_continue",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              },
+              "text/html": {}
+            },
+            "description": "The consent page: the FIRST authorization for this (user, client) pair (mcp-oauth task 06) \u2014 the admin must Approve or Deny via POST /api/v1/oauth/authorize/decision before a code is issued."
+          },
+          "302": {
+            "description": "Either a single-use authorization code was issued (redirects to the client's own redirect_uri with code/state, when consent is already on file), or the resolved admin is not allowlisted (redirects with error=access_denied/state)."
+          },
+          "307": {
+            "description": "No admin session yet \u2014 redirects to /api/v1/auth/login (the Google-login bridge); the pending-authorization cookie is left in place."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": "invalid_request",
+                  "error_description": "\u2026"
+                }
+              }
+            },
+            "description": "OAuth error \u2014 no (or an invalid/expired/tampered) pending-authorization cookie, or the pending request's own client was deleted mid-flow."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          }
+        },
+        "summary": "Oauth Authorize Continue",
+        "tags": [
+          "oauth"
+        ]
+      }
+    },
+    "/api/v1/oauth/authorize/decision": {
+      "post": {
+        "description": "Handle the consent page's Approve/Deny submission (mcp-oauth plan, task 06).\n\ndocs/plans/mcp-oauth/task-06-consent-screen.md: guarded by `require_admin` (raise-on-failure),\nNOT `resolve_admin` (which `oauth_authorize_continue` uses to bridge to a 307 login redirect) \u2014\na session that vanished between rendering the consent page and submitting the form must answer\n401, never loop back through Google login (task-06 controller carry-over, t05 review context).\nThe submitted `nonce` is compared against the pending request's own `PendingAuthorization.\nnonce` with `hmac.compare_digest` \u2014 an absent `nonce` is rejected up front (never passed to\n`compare_digest` as `None`), and a non-ASCII `nonce` is rejected the same way before reaching\n`compare_digest` (fix round 1, review finding I-1: `hmac.compare_digest` raises `TypeError` on\na non-ASCII `str` operand, which would otherwise escape as an unhandled 500 instead of this\nroute's documented 400) \u2014 binding this POST to the exact pending request the consent page was\nrendered for, the CSRF-style guard `nonce` exists for (`app.auth.oauth_request`'s own module\ndocstring).\n\nApprove records an `OAuthConsent` row (`app.services.oauth_consents.record_consent`) and then\nissues the code via `_issue_code_and_redirect`, identically to `oauth_authorize_continue`'s own\nalready-consented path. Deny redirects to the pending request's own `redirect_uri` with\n`error=access_denied` and clears the pending cookie \u2014 records no consent, issues no code \u2014 so a\nsecond `GET /authorize/continue` right after is NOT resumable (400 `invalid_request`, since the\ncookie is already gone).\n\nRaises:\n    OAuthError: no valid pending-authorization cookie (`\"invalid_request\"`, 400); the\n        submitted `nonce` is missing or does not match the pending request's own\n        (`\"invalid_request\"`, \"Consent form token mismatch.\", 400); `decision` is neither\n        `\"approve\"` nor `\"deny\"` (`\"invalid_request\"`, 400); on approve, the pending\n        authorization's `client_id` no longer names a registered client \u2014 deleted between\n        rendering the consent page and this POST (`\"invalid_client\"`, \"Unknown client.\", 400;\n        final fix round 1, finding F-12 \u2014 mirrors `oauth_authorize_continue`'s own check).\n    OAuthRedirectError: the resolved admin's email is not in `settings.admin_email_set`\n        (`\"access_denied\"`) \u2014 redirects to the pending request's own `redirect_uri`.\n    AuthRequiredError: no valid admin session (`require_admin`) \u2014 401 \u00a79 `auth_required`\n        envelope.",
+        "operationId": "oauth_authorize_decision",
+        "requestBody": {
+          "content": {
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_oauth_authorize_decision"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "302": {
+            "description": "Approve: a single-use authorization code was issued (redirects to the client's own redirect_uri with code/state). Deny: redirects with error=access_denied/error_description/state, and no code is issued."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": "invalid_request",
+                  "error_description": "\u2026"
+                }
+              }
+            },
+            "description": "OAuth error \u2014 no pending-authorization cookie, a missing/mismatched consent form nonce, a decision value other than approve/deny, or (approve only) the pending authorization's client was deleted before the decision was submitted."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          }
+        },
+        "summary": "Oauth Authorize Decision",
+        "tags": [
+          "oauth"
+        ]
+      }
+    },
+    "/api/v1/oauth/clients": {
+      "get": {
+        "description": "List every registered `OAuthClient` with its live-token summary, newest-first.\n\n`app.services.oauth_clients.list_connected_apps` does the actual (single-statement,\naggregate-joined \u2014 see its own docstring) query; this route only converts each\n`ConnectedAppRow` dataclass to the wire-shape `ConnectedApp` model (`from_attributes=True`,\nso the conversion is a direct field-for-field mapping, no manual construction).",
+        "operationId": "oauth_clients_list",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConnectedAppsResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          }
+        },
+        "summary": "Oauth Clients List",
+        "tags": [
+          "oauth-admin"
+        ]
+      }
+    },
+    "/api/v1/oauth/clients/{client_id}": {
+      "delete": {
+        "description": "Delete one `OAuthClient` outright \u2014 the admin \"Disconnect\" action.\n\n`app.services.oauth_clients.delete_client` issues a real DB-level `DELETE`; every dependent\nrow (authorization codes, refresh tokens, consents, api tokens) is removed along with it via\n`ondelete=\"CASCADE\"` FKs (that function's own docstring), so every token this client ever\nheld stops working immediately.\n\nRaises:\n    NotFoundError: `client_id` names no registered `OAuthClient` \u2014 404 \u00a79 envelope, \"Client\n        not found.\"",
+        "operationId": "oauth_client_revoke",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "client_id",
+            "required": true,
+            "schema": {
+              "title": "Client Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          }
+        },
+        "summary": "Oauth Client Revoke",
+        "tags": [
+          "oauth-admin"
+        ]
+      }
+    },
+    "/api/v1/oauth/register": {
+      "post": {
+        "description": "Register a new OAuth client (RFC 7591 \u00a73.1 request / \u00a73.2.1 response).\n\nAfter this call, `claude.ai` (or any other MCP client) holds a `client_id` it can use to\nstart the authorization-code flow a later mcp-oauth task implements; nothing here can\nauthorize a user or mint a token.",
+        "operationId": "oauth_register",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ClientRegistrationRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientRegistrationResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": "invalid_client_metadata",
+                  "error_description": "\u2026"
+                }
+              }
+            },
+            "description": "OAuth error"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          }
+        },
+        "summary": "Oauth Register",
+        "tags": [
+          "oauth"
+        ]
+      }
+    },
+    "/api/v1/oauth/revoke": {
+      "post": {
+        "description": "Revoke one refresh or access token (RFC 7009 \u00a72.1 token revocation request).\n\ndocs/plans/mcp-oauth/task-08-revoke-admin-api.md: validation order mirrors `/token`'s own\npinned pattern \u2014 rate limit -> `token` presence -> `client_id` presence AND that it names a\nREGISTERED client (the one 401 this endpoint ever returns; every other rejection is 400).\nPast that point `revoke_token` (`app.services.oauth_tokens`) does the actual work and can\nnever fail: RFC 7009 \u00a72.2 requires this endpoint to answer 200 whether or not `token` ever\nexisted, belonged to this client, or was already revoked \u2014 the response carries no signal\neither way. `token_type_hint` is accepted (so a spec-compliant client's request never 422s\nfor including it) but never read \u2014 `revoke_token` tries both a refresh-token and an\naccess-token lookup unconditionally, which is cheap enough that the hint buys nothing.\n\nAlways answers 200 with an empty body and `Cache-Control: no-store`/`Pragma: no-cache` (RFC\n7009 \u00a72.2) \u2014 a plain `Response` (mirrors `oauth_token`'s own `JSONResponse` reasoning) so\nthose headers are set directly on every reachable return path, success included.\n`response_class=Response` (fix round 1, review M-5) documents the 200 in `openapi.json` with\nno content, matching what the route actually returns \u2014 the same shape the admin DELETE's 204\nalready gets; without it FastAPI's default declared 200 as an untyped\n`\"application/json\"` body, which a generated client calling `.json()` on would choke on.\n\nRaises:\n    OAuthError: `\"invalid_request\"`, \"token is required.\" (400) if `token` is absent;\n        `\"invalid_client\"`, \"Unknown client.\" (401) if `client_id` is absent or unregistered.\n        Never raised for an unknown/foreign/already-revoked `token` \u2014 see above.",
+        "operationId": "oauth_revoke",
+        "requestBody": {
+          "content": {
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_oauth_revoke"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": "invalid_request",
+                  "error_description": "token is required."
+                }
+              }
+            },
+            "description": "OAuth error \u2014 token is required."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": "invalid_client",
+                  "error_description": "Unknown client."
+                }
+              }
+            },
+            "description": "Unknown client_id."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          }
+        },
+        "summary": "Oauth Revoke",
+        "tags": [
+          "oauth"
+        ]
+      }
+    },
+    "/api/v1/oauth/token": {
+      "post": {
+        "description": "Exchange an authorization code, or an existing refresh token, for a fresh token pair\n(RFC 6749 \u00a74.1.3/\u00a74.1.4 code grant, \u00a76 refresh grant).\n\nValidation order (task-07 brief's own pinned route pseudocode): rate limit -> `grant_type`\npresence -> `client_id` presence AND that it names a REGISTERED client (401 `invalid_client`,\nthe one 401 this endpoint ever returns \u2014 every other rejection is 400) -> grant-type-specific\nrequired-field checks -> the grant's own service function, which does the rest (PKCE/\nredirect/expiry/replay for a code; expiry/reuse/client/resource/scope for a refresh).\n\nAlways returns `Cache-Control: no-store`/`Pragma: no-cache` on a 200 (RFC 6749 \u00a75.1) \u2014 a\nplain `JSONResponse` is used (rather than relying on FastAPI's own response serialization) so\nthose headers can be set directly, while `response_model=TokenResponse` still documents and\nvalidates the shape for OpenAPI/codegen.\n\nRaises:\n    OAuthError: as described above; never a bare framework exception (CONVENTIONS.md \u00a74 \u2014 no\n        `try/except` in routes, mapping happens in the registered `OAuthError` handler).",
+        "operationId": "oauth_token",
+        "requestBody": {
+          "content": {
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_oauth_token"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TokenResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": "invalid_grant",
+                  "error_description": "\u2026"
+                }
+              }
+            },
+            "description": "OAuth error \u2014 invalid_request/invalid_grant/invalid_target/invalid_scope/unsupported_grant_type."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": "invalid_client",
+                  "error_description": "Unknown client."
+                }
+              }
+            },
+            "description": "Unknown client_id."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          }
+        },
+        "summary": "Oauth Token",
+        "tags": [
+          "oauth"
+        ]
       }
     },
     "/api/v1/public/chat": {

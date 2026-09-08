@@ -22,9 +22,12 @@ from app.rag.synthesis import ChatLLM
 from app.routes.agent_routes import router as agent_router
 from app.routes.auth_routes import router as auth_router
 from app.routes.content_routes import router as content_router
+from app.routes.discovery_routes import router as discovery_router
 from app.routes.errors import register_error_handlers
 from app.routes.health_routes import router as health_router
 from app.routes.metrics import LatencyMiddleware, LatencyTracker
+from app.routes.oauth_admin_routes import router as oauth_admin_router
+from app.routes.oauth_routes import router as oauth_router
 from app.routes.public_routes import router as public_router
 from app.routes.ratelimit import RateLimiter
 from app.services.lifecycle import ChunkPipeline, NoopChunkPipeline
@@ -170,11 +173,28 @@ def create_app(
 
     register_error_handlers(app)
 
+    # mcp-oauth task-02: the ONE sanctioned exception to "all routes live under /api/v1"
+    # (CONVENTIONS.md §5) — RFC 9728 §3 / RFC 8414 §3 mandate these two discovery documents at
+    # the domain root. No prefix; unconditional (unlike `mount_mcp_http` below, NOT gated on
+    # `mcp_http_enabled` — a client must be able to discover this server's OAuth wiring even
+    # before the MCP endpoint itself is turned on).
+    app.include_router(discovery_router)
+
     app.include_router(health_router, prefix=_API_PREFIX)
     app.include_router(auth_router, prefix=_API_PREFIX)
     app.include_router(content_router, prefix=_API_PREFIX)
     app.include_router(public_router, prefix=_API_PREFIX)
     app.include_router(agent_router, prefix=_API_PREFIX)
+    # mcp-oauth plan, task 04: unconditional, unlike `mount_mcp_http` below — DCR must be
+    # reachable even before the MCP HTTP endpoint itself is turned on (mirrors `discovery_router`
+    # above, which is unconditional for the same "a client must be able to discover/register
+    # before the resource is live" reason).
+    app.include_router(oauth_router, prefix=_API_PREFIX)
+    # mcp-oauth plan, task 08: the admin "Connected apps" list/revoke API — unconditional, same
+    # reasoning as `oauth_router` above (an admin must be able to see/revoke a client's grant
+    # regardless of whether the MCP HTTP endpoint itself is turned on); cookie-gated by its own
+    # `require_admin` dependency, not by `mcp_http_enabled`.
+    app.include_router(oauth_admin_router, prefix=_API_PREFIX)
 
     # PRD §3 MCP exposure rule: OFF by default: the route doesn't exist at all unless
     # explicitly enabled, and even then sits behind the same `require_admin` gate as every

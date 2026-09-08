@@ -4,6 +4,66 @@
  */
 
 export interface paths {
+    "/.well-known/oauth-authorization-server": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Authorization Server Metadata
+         * @description RFC 8414 authorization-server metadata for this co-hosted OAuth 2.1 server.
+         */
+        get: operations["oauth_authorization_server_metadata"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/.well-known/oauth-protected-resource": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Protected Resource Metadata
+         * @description RFC 9728 protected-resource metadata for the `/api/v1/mcp` resource.
+         */
+        get: operations["oauth_protected_resource_metadata"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/.well-known/oauth-protected-resource/api/v1/mcp": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Protected Resource Metadata Mcp Path
+         * @description RFC 9728 §3.1 path-suffixed form: identical document, for clients that probe it first.
+         */
+        get: operations["oauth_protected_resource_metadata_mcp_path"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/agent/chat": {
         parameters: {
             query?: never;
@@ -333,6 +393,292 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/oauth/authorize": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Oauth Authorize
+         * @description Validate an OAuth 2.1 authorization request, then park it pending the Google-login bridge
+         *     (RFC 6749 §4.1.1; DESIGN.md §"End-to-end flow" step 5).
+         *
+         *     `validate_authorize_request` (`app.auth.oauth_authorize`) does the actual validation, in its
+         *     own pinned order — an unknown client or unregistered redirect_uri answers 400 JSON and never
+         *     redirects (RFC 6749 §4.1.2.1); every later failure (unsupported response_type, missing/invalid
+         *     PKCE challenge, unsupported scope/resource) redirects to the now-verified redirect_uri with
+         *     `error`/`error_description`/`state`. A fully valid request 303s to `/authorize/continue` with
+         *     the validated request signed into an `HttpOnly` pending-authorization cookie — no admin
+         *     identity is resolved or consulted here; that happens on `continue`, after (if needed) the
+         *     Google-login detour.
+         *
+         *     No consent screen yet (mcp-oauth task 06 inserts it into `/authorize/continue`).
+         */
+        get: operations["oauth_authorize"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/oauth/authorize/continue": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Oauth Authorize Continue
+         * @description Resume a parked `/authorize` request: bridge to Google login, then gate on consent.
+         *
+         *     DESIGN.md §"End-to-end flow" steps 5-6, §"Google bridge + consent": reads the signed
+         *     pending-authorization cookie `/authorize` set. No cookie (missing, tampered, or expired) is a
+         *     400 `invalid_request` — never a 500. With a valid pending request but no admin session yet,
+         *     307-redirects to `/api/v1/auth/login` (`app.routes.auth_routes.auth_login`) — the SAME cookie
+         *     survives that detour (`Path=/api/v1`, and `/auth/callback`'s own success redirect lands back
+         *     here, per that route's own amendment) so a second visit to this route, post-login, resumes
+         *     exactly where it left off. Once an admin session resolves, re-checks the allowlist (`resolve_
+         *     admin` itself does not — only `/auth/callback` and this route's own check do) before issuing
+         *     the code, since a session minted while still allowlisted can outlive a later allowlist edit.
+         *
+         *     mcp-oauth task 06 (docs/plans/mcp-oauth/task-06-consent-screen.md): if an ACTIVE consent
+         *     already exists for this `(user, client)` pair (`find_active_consent`), issues the code
+         *     immediately, exactly as before this task. Otherwise renders the server-rendered Approve/Deny
+         *     consent page (`app.routes.oauth_consent_html.render_consent_page`) instead — task-06 controller
+         *     carry-over (t05 review I-1): a code is NEVER issued from this GET for a client lacking an
+         *     active consent; only `POST /authorize/decision`'s approve branch can do that.
+         *
+         *     Raises:
+         *         OAuthError: no valid pending-authorization cookie (`"invalid_request"`, 400), or the
+         *             pending request's own `client_id` no longer names a registered client (`"invalid_
+         *             client"`, 400 — the client was deleted mid-flow, between `/authorize` and this call).
+         *         OAuthRedirectError: the resolved admin's email is not in `settings.admin_email_set`
+         *             (`"access_denied"`) — redirects to the pending request's own `redirect_uri`.
+         */
+        get: operations["oauth_authorize_continue"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/oauth/authorize/decision": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Oauth Authorize Decision
+         * @description Handle the consent page's Approve/Deny submission (mcp-oauth plan, task 06).
+         *
+         *     docs/plans/mcp-oauth/task-06-consent-screen.md: guarded by `require_admin` (raise-on-failure),
+         *     NOT `resolve_admin` (which `oauth_authorize_continue` uses to bridge to a 307 login redirect) —
+         *     a session that vanished between rendering the consent page and submitting the form must answer
+         *     401, never loop back through Google login (task-06 controller carry-over, t05 review context).
+         *     The submitted `nonce` is compared against the pending request's own `PendingAuthorization.
+         *     nonce` with `hmac.compare_digest` — an absent `nonce` is rejected up front (never passed to
+         *     `compare_digest` as `None`), and a non-ASCII `nonce` is rejected the same way before reaching
+         *     `compare_digest` (fix round 1, review finding I-1: `hmac.compare_digest` raises `TypeError` on
+         *     a non-ASCII `str` operand, which would otherwise escape as an unhandled 500 instead of this
+         *     route's documented 400) — binding this POST to the exact pending request the consent page was
+         *     rendered for, the CSRF-style guard `nonce` exists for (`app.auth.oauth_request`'s own module
+         *     docstring).
+         *
+         *     Approve records an `OAuthConsent` row (`app.services.oauth_consents.record_consent`) and then
+         *     issues the code via `_issue_code_and_redirect`, identically to `oauth_authorize_continue`'s own
+         *     already-consented path. Deny redirects to the pending request's own `redirect_uri` with
+         *     `error=access_denied` and clears the pending cookie — records no consent, issues no code — so a
+         *     second `GET /authorize/continue` right after is NOT resumable (400 `invalid_request`, since the
+         *     cookie is already gone).
+         *
+         *     Raises:
+         *         OAuthError: no valid pending-authorization cookie (`"invalid_request"`, 400); the
+         *             submitted `nonce` is missing or does not match the pending request's own
+         *             (`"invalid_request"`, "Consent form token mismatch.", 400); `decision` is neither
+         *             `"approve"` nor `"deny"` (`"invalid_request"`, 400); on approve, the pending
+         *             authorization's `client_id` no longer names a registered client — deleted between
+         *             rendering the consent page and this POST (`"invalid_client"`, "Unknown client.", 400;
+         *             final fix round 1, finding F-12 — mirrors `oauth_authorize_continue`'s own check).
+         *         OAuthRedirectError: the resolved admin's email is not in `settings.admin_email_set`
+         *             (`"access_denied"`) — redirects to the pending request's own `redirect_uri`.
+         *         AuthRequiredError: no valid admin session (`require_admin`) — 401 §9 `auth_required`
+         *             envelope.
+         */
+        post: operations["oauth_authorize_decision"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/oauth/clients": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Oauth Clients List
+         * @description List every registered `OAuthClient` with its live-token summary, newest-first.
+         *
+         *     `app.services.oauth_clients.list_connected_apps` does the actual (single-statement,
+         *     aggregate-joined — see its own docstring) query; this route only converts each
+         *     `ConnectedAppRow` dataclass to the wire-shape `ConnectedApp` model (`from_attributes=True`,
+         *     so the conversion is a direct field-for-field mapping, no manual construction).
+         */
+        get: operations["oauth_clients_list"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/oauth/clients/{client_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Oauth Client Revoke
+         * @description Delete one `OAuthClient` outright — the admin "Disconnect" action.
+         *
+         *     `app.services.oauth_clients.delete_client` issues a real DB-level `DELETE`; every dependent
+         *     row (authorization codes, refresh tokens, consents, api tokens) is removed along with it via
+         *     `ondelete="CASCADE"` FKs (that function's own docstring), so every token this client ever
+         *     held stops working immediately.
+         *
+         *     Raises:
+         *         NotFoundError: `client_id` names no registered `OAuthClient` — 404 §9 envelope, "Client
+         *             not found."
+         */
+        delete: operations["oauth_client_revoke"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/oauth/register": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Oauth Register
+         * @description Register a new OAuth client (RFC 7591 §3.1 request / §3.2.1 response).
+         *
+         *     After this call, `claude.ai` (or any other MCP client) holds a `client_id` it can use to
+         *     start the authorization-code flow a later mcp-oauth task implements; nothing here can
+         *     authorize a user or mint a token.
+         */
+        post: operations["oauth_register"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/oauth/revoke": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Oauth Revoke
+         * @description Revoke one refresh or access token (RFC 7009 §2.1 token revocation request).
+         *
+         *     docs/plans/mcp-oauth/task-08-revoke-admin-api.md: validation order mirrors `/token`'s own
+         *     pinned pattern — rate limit -> `token` presence -> `client_id` presence AND that it names a
+         *     REGISTERED client (the one 401 this endpoint ever returns; every other rejection is 400).
+         *     Past that point `revoke_token` (`app.services.oauth_tokens`) does the actual work and can
+         *     never fail: RFC 7009 §2.2 requires this endpoint to answer 200 whether or not `token` ever
+         *     existed, belonged to this client, or was already revoked — the response carries no signal
+         *     either way. `token_type_hint` is accepted (so a spec-compliant client's request never 422s
+         *     for including it) but never read — `revoke_token` tries both a refresh-token and an
+         *     access-token lookup unconditionally, which is cheap enough that the hint buys nothing.
+         *
+         *     Always answers 200 with an empty body and `Cache-Control: no-store`/`Pragma: no-cache` (RFC
+         *     7009 §2.2) — a plain `Response` (mirrors `oauth_token`'s own `JSONResponse` reasoning) so
+         *     those headers are set directly on every reachable return path, success included.
+         *     `response_class=Response` (fix round 1, review M-5) documents the 200 in `openapi.json` with
+         *     no content, matching what the route actually returns — the same shape the admin DELETE's 204
+         *     already gets; without it FastAPI's default declared 200 as an untyped
+         *     `"application/json"` body, which a generated client calling `.json()` on would choke on.
+         *
+         *     Raises:
+         *         OAuthError: `"invalid_request"`, "token is required." (400) if `token` is absent;
+         *             `"invalid_client"`, "Unknown client." (401) if `client_id` is absent or unregistered.
+         *             Never raised for an unknown/foreign/already-revoked `token` — see above.
+         */
+        post: operations["oauth_revoke"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/oauth/token": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Oauth Token
+         * @description Exchange an authorization code, or an existing refresh token, for a fresh token pair
+         *     (RFC 6749 §4.1.3/§4.1.4 code grant, §6 refresh grant).
+         *
+         *     Validation order (task-07 brief's own pinned route pseudocode): rate limit -> `grant_type`
+         *     presence -> `client_id` presence AND that it names a REGISTERED client (401 `invalid_client`,
+         *     the one 401 this endpoint ever returns — every other rejection is 400) -> grant-type-specific
+         *     required-field checks -> the grant's own service function, which does the rest (PKCE/
+         *     redirect/expiry/replay for a code; expiry/reuse/client/resource/scope for a refresh).
+         *
+         *     Always returns `Cache-Control: no-store`/`Pragma: no-cache` on a 200 (RFC 6749 §5.1) — a
+         *     plain `JSONResponse` is used (rather than relying on FastAPI's own response serialization) so
+         *     those headers can be set directly, while `response_model=TokenResponse` still documents and
+         *     validates the shape for OpenAPI/codegen.
+         *
+         *     Raises:
+         *         OAuthError: as described above; never a bare framework exception (CONVENTIONS.md §4 — no
+         *             `try/except` in routes, mapping happens in the registered `OAuthError` handler).
+         */
+        post: operations["oauth_token"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/public/chat": {
         parameters: {
             query?: never;
@@ -531,6 +877,41 @@ export interface components {
              */
             role: "user" | "assistant";
         };
+        /** Body_oauth_authorize_decision */
+        Body_oauth_authorize_decision: {
+            /** Decision */
+            decision?: string | null;
+            /** Nonce */
+            nonce?: string | null;
+        };
+        /** Body_oauth_revoke */
+        Body_oauth_revoke: {
+            /** Client Id */
+            client_id?: string | null;
+            /** Token */
+            token?: string | null;
+            /** Token Type Hint */
+            token_type_hint?: string | null;
+        };
+        /** Body_oauth_token */
+        Body_oauth_token: {
+            /** Client Id */
+            client_id?: string | null;
+            /** Code */
+            code?: string | null;
+            /** Code Verifier */
+            code_verifier?: string | null;
+            /** Grant Type */
+            grant_type?: string | null;
+            /** Redirect Uri */
+            redirect_uri?: string | null;
+            /** Refresh Token */
+            refresh_token?: string | null;
+            /** Resource */
+            resource?: string | null;
+            /** Scope */
+            scope?: string | null;
+        };
         /**
          * ChatRequest
          * @description `POST /public/chat`'s request body (PRD §5.3, exact field set).
@@ -551,6 +932,108 @@ export interface components {
             message: string;
             /** Session Id */
             session_id?: string | null;
+        };
+        /**
+         * ClientRegistrationRequest
+         * @description RFC 7591 §3.1 client registration request — only the fields this server understands.
+         *
+         *     `extra="ignore"`: a real DCR client (e.g. claude.ai) sends additional RFC 7591 §2 metadata
+         *     fields this server has no use for (`client_uri`, `contacts`, `logo_uri`, ...). Ignoring them
+         *     — rather than 422ing on an unrecognized field — is this task's own acceptance criterion:
+         *     "claude.ai's extra DCR fields ... never 422".
+         *
+         *     `redirect_uris` is `list[str] | None` rather than a required, non-empty field: "required" is
+         *     enforced at the ROUTE level as an RFC-shaped `invalid_client_metadata` `OAuthError`, not a
+         *     generic Pydantic 422 — the two failure shapes render differently
+         *     (`app.routes.errors._oauth_error_handler` vs. `_validation_error_handler`), and RFC 7591 §3.2.2
+         *     reserves `invalid_client_metadata` for exactly this "a required field is missing" case.
+         */
+        ClientRegistrationRequest: {
+            /** Client Name */
+            client_name?: string | null;
+            /** Grant Types */
+            grant_types?: string[] | null;
+            /** Redirect Uris */
+            redirect_uris?: string[] | null;
+            /** Response Types */
+            response_types?: string[] | null;
+            /** Scope */
+            scope?: string | null;
+            /** Token Endpoint Auth Method */
+            token_endpoint_auth_method?: string | null;
+        };
+        /**
+         * ClientRegistrationResponse
+         * @description RFC 7591 §3.2.1 client information response — `POST /register`'s 201 wire shape.
+         *
+         *     This server issues only public clients (`token_endpoint_auth_method == "none"`, no client
+         *     secret — DESIGN.md's end-to-end flow), scoped to `mcp` — both fixed by a `Literal` default
+         *     rather than echoed from the request, since this server never issues anything else.
+         */
+        ClientRegistrationResponse: {
+            /** Client Id */
+            client_id: string;
+            /** Client Id Issued At */
+            client_id_issued_at: number;
+            /** Client Name */
+            client_name: string;
+            /** Grant Types */
+            grant_types: string[];
+            /** Redirect Uris */
+            redirect_uris: string[];
+            /** Response Types */
+            response_types: string[];
+            /**
+             * Scope
+             * @default mcp
+             * @constant
+             */
+            scope: "mcp";
+            /**
+             * Token Endpoint Auth Method
+             * @default none
+             * @constant
+             */
+            token_endpoint_auth_method: "none";
+        };
+        /**
+         * ConnectedApp
+         * @description `GET /api/v1/oauth/clients`'s per-client wire shape (mcp-oauth plan, task 08).
+         *
+         *     `model_config = ConfigDict(from_attributes=True)`: maps directly from an
+         *     `app.services.oauth_clients.ConnectedAppRow` (a frozen dataclass with the exact same field
+         *     names) — field-for-field, no manual construction call site needed.
+         */
+        ConnectedApp: {
+            /** Active Access Tokens */
+            active_access_tokens: number;
+            /** Active Refresh Tokens */
+            active_refresh_tokens: number;
+            /** Client Id */
+            client_id: string;
+            /** Client Name */
+            client_name: string;
+            /** Consent Granted At */
+            consent_granted_at: string | null;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Last Used At */
+            last_used_at: string | null;
+            /** Latest Expires At */
+            latest_expires_at: string | null;
+            /** Redirect Uris */
+            redirect_uris: string[];
+        };
+        /**
+         * ConnectedAppsResponse
+         * @description `GET /api/v1/oauth/clients`'s top-level wire shape — one `items` list, task-08 brief.
+         */
+        ConnectedAppsResponse: {
+            /** Items */
+            items: components["schemas"]["ConnectedApp"][];
         };
         /**
          * ContentCreate
@@ -772,6 +1255,30 @@ export interface components {
             /** Name */
             name: string;
         };
+        /**
+         * TokenResponse
+         * @description RFC 6749 §4.1.4/§5.1 access token response — `POST /api/v1/oauth/token`'s 200 wire shape.
+         *
+         *     Returned for BOTH the `authorization_code` and `refresh_token` grants (mcp-oauth plan, task
+         *     07) — a refresh always mints a brand-new pair (rotation), so the response shape never needs to
+         *     distinguish which grant produced it.
+         */
+        TokenResponse: {
+            /** Access Token */
+            access_token: string;
+            /** Expires In */
+            expires_in: number;
+            /** Refresh Token */
+            refresh_token: string;
+            /** Scope */
+            scope: string;
+            /**
+             * Token Type
+             * @default Bearer
+             * @constant
+             */
+            token_type: "Bearer";
+        };
     };
     responses: never;
     parameters: never;
@@ -781,6 +1288,66 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    oauth_authorization_server_metadata: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+        };
+    };
+    oauth_protected_resource_metadata: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+        };
+    };
+    oauth_protected_resource_metadata_mcp_path: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+        };
+    };
     agent_chat: {
         parameters: {
             query?: never;
@@ -1300,6 +1867,471 @@ export interface operations {
                     "application/json": {
                         [key: string]: string;
                     };
+                };
+            };
+        };
+    };
+    oauth_authorize: {
+        parameters: {
+            query?: {
+                response_type?: string | null;
+                client_id?: string | null;
+                redirect_uri?: string | null;
+                code_challenge?: string | null;
+                code_challenge_method?: string | null;
+                scope?: string | null;
+                resource?: string | null;
+                state?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Request validation failed (past the client_id/redirect_uri check): redirects to the client's own redirect_uri with error/error_description/state (RFC 6749 §4.1.2.1). */
+            302: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Successful Response */
+            303: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description OAuth error — unknown client_id or unregistered redirect_uri. Never redirected (RFC 6749 §4.1.2.1: neither is safe to redirect to). */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "error": "invalid_client",
+                     *       "error_description": "…"
+                     *     }
+                     */
+                    "application/json": unknown;
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too Many Requests */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    oauth_authorize_continue: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The consent page: the FIRST authorization for this (user, client) pair (mcp-oauth task 06) — the admin must Approve or Deny via POST /api/v1/oauth/authorize/decision before a code is issued. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                    "text/html": unknown;
+                };
+            };
+            /** @description Either a single-use authorization code was issued (redirects to the client's own redirect_uri with code/state, when consent is already on file), or the resolved admin is not allowlisted (redirects with error=access_denied/state). */
+            302: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description No admin session yet — redirects to /api/v1/auth/login (the Google-login bridge); the pending-authorization cookie is left in place. */
+            307: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description OAuth error — no (or an invalid/expired/tampered) pending-authorization cookie, or the pending request's own client was deleted mid-flow. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "error": "invalid_request",
+                     *       "error_description": "…"
+                     *     }
+                     */
+                    "application/json": unknown;
+                };
+            };
+            /** @description Too Many Requests */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    oauth_authorize_decision: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/x-www-form-urlencoded": components["schemas"]["Body_oauth_authorize_decision"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Approve: a single-use authorization code was issued (redirects to the client's own redirect_uri with code/state). Deny: redirects with error=access_denied/error_description/state, and no code is issued. */
+            302: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description OAuth error — no pending-authorization cookie, a missing/mismatched consent form nonce, a decision value other than approve/deny, or (approve only) the pending authorization's client was deleted before the decision was submitted. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "error": "invalid_request",
+                     *       "error_description": "…"
+                     *     }
+                     */
+                    "application/json": unknown;
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too Many Requests */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    oauth_clients_list: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConnectedAppsResponse"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    oauth_client_revoke: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                client_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    oauth_register: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ClientRegistrationRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ClientRegistrationResponse"];
+                };
+            };
+            /** @description OAuth error */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "error": "invalid_client_metadata",
+                     *       "error_description": "…"
+                     *     }
+                     */
+                    "application/json": unknown;
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too Many Requests */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    oauth_revoke: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/x-www-form-urlencoded": components["schemas"]["Body_oauth_revoke"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description OAuth error — token is required. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "error": "invalid_request",
+                     *       "error_description": "token is required."
+                     *     }
+                     */
+                    "application/json": unknown;
+                };
+            };
+            /** @description Unknown client_id. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "error": "invalid_client",
+                     *       "error_description": "Unknown client."
+                     *     }
+                     */
+                    "application/json": unknown;
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too Many Requests */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    oauth_token: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/x-www-form-urlencoded": components["schemas"]["Body_oauth_token"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TokenResponse"];
+                };
+            };
+            /** @description OAuth error — invalid_request/invalid_grant/invalid_target/invalid_scope/unsupported_grant_type. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "error": "invalid_grant",
+                     *       "error_description": "…"
+                     *     }
+                     */
+                    "application/json": unknown;
+                };
+            };
+            /** @description Unknown client_id. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "error": "invalid_client",
+                     *       "error_description": "Unknown client."
+                     *     }
+                     */
+                    "application/json": unknown;
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too Many Requests */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
         };

@@ -9,7 +9,7 @@ from __future__ import annotations
 import logging
 from typing import Literal
 
-from pydantic import SecretStr, model_validator
+from pydantic import SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings
 
 logger = logging.getLogger(__name__)
@@ -188,6 +188,62 @@ class Settings(BaseSettings):
     # deployment.
     mcp_token_ttl_days: int = 90
 
+    # mcp-oauth plan, task-01: an OAuth 2.1 authorization server co-hosted with the existing
+    # `/api/v1/mcp` endpoint (docs/plans/mcp-oauth/DESIGN.md §"Token & data model"). All six
+    # fields are zero-env-var constructible (CONVENTIONS.md §5); `oauth_issuer_url` is validated
+    # below and `mcp_resource_url` (the property further down) derives the canonical MCP resource
+    # URI from it.
+    oauth_issuer_url: str = "http://localhost:8000"
+    oauth_access_token_ttl_minutes: int = 60
+    oauth_refresh_token_ttl_days: int = 30
+    oauth_auth_code_ttl_seconds: int = 60
+    oauth_rate_limit_per_min: int = 30
+    oauth_max_clients: int = 200
+
+    @field_validator("oauth_issuer_url")
+    @classmethod
+    def _validate_oauth_issuer_url(cls, value: str) -> str:
+        """`oauth_issuer_url` must be a full `http://`/`https://` URL (mcp-oauth task-01).
+
+        Every OAuth metadata document (`.well-known/oauth-authorization-server`, the RFC 8707
+        resource indicator on minted tokens) is built by string-composing onto this value —
+        `mcp_resource_url` below does exactly that — so a bare hostname or a relative path would
+        silently produce a malformed URI everywhere downstream instead of failing loudly here.
+
+        Strips leading/trailing whitespace first — mirrors this same file's other defensive
+        normalizers (`is_dev`'s `self.environment.strip().lower()`, `admin_email_set`'s
+        `email.strip().lower()`) — so a hand-edited `.env` value with a stray trailing space (a
+        known local gotcha in this repo) is rejected/accepted on its real content, not on
+        whitespace. Then strips ALL trailing slashes (final fix round 1, F-14: `removesuffix("/")`
+        stripped only one, so a doubled `https://host//` still composed into an accidental
+        `//api/v1/mcp` — `rstrip("/")` closes that) so a copy-pasted issuer URL with a trailing
+        `/` (however many) doesn't compose into an accidental extra slash.
+
+        mcp-oauth task-03 fix round 1 (review finding M-3, defence-in-depth): after stripping the
+        ends, rejects any REMAINING whitespace/control character anywhere in the value — `.strip()`
+        alone only trims the two ends, so an embedded `\r\n` (or any other interior whitespace)
+        would otherwise survive validation and later be emitted verbatim into the RFC 9728
+        `WWW-Authenticate` response header (`app.auth.oauth_discovery.www_authenticate_challenge`,
+        `app.mcp.server._auth_required`) and the `.well-known/oauth-*` metadata documents. This
+        value is operator-supplied deployment config, not attacker-reachable, and h11/uvicorn
+        already reject CR/LF in header values at the wire layer — so this is defence-in-depth, not
+        a fix for a reachable vulnerability — but a bad `OAUTH_ISSUER_URL` should fail loudly at
+        startup rather than silently propagate into every OAuth-related response.
+
+        Raises:
+            ValueError: `value` doesn't start with `http://` or `https://`, or contains any
+                whitespace/control character after the ends are stripped — surfaces to the caller
+                as a pydantic `ValidationError` with `errors()[0]["type"] == "value_error"`.
+        """
+        value = value.strip()
+        if not (value.startswith("http://") or value.startswith("https://")):
+            raise ValueError(
+                f"oauth_issuer_url must start with http:// or https://, got {value!r}."
+            )
+        if any(char.isspace() for char in value):
+            raise ValueError(f"oauth_issuer_url must not contain whitespace, got {value!r}.")
+        return value.rstrip("/")
+
     @model_validator(mode="after")
     def _warn_on_provider_base_url_mismatch(self) -> Settings:
         """P7 remediation (fresh-review F2): the provider "switch" is five independently-settable
@@ -255,6 +311,15 @@ class Settings(BaseSettings):
         `cors_origin_list`'s parsing shape.
         """
         return {email.strip().lower() for email in self.admin_emails.split(",") if email.strip()}
+
+    @property
+    def mcp_resource_url(self) -> str:
+        """The canonical MCP resource URI, derived from `oauth_issuer_url` (mcp-oauth task-01).
+
+        This is the RFC 8707 `resource` value every OAuth-issued (and, from this task on, every
+        `scripts/mint_mcp_token.py`-minted) token targeting this MCP server is scoped to.
+        """
+        return f"{self.oauth_issuer_url}/api/v1/mcp"
 
     @property
     def is_dev(self) -> bool:

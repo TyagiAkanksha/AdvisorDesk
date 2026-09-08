@@ -19,6 +19,7 @@ from app.rag.embeddings import Embedder
 from app.rag.synthesis import ChatLLM
 from app.routes.metrics import LatencyTracker
 from app.routes.ratelimit import RateLimiter
+from app.services.errors import OAuthError
 from app.services.lifecycle import ChunkPipeline
 
 
@@ -48,6 +49,68 @@ def get_session(request: Request) -> Iterator[Session]:
     try:
         yield session
         session.commit()
+    except Exception:
+        session.rollback()
+        raise
+    finally:
+        session.close()
+
+
+def get_oauth_token_session(request: Request) -> Iterator[Session]:
+    """Session dependency for `POST /oauth/token` ONLY: commits on success AND on `OAuthError`.
+
+    Identical to `get_session` above except for one widened branch (mcp-oauth plan, task 07;
+    task-07 review round 1, findings M-1/M-2). Three raise sites reachable from `/token` commit a
+    write that was `flush()`ed (never `commit()`ed — CONVENTIONS.md §3) before the `OAuthError`
+    that follows it, and every one of them is fail-closed, which is what makes committing on
+    `OAuthError` safe here:
+
+    1. `app.services.oauth_codes.consume_authorization_code`'s REPLAY branch — a code presented a
+       second time calls `app.services.oauth_tokens.revoke_family` (killing every token minted
+       from it) before raising `"Authorization code already used."`. RFC 6749 §10.4: an attacker
+       who triggers replay detection must not get to keep the very tokens this mechanism exists to
+       kill, so this write MUST survive the 400 that reports it.
+    2. `app.services.oauth_tokens.rotate_refresh_token`'s REUSE branch — an already-rotated
+       refresh token presented again calls `revoke_family` on the whole rotation family before
+       raising `"Refresh token has been revoked."`. Same reasoning as (1).
+    3. `app.services.oauth_tokens.issue_token_pair`'s owner check (`"User is no longer
+       authorized."`) — reached from BOTH grants only AFTER the code's `consumed_at` (code grant)
+       or the old refresh token's `revoked_at` + deleted `ApiToken` (refresh grant) have already
+       been flushed. Committing here is fail-closed either way: a spent code stays spent, and a
+       dead-end refresh stays revoked with no replacement issued — never a live grant plus a
+       silently-discarded revocation.
+
+    Every OTHER `OAuthError` this endpoint raises (`invalid_request`/`invalid_client`/an ordinary
+    `invalid_grant`/`invalid_target`/`invalid_scope` — an unknown code, an expired token, a PKCE
+    mismatch, a wrong client/resource/scope) has flushed nothing at all by the time it's raised, so
+    committing on those is a plain no-op: there is nothing to lose by not rolling back. A
+    non-`OAuthError` exception (a genuine bug, or `RateLimitedError` from the rate-limit check that
+    runs before any DB write) still rolls back, exactly like `get_session`.
+
+    A narrower marker (e.g. an `OAuthError` subclass raised only by the three sites above, with
+    this dependency committing only on that subclass) would be strictly safer hygiene — ledgered
+    for the mcp-oauth final whole-branch review rather than done now, since today's blanket
+    "commit on any `OAuthError`" is empirically not too wide (all three reachable pre-raise-write
+    sites are fail-closed, and the other 15+ raise sites flush nothing at all).
+
+    Raises:
+        RuntimeError: same guard as `get_session` — the app was built without a session factory.
+    """
+    session_factory = getattr(request.app.state, "session_factory", None)
+    if session_factory is None:
+        raise RuntimeError(
+            "get_oauth_token_session() requires app.state.session_factory, but none was "
+            "configured — this app was built by create_app() without a session_factory "
+            "(DB-less mode)."
+        )
+
+    session: Session = session_factory()
+    try:
+        yield session
+        session.commit()
+    except OAuthError:
+        session.commit()
+        raise
     except Exception:
         session.rollback()
         raise

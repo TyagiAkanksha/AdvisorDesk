@@ -500,12 +500,12 @@ class _AdminGatedMcpApp:
         ASGI callable uncaught, through the app's normal exception-handling middleware
         (`app.routes.errors.register_error_handlers`), the same path any `Depends(require_admin)`
         route failure takes — CONVENTIONS.md §4's "routes contain no try/except" extends here:
-        this method itself has no try/except around the auth check either. (mcp-oauth task 03:
-        the cookie path now calls `_require_admin_with_challenge`, a separate module-level
-        function that DOES wrap `require_admin` in a `try/except AuthRequiredError` to attach the
-        RFC 9728 challenge — see that function's own docstring for why living in `app.mcp` rather
-        than `app.routes` makes that a sanctioned exception to the same rule, not a violation of
-        it.)
+        this method itself has no try/except around the auth check either. (mcp-oauth task 03,
+        updated task 05: the cookie path calls `_require_admin_with_challenge`, a separate
+        module-level function that calls `resolve_admin` directly and raises the RFC
+        9728-challenge-carrying `AuthRequiredError` itself when it returns `None` — no
+        try/except anywhere in that path, so this stays a plain call, not a CONVENTIONS §4
+        carve-out; see that function's own docstring for the full resolve-or-raise shape.)
 
         Fix round 1, finding C1: `require_admin` (via `_require_admin_with_challenge` since
         mcp-oauth task 03) runs a synchronous DB query (`app/auth/deps.py`) — offloaded to a

@@ -252,6 +252,51 @@ Expected: `405`.
 (recorded during deployment)
 ```
 
+## 5a. MCP OAuth discovery (mcp-oauth)
+
+RFC 9728/8414 discovery documents live at the domain root (`docs/plans/mcp-oauth/DESIGN.md`), not
+under `/api/v1` — these three checks prove they're live and truthful on the deployed API.
+
+**RFC 9728 protected-resource metadata:**
+
+```sh
+curl -s $API/.well-known/oauth-protected-resource
+```
+
+Expected: `200` JSON containing `"resource":"https://api.advisordesk.tyagiakanksha.com/api/v1/mcp"`.
+
+```text
+(recorded during deployment)
+```
+
+**RFC 8414 authorization-server metadata:**
+
+```sh
+curl -s $API/.well-known/oauth-authorization-server
+```
+
+Expected: `200` JSON containing `"issuer":"https://api.advisordesk.tyagiakanksha.com"`.
+
+```text
+(recorded during deployment)
+```
+
+**Unauthenticated `POST /api/v1/mcp` now also carries the RFC 9728 challenge:**
+
+```sh
+curl -i -s -X POST $API/api/v1/mcp \
+  -H 'Content-Type: application/json' -H 'Accept: application/json, text/event-stream' \
+  -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"verify","version":"0.1"}}}'
+```
+
+Expected: HTTP 401, body `{"error":{"code":"auth_required","message":"..."}}`, and a
+`WWW-Authenticate: Bearer resource_metadata="https://api.advisordesk.tyagiakanksha.com/.well-known/oauth-protected-resource"`
+header.
+
+```text
+(recorded during deployment)
+```
+
 ## 6. Auth hardening: logout revocation is live (task-05, deployed)
 
 This one needs a real browser login (Google OAuth can't be scripted with curl) — sign in at

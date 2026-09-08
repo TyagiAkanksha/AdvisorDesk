@@ -14,6 +14,11 @@ from here automatically — nothing reads this directory at deploy time.
    `/opt/advisordesk/` and re-run/restart whatever the change requires
    (`docker compose up -d` for compose changes, `docker compose restart caddy` for `Caddyfile`
    changes).
+   - For a release that ships a new Alembic migration, also run
+     `docker compose exec api uv run alembic upgrade head` — migrations are **not** run
+     automatically by the api container's start command (`database.md`'s own top-of-file note),
+     so `docker compose up -d` alone leaves new tables/columns missing and the API will 500 on
+     any route that touches them.
 3. Re-run the relevant checks in `../VERIFY.md` against the live deployment.
 4. If applying the change on the box surfaced any drift from what's committed here (a manual
    fix made directly on the box, a value that had to differ), commit that drift back in the same
@@ -62,3 +67,34 @@ committed copy is updated in the same sitting:
   `FORWARDED_ALLOW_IPS: "*"`. This changes production request-trust behavior, so it **must be
   verified against a live spoof test (`../VERIFY.md` check 2b) at apply time**, before it's
   considered done.
+
+## MCP OAuth Connect (mcp-oauth)
+
+`docker-compose.yml`'s `api` service now sets `OAUTH_ISSUER_URL=https://api.advisordesk.tyagiakanksha.com`
+(mcp-oauth plan, `docs/plans/mcp-oauth/DESIGN.md`) — the API co-hosts an OAuth 2.1 authorization
+server alongside the MCP resource server so claude.ai's remote-connector **Connect** button works
+against `https://api.advisordesk.tyagiakanksha.com/api/v1/mcp` directly, replacing the manual
+CLI-mint-and-paste flow as the primary path.
+
+1. **Connect from claude.ai:** Settings → Connectors → Add custom connector → URL
+   `https://api.advisordesk.tyagiakanksha.com/api/v1/mcp` → Connect. claude.ai discovers the
+   `/.well-known/oauth-protected-resource` and `/.well-known/oauth-authorization-server`
+   documents, registers itself via DCR, then bridges to Google sign-in — sign in with an
+   allowlisted admin email (`ADMIN_EMAILS`) — and approve the consent screen ("Claude wants MCP
+   access to AdvisorDesk"). Claude receives a rotating access/refresh token pair; no token is ever
+   pasted into the connector config for this path.
+2. **Admin app → Connected apps** lists every registered client (name, admin, issued, last used,
+   live token counts) with a **Revoke** action that deletes the client and cascades every
+   dependent authorization code/refresh/access token row. Note: the table's "Approved" column is
+   `consent_granted_at` — the FIRST time an admin approved that client's consent — not a
+   last-approved timestamp; revoking a client and re-approving it later revives the same consent
+   record, so "Approved" keeps showing the original grant date, not the date of the re-approval.
+3. **CLI mint fallback:** for ops/CI callers that can't drive an OAuth redirect, the pre-existing
+   `scripts/mint_mcp_token.py --mint` CLI still works exactly as before — see
+   `env-checklist.md`'s "MCP bearer-token note" for the exact command and its `OAUTH_ISSUER_URL`
+   requirement.
+4. **Migration:** the four new OAuth tables (Alembic migration `0007`) are **not** created by any
+   automatic step at container start — see the "Change procedure" step 2 sub-bullet above. A fresh
+   deploy or upgrade to this release must run
+   `docker compose exec api uv run alembic upgrade head` before `/oauth/*` or `/.well-known/*`
+   traffic is sent to the box, or every OAuth route 500s against the missing tables.

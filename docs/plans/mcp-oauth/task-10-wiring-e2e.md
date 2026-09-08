@@ -2,7 +2,7 @@
 id: mcp-oauth-t10
 phase: mcp-oauth
 depends_on: [mcp-oauth-t01, mcp-oauth-t02, mcp-oauth-t03, mcp-oauth-t04, mcp-oauth-t05, mcp-oauth-t06, mcp-oauth-t07, mcp-oauth-t08, mcp-oauth-t09]
-status: planned
+status: built
 spec: docs/plans/mcp-oauth/DESIGN.md
 review: opus
 ---

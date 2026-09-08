@@ -61,11 +61,11 @@ separate reviewer.)
 | 5 | [`phase-5-mcp-agent/`](phase-5-mcp-agent/00-INDEX.md) | In-process MCP server + 8 core tools, agent loop + stateless `/agent/chat`, admin agent panel | 4 | merged |
 | 6 | [`phase-6-deployment/`](phase-6-deployment/00-INDEX.md) | Metrics middleware, AWS deployment (single-host EC2 + Caddy + Supabase; App Runner plan superseded at execution — see 00-INDEX amendment), README + demo script | 5 | merged |
 | 7 | [`phase-7-evaluation/`](phase-7-evaluation/00-INDEX.md) | `report_content_gaps` tool (#9), groundedness harness, §9.1 metrics + definition-of-done walk | 6 (tasks 01–02 only need 4–5) | merged |
-| mcp-oauth | [`mcp-oauth/`](mcp-oauth/00-INDEX.md) | OAuth 2.1 authorization server co-hosted with the MCP resource server (RFC 9728/8414 discovery, DCR, PKCE, Google-bridged consent, refresh rotation, revoke, admin "Connected apps" page) so claude.ai's Connect button works — spec [`mcp-oauth/DESIGN.md`](mcp-oauth/DESIGN.md) | 7 | planned |
+| mcp-oauth | [`mcp-oauth/`](mcp-oauth/00-INDEX.md) | OAuth 2.1 authorization server co-hosted with the MCP resource server (RFC 9728/8414 discovery, DCR, PKCE, Google-bridged consent, refresh rotation, revoke, admin "Connected apps" page) so claude.ai's Connect button works — spec [`mcp-oauth/DESIGN.md`](mcp-oauth/DESIGN.md) | 7 | built |
 
 Statuses here and in each INDEX are a snapshot; **git history is authoritative**. As of this
-writing, phases 1–7 are merged to `main` and deployed; `mcp-oauth` is planned on branch
-`feat/mcp-oauth` (10 tasks, three-agent SDD; merge/deploy/real-connect are owner-gated).
+writing, phases 1–7 are merged to `main` and deployed; `mcp-oauth`'s 10 tasks are all built on
+branch `feat/mcp-oauth` (three-agent SDD; merge/deploy/real-connect remain owner-gated).
 
 ## Standing gates (from the moment they exist)
 

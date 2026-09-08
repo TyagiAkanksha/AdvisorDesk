@@ -107,6 +107,11 @@ connected-app revocation (task-07 review, finding I-1).
 - **Exact** `redirect_uri` match against the registered client (no prefix/substring); redirect URIs HTTPS or localhost only; open-redirect prevention on any error redirect.
 - Authorization codes: single-use, short TTL (~60s), hashed at rest, bound to client+redirect+PKCE+resource+user.
 - **Refresh-token rotation** on every refresh; detect reuse of a rotated (revoked) refresh token → revoke the whole chain.
+- Concurrent replay is self-inflicted DoS by design: two requests racing the same authorization
+  code or the same refresh token → one wins, the loser trips the replay/reuse branch and revokes
+  the whole family, including the tokens the winner was just issued. A client that retries in
+  parallel (or a proxy that duplicates a POST) loses its grant and must re-consent. This is
+  correct per RFC 6819 and is NOT a bug.
 - **Audience binding:** issued tokens carry the MCP `resource`; the MCP endpoint validates it. Reject tokens not issued for this resource.
 - Allowlist re-checked at every resolve (already true) + at authorize (Google callback).
 - **Rate-limit** `/register`, `/authorize`, and `/token` (reuse `app.routes.ratelimit`); DCR is open per MCP, so cap client creation + prune stale/unused clients.

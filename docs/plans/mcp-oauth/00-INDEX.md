@@ -131,5 +131,8 @@ the branch ships only when 10 is green).
 
 ## Status
 
-**planned** — approved design; no task built yet. Per-task `status:` fields in each task file flip
-to `built` as they land; this line flips to `built` at the whole-branch final review.
+**built (pending owner: merge, deploy, real claude.ai Connect)** — all ten tasks landed on
+`feat/mcp-oauth`; the narrative e2e test (`apps/api/tests/test_oauth_e2e_flow.py`) walks the whole
+spec flow green, and `docs/plans/mcp-oauth/verification-record.md` records the local gate/alembic
+proof. Per-task `status:` fields in each task file are `built`. Merge, deploy, and the real
+claude.ai Connect against the deployed API remain owner-gated (never performed autonomously).

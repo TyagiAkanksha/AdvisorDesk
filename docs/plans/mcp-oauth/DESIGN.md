@@ -95,8 +95,11 @@ token-passthrough exposure.
 ### Admin management UI (the first visible new UI)
 A new **admin-app page** ("Connected apps") lists DCR clients + live tokens (client name, admin,
 issued, last used, expiry) with a **Revoke** action, backed by new admin-session-gated API
-endpoints (list + revoke → `/revoke`). Revoking bumps the token's state so `resolve_bearer_token`
-rejects it (the same mechanism `/auth/logout`'s epoch bump already uses).
+endpoints (list + revoke → `/revoke`). Revoking calls `revoke_family` (kills the refresh-token
+family and its current access token) or deletes the client outright (`CASCADE`s every dependent
+row) — **not** an epoch bump: `/auth/logout`'s epoch bump only invalidates the current access
+token, and the next refresh silently re-mints a new one under the new epoch, so web logout is not
+connected-app revocation (task-07 review, finding I-1).
 
 ## Security / threat model (all MUST unless noted)
 

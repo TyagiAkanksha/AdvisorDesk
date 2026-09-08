@@ -17,6 +17,14 @@ family via `revoke_family`, not just the one presented. `consume_authorization_c
 since a replayed code implies the same "something is wrong with every token this grant issued"
 conclusion.
 
+Revocation lever (task-07 review round 1, finding I-1): copying the owner's CURRENT
+`session_epoch` onto every freshly-minted `ApiToken` (`issue_token_pair`, below) means an
+`/auth/logout` epoch bump kills THAT ONE access token immediately — but it does NOT kill the
+underlying OAuth grant, because the very next `grant_type=refresh_token` call re-mints a fresh
+access token stamped with the owner's NEW (bumped) epoch, so a connector loses access for at most
+one refresh round trip. `revoke_family` (below) is the only thing that kills a grant outright;
+task 08's `/revoke` endpoint and the admin "Disconnect" action MUST call it, not bump an epoch.
+
 CONVENTIONS.md §3: every function here is session-first and only ever `flush()`s — the caller (the
 route's `get_session` dependency) owns the transaction boundary and commits.
 
@@ -45,7 +53,7 @@ from app.models.api_tokens import ApiToken
 from app.models.oauth import OAuthRefreshToken
 from app.services.errors import OAuthError
 from app.services.token_hashing import generate_token, hash_token
-from app.services.users import get_user_by_id
+from app.services.users import get_active_user
 
 logger = logging.getLogger(__name__)
 
@@ -87,9 +95,23 @@ def issue_token_pair(
 
     The `ApiToken` row is built to satisfy every check `app.auth.tokens.resolve_bearer_token`
     performs: `session_epoch` is copied from the owner's CURRENT `User.session_epoch` at issue
-    time (so a later `/auth/logout` epoch bump revokes this token too, exactly like every other
-    bearer token), `client_id`/`resource` are stamped so the audience rule applies, and
-    `expires_at` is `now + oauth_access_token_ttl_minutes`.
+    time, `client_id`/`resource` are stamped so the audience rule applies, and `expires_at` is
+    `now + oauth_access_token_ttl_minutes`.
+
+    Review finding I-1 (task-07 review round 1) — what copying `session_epoch` does and does NOT
+    do: a later `/auth/logout` epoch bump kills THIS access token — and only this access token. It
+    does not revoke the grant: `rotate_refresh_token` re-mints a fresh access token stamped with
+    the owner's NEW epoch on the very next refresh, so the connector keeps working after one round
+    trip. Killing the grant itself is `revoke_family`'s job (task 08's `/revoke` and the admin
+    "Disconnect" action) — module docstring above has the full rationale.
+
+    Review finding M-5 (task-07 review round 1) — fails closed at mint: uses `get_active_user`
+    (soft-delete-aware — `get_user_by_id` used to be used here, which kept minting for a
+    soft-deleted owner) and re-checks the LIVE `settings.admin_email_set`, the same allowlist
+    re-check `app.auth.tokens.resolve_bearer_token` performs on every resolve. Before this fix, a
+    soft-deleted or de-allowlisted owner's code/refresh token still minted a fresh 200 (the token
+    just failed at the very next MCP call) — now the mint itself fails, so an offboarded admin's
+    grant dies at the token endpoint instead of one hop later.
 
     Args:
         session: the caller's `Session`. Flushed (never committed) — CONVENTIONS.md §3.
@@ -105,7 +127,8 @@ def issue_token_pair(
             token's own (already-computed) `expires_at` when rotating, so rotation inherits the
             remaining window rather than resetting it.
         now: the reference "current time" (CONVENTIONS.md §10's injectable-clock seam).
-        settings: supplies `oauth_access_token_ttl_minutes`.
+        settings: supplies `oauth_access_token_ttl_minutes` and `admin_email_set` (M-5's mint-time
+            allowlist re-check).
         rotated_from_id: the immediate predecessor `OAuthRefreshToken.id` this row rotates from,
             or `None` for the first token in a family (the code-grant path).
 
@@ -113,12 +136,14 @@ def issue_token_pair(
         The raw token pair plus `expires_in`/`scope`, ready for `TokenResponse`.
 
     Raises:
-        OAuthError: `"invalid_grant"` — `user_id` no longer resolves to any `User` row at all
-            (soft-deleted or hard-deleted since the code/refresh token was minted).
+        OAuthError: `"invalid_grant"`, `"User is no longer authorized."` — `user_id` no longer
+            resolves to an ACTIVE `User` row (hard-deleted or soft-deleted since the code/refresh
+            token was minted), or that user's email is no longer in `settings.admin_email_set`
+            (M-5: fails closed at mint, matching `resolve_bearer_token`'s own re-checks).
     """
-    user = get_user_by_id(session, user_id)
-    if user is None:
-        raise OAuthError("invalid_grant", "User no longer exists.")
+    user = get_active_user(session, user_id)
+    if user is None or user.email.strip().lower() not in settings.admin_email_set:
+        raise OAuthError("invalid_grant", "User is no longer authorized.")
 
     access_raw, access_hash = generate_token(_ACCESS_TOKEN_PREFIX)
     access = ApiToken(

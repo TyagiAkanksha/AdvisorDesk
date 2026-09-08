@@ -516,7 +516,14 @@ def test_refresh_happy_path_rotates(tmp_engine: Engine, db_session: Session) -> 
     """A refresh grant mints a NEW access+refresh pair, revokes the OLD refresh row, chains
     `rotated_from_id`/`family_id`, and inherits the remaining expiry window verbatim. The OLD
     access token stops working at MCP; the NEW one works. RED today: 404, not 200 — both the
-    initial code exchange AND the refresh call fail identically."""
+    initial code exchange AND the refresh call fail identically.
+
+    Task-07 review round 1, finding I-2: the old refresh row's `expires_at` is backdated to
+    `now + 10 days` (via `db_session`) BEFORE rotating, so "inherits the remaining window" and
+    "gets a brand-new full-length TTL" are actually distinguishable — immediately after issuance
+    both are "now + 30 days" and a 1-second tolerance can't tell them apart (a mutant that resets
+    the window to a fresh `oauth_refresh_token_ttl_days` passed this test before this change).
+    Probe D1 in the review is the template."""
     app = _build_app(tmp_engine)
     client = TestClient(app)
     result = complete_authorization(client)
@@ -531,7 +538,9 @@ def test_refresh_happy_path_rotates(tmp_engine: Engine, db_session: Session) -> 
     ).scalar_one()
     old_refresh_id = old_refresh_row.id
     old_family_id = old_refresh_row.family_id
-    old_expires_at = old_refresh_row.expires_at
+    old_expires_at = datetime.now(UTC) + timedelta(days=10)
+    old_refresh_row.expires_at = old_expires_at
+    db_session.commit()
 
     response = _refresh(client, old_refresh, result.client_id)
 
@@ -553,11 +562,64 @@ def test_refresh_happy_path_rotates(tmp_engine: Engine, db_session: Session) -> 
     assert new_refresh_row.rotated_from_id == old_refresh_id
     assert new_refresh_row.family_id == old_family_id
     assert abs((new_refresh_row.expires_at - old_expires_at).total_seconds()) < 1
+    assert new_refresh_row.expires_at < datetime.now(UTC) + timedelta(days=11)
 
     old_mcp = _mcp_initialize(client, old_access)
     assert old_mcp.status_code == 401, old_mcp.text
     new_mcp = _mcp_initialize(client, new_access)
     assert new_mcp.status_code < 400, new_mcp.text
+
+
+def test_epoch_bump_kills_access_token_but_refresh_remints(
+    tmp_engine: Engine, db_session: Session
+) -> None:
+    """Task-07 review round 1, findings I-1/M6: an `/auth/logout`-style `session_epoch` bump
+    kills the LIVE access token immediately (`app.auth.tokens.resolve_bearer_token`'s existing
+    epoch check) — but it does NOT kill the underlying OAuth grant. The very next
+    `grant_type=refresh_token` call re-mints a fresh access token stamped with the NEW (bumped)
+    epoch, and that new token still opens `/api/v1/mcp`. Pins the ruling
+    `docs/plans/mcp-oauth/task-07-token-refresh-rotation.md`'s review settled on (I-1): an epoch
+    bump revokes the access token, only `revoke_family` (task 08's `/revoke`) revokes the grant.
+    Also kills mutant M6 from that review: a hardcoded `session_epoch=0` on the minted `ApiToken`
+    row would otherwise pass every other test in this file, since every fixture user's epoch
+    starts at 0 — this test forces a NON-zero epoch and asserts the new row actually carries it.
+    """
+    app = _build_app(tmp_engine)
+    client = TestClient(app)
+    result = complete_authorization(client)
+
+    first = _exchange(client, result)
+    assert first.status_code == 200, first.text
+    old_access = first.json()["access_token"]
+    old_refresh = first.json()["refresh_token"]
+
+    pre_bump_mcp = _mcp_initialize(client, old_access)
+    assert pre_bump_mcp.status_code < 400, pre_bump_mcp.text
+
+    code_row = db_session.execute(select(OAuthAuthorizationCode)).scalar_one()
+    owner = db_session.get(User, code_row.user_id)
+    assert owner is not None
+    owner.session_epoch += 1
+    db_session.commit()
+
+    post_bump_mcp = _mcp_initialize(client, old_access)
+    assert post_bump_mcp.status_code == 401, post_bump_mcp.text
+
+    response = _refresh(client, old_refresh, result.client_id)
+    assert response.status_code == 200, response.text
+    new_access = response.json()["access_token"]
+
+    new_mcp = _mcp_initialize(client, new_access)
+    assert new_mcp.status_code < 400, new_mcp.text
+
+    db_session.expire_all()
+    bumped_owner = db_session.get(User, owner.id)
+    assert bumped_owner is not None
+    assert bumped_owner.session_epoch != 0
+    new_access_row = db_session.execute(
+        select(ApiToken).where(ApiToken.token_hash == hash_token(new_access))
+    ).scalar_one()
+    assert new_access_row.session_epoch == bumped_owner.session_epoch
 
 
 def test_refresh_reuse_revokes_family(
@@ -705,6 +767,69 @@ def test_refresh_unknown_token_invalid_grant(tmp_engine: Engine) -> None:
     result = complete_authorization(client)
 
     response = _refresh(client, "adkr_totally-unknown-value", result.client_id)
+
+    assert response.status_code == 400, response.text
+    assert response.json()["error"] == "invalid_grant"
+
+
+# ---------------------------------------------------------------------------
+# Fail-closed at mint (task-07 review round 1, finding M-5)
+# ---------------------------------------------------------------------------
+
+
+def test_soft_deleted_owner_cannot_refresh(tmp_engine: Engine, db_session: Session) -> None:
+    """Task-07 review round 1, finding M-5: `issue_token_pair` now uses `get_active_user`
+    (soft-delete-aware) instead of `get_user_by_id`, so a refresh for an owner soft-deleted after
+    their code was already redeemed fails closed — 400 `invalid_grant`, not a fresh 200 that would
+    only fail one hop later at MCP. `docs/plans/mcp-oauth/task-07-token-refresh-rotation.md`.
+
+    This raise happens AFTER the old refresh row is already revoked (`rotate_refresh_token` revokes
+    before calling `issue_token_pair`) — intentional and fail-closed, per the review's own M-1/M-2
+    write-up: the presented refresh token is left dead either way, never silently kept alive."""
+    app = _build_app(tmp_engine)
+    client = TestClient(app)
+    result = complete_authorization(client)
+
+    first = _exchange(client, result)
+    assert first.status_code == 200, first.text
+    refresh_token = first.json()["refresh_token"]
+
+    code_row = db_session.execute(select(OAuthAuthorizationCode)).scalar_one()
+    owner = db_session.get(User, code_row.user_id)
+    assert owner is not None
+    owner.is_deleted = True
+    db_session.commit()
+
+    response = _refresh(client, refresh_token, result.client_id)
+
+    assert response.status_code == 400, response.text
+    assert response.json()["error"] == "invalid_grant"
+
+    db_session.expire_all()
+    refresh_row = db_session.execute(
+        select(OAuthRefreshToken).where(OAuthRefreshToken.token_hash == hash_token(refresh_token))
+    ).scalar_one()
+    assert refresh_row.revoked_at is not None
+
+
+def test_deallowlisted_owner_cannot_refresh(tmp_engine: Engine) -> None:
+    """Task-07 review round 1, finding M-5: `issue_token_pair` now re-checks the LIVE
+    `settings.admin_email_set`, so a refresh for an owner removed from `ADMIN_EMAILS` after their
+    code was already redeemed fails closed too — 400 `invalid_grant`. Mirrors `tests/
+    test_bearer_expiry_allowlist.py`'s own `client.app.state.settings.admin_emails = ...` mutation
+    (its judgment call 3: re-check the LIVE settings instance, not one captured at app-build time).
+    `docs/plans/mcp-oauth/task-07-token-refresh-rotation.md`."""
+    app = _build_app(tmp_engine)
+    client = TestClient(app)
+    result = complete_authorization(client)
+
+    first = _exchange(client, result)
+    assert first.status_code == 200, first.text
+    refresh_token = first.json()["refresh_token"]
+
+    client.app.state.settings.admin_emails = ""  # type: ignore[attr-defined]
+
+    response = _refresh(client, refresh_token, result.client_id)
 
     assert response.status_code == 400, response.text
     assert response.json()["error"] == "invalid_grant"

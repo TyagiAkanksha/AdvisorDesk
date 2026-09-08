@@ -30,7 +30,6 @@ undeclared here would reintroduce it just for this one route.
 
 from __future__ import annotations
 
-from collections.abc import Iterator
 from datetime import UTC, datetime
 from typing import Annotated
 from urllib.parse import urlencode
@@ -56,7 +55,7 @@ from app.models.schemas.oauth import (
     ClientRegistrationResponse,
     TokenResponse,
 )
-from app.routes.deps import get_rate_limiter, get_session, get_settings
+from app.routes.deps import get_oauth_token_session, get_rate_limiter, get_session, get_settings
 from app.routes.ratelimit import RateLimiter
 from app.services.errors import OAuthError, OAuthRedirectError
 from app.services.oauth_clients import (
@@ -364,55 +363,6 @@ def oauth_authorize_continue(
     return _issue_code_and_redirect(session, pending, principal, settings)
 
 
-def _get_token_session(request: Request) -> Iterator[Session]:
-    """Session dependency for `POST /oauth/token` ONLY: commits on success AND on `OAuthError`.
-
-    Identical to `app.routes.deps.get_session` except for one widened branch. RFC 6749 §10.4 (and
-    this task's own brief): a replayed authorization code or a reused, already-rotated refresh
-    token is treated as evidence of compromise — `app.services.oauth_codes.
-    consume_authorization_code`'s replay branch and `app.services.oauth_tokens.
-    rotate_refresh_token`'s reuse branch each call `app.services.oauth_tokens.revoke_family`
-    (killing every token in the affected rotation family) and then raise `OAuthError` to answer
-    the request with a 400. Those two writes MUST be durable regardless of the 400 that follows —
-    an attacker who triggers reuse detection must not get to keep the very tokens this mechanism
-    exists to kill. `app.services` functions still only ever `flush()` (CONVENTIONS.md §3: no
-    `commit()`/`rollback()` in services) — the plain `get_session` dependency's "roll back on any
-    exception" default would otherwise undo that flushed revocation before it ever reaches disk,
-    since `OAuthError` is still an exception from `get_session`'s point of view. This dependency
-    is the one place that widens "commit" to cover `OAuthError` too, scoped to this single route
-    (not `app.routes.deps.get_session` itself, which every other route still uses unchanged).
-
-    Every OTHER `OAuthError` this endpoint raises (`invalid_request`/`invalid_client`/an ordinary
-    `invalid_grant`/`invalid_target`/`invalid_scope` with no side effects — e.g. an unknown code,
-    an expired token, a PKCE mismatch) has flushed nothing by the time it's raised, so committing
-    on those is a no-op beyond what a rollback would have discarded anyway: there is nothing to
-    lose. A non-`OAuthError` exception (a genuine bug, or `RateLimitedError` from the rate-limit
-    check that runs before any DB write) still rolls back, exactly like `get_session`.
-
-    Raises:
-        RuntimeError: same guard as `get_session` — the app was built without a session factory.
-    """
-    session_factory = getattr(request.app.state, "session_factory", None)
-    if session_factory is None:
-        raise RuntimeError(
-            "_get_token_session() requires app.state.session_factory, but none was configured — "
-            "this app was built by create_app() without a session_factory (DB-less mode)."
-        )
-
-    session: Session = session_factory()
-    try:
-        yield session
-        session.commit()
-    except OAuthError:
-        session.commit()
-        raise
-    except Exception:
-        session.rollback()
-        raise
-    finally:
-        session.close()
-
-
 @router.post(
     "/token",
     operation_id="oauth_token",
@@ -455,7 +405,7 @@ def oauth_token(
     resource: Annotated[str | None, Form()] = None,
     refresh_token: Annotated[str | None, Form()] = None,
     scope: Annotated[str | None, Form()] = None,
-    session: Session = Depends(_get_token_session),
+    session: Session = Depends(get_oauth_token_session),
     settings: Settings = Depends(get_settings),
     limiter: RateLimiter = Depends(get_rate_limiter),
 ) -> Response:

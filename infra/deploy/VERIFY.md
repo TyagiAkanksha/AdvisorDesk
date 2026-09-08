@@ -3,8 +3,9 @@
 **This is a template.** Every check below is the exact command to run against the live,
 deployed stack — run it for real during the deployment session, and paste the actual output
 into the matching ```text``` block in place of the `(recorded during deployment)` placeholder.
-Nothing in this file has been run yet; no output here is fabricated. Phase-7 task-03 re-runs
-this same checklist later, so keep the commands byte-for-byte reusable.
+No output here is fabricated: as of 2026-09-08 only §5a carries recorded output (mcp-oauth
+deploy, main @ `8f9cab3`); every other block is still unrun. Phase-7 task-03 re-runs this same
+checklist later, so keep the commands byte-for-byte reusable.
 
 Set these once, then reuse them in every command below:
 
@@ -266,7 +267,8 @@ curl -s $API/.well-known/oauth-protected-resource
 Expected: `200` JSON containing `"resource":"https://api.advisordesk.tyagiakanksha.com/api/v1/mcp"`.
 
 ```text
-(recorded during deployment)
+# recorded 2026-09-08, main @ 8f9cab3 (mcp-oauth deploy), from a workstation
+{"resource":"https://api.advisordesk.tyagiakanksha.com/api/v1/mcp","authorization_servers":["https://api.advisordesk.tyagiakanksha.com"],"scopes_supported":["mcp"],"bearer_methods_supported":["header"],"resource_name":"AdvisorDesk MCP"}
 ```
 
 **RFC 8414 authorization-server metadata:**
@@ -278,7 +280,8 @@ curl -s $API/.well-known/oauth-authorization-server
 Expected: `200` JSON containing `"issuer":"https://api.advisordesk.tyagiakanksha.com"`.
 
 ```text
-(recorded during deployment)
+# recorded 2026-09-08, main @ 8f9cab3 (mcp-oauth deploy), from a workstation
+{"issuer":"https://api.advisordesk.tyagiakanksha.com","authorization_endpoint":"https://api.advisordesk.tyagiakanksha.com/api/v1/oauth/authorize","token_endpoint":"https://api.advisordesk.tyagiakanksha.com/api/v1/oauth/token","registration_endpoint":"https://api.advisordesk.tyagiakanksha.com/api/v1/oauth/register","revocation_endpoint":"https://api.advisordesk.tyagiakanksha.com/api/v1/oauth/revoke","response_types_supported":["code"],"grant_types_supported":["authorization_code","refresh_token"],"code_challenge_methods_supported":["S256"],"token_endpoint_auth_methods_supported":["none"],"revocation_endpoint_auth_methods_supported":["none"],"scopes_supported":["mcp"]}
 ```
 
 **Unauthenticated `POST /api/v1/mcp` now also carries the RFC 9728 challenge:**
@@ -294,8 +297,20 @@ Expected: HTTP 401, body `{"error":{"code":"auth_required","message":"..."}}`, a
 header.
 
 ```text
-(recorded during deployment)
+# recorded 2026-09-08, main @ 8f9cab3 (mcp-oauth deploy), from a workstation — status line,
+# challenge header and body only (other response headers omitted)
+HTTP/2 401
+www-authenticate: Bearer resource_metadata="https://api.advisordesk.tyagiakanksha.com/.well-known/oauth-protected-resource"
+{"error":{"code":"auth_required","message":"Sign in required."}}
 ```
+
+Deploy-session note (2026-09-08): the migration step of this release
+(`docker compose run --rm api uv run alembic upgrade head`, from the new `8f9cab3` image) walked
+`0004 -> 0005 -> 0006 -> 0007` — the prod schema had still been at `0004`, i.e. migrations `0005`
+(`api_tokens.session_epoch`) and `0006` (`api_tokens.expires_at`) had never been applied by the
+earlier `28a8473`/`1dd8e38` deploys. The live api container now reports `0007 (head)`. Future
+deploys: run `docker compose exec -T api uv run alembic current` before AND after the release and
+record both here.
 
 ## 6. Auth hardening: logout revocation is live (task-05, deployed)
 

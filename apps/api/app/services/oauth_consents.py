@@ -60,11 +60,18 @@ def record_consent(
     `OAuthConsent`'s unique `(user_id, client_id)` constraint means this pair can have AT MOST one
     row, ever — so approving a client this admin previously revoked must REVIVE that same row
     (`revoked_at` cleared back to `None`, `scope` refreshed) rather than inserting a second one,
-    which would violate the constraint. `now` is accepted but not stored: `OAuthConsent` carries no
-    separate "approved at" column, only `TimestampMixin`'s own `created_at`/`updated_at` (set by
-    the DB itself on insert/update) — the parameter exists for symmetry with every other
-    injectable-clock seam in this codebase (CONVENTIONS.md §10) and so a caller need not special-
-    case this one function.
+    which would violate the constraint. `now` is accepted but not stored: `OAuthConsent`
+    (`app.models.oauth`) carries `TimestampMixin`'s `created_at` ONLY — a DB-side `default now()`
+    set once, at insert — and does NOT use the separate, application-maintained `UpdatedAtMixin`
+    (fix round 1, review finding I-2: an earlier version of this docstring wrongly claimed an
+    `updated_at` column "set by the DB itself on update"; no such column exists on this model). The
+    `now` parameter exists only for symmetry with every other injectable-clock seam in this
+    codebase (CONVENTIONS.md §10), so a caller need not special-case this one function — but
+    nothing here stores it. Consequence: the revive path (below) deliberately records no re-grant
+    timestamp anywhere — after a revoke followed by a re-approve, `created_at` still names the
+    row's ORIGINAL grant, not the revival. If a later task (e.g. a `revoke`/connected-apps UI)
+    needs to show or audit "when was this (re-)granted", that needs a new column and migration —
+    out of this task's scope; flagged for the owner, not fixed here.
 
     Args:
         session: the caller's `Session`. Flushed (never committed) so the caller's `get_session`

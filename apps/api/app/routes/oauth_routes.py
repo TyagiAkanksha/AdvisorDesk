@@ -464,9 +464,12 @@ def oauth_authorize_decision(
     401, never loop back through Google login (task-06 controller carry-over, t05 review context).
     The submitted `nonce` is compared against the pending request's own `PendingAuthorization.
     nonce` with `hmac.compare_digest` — an absent `nonce` is rejected up front (never passed to
-    `compare_digest` as `None`) — binding this POST to the exact pending request the consent page
-    was rendered for, the CSRF-style guard `nonce` exists for (`app.auth.oauth_request`'s own
-    module docstring).
+    `compare_digest` as `None`), and a non-ASCII `nonce` is rejected the same way before reaching
+    `compare_digest` (fix round 1, review finding I-1: `hmac.compare_digest` raises `TypeError` on
+    a non-ASCII `str` operand, which would otherwise escape as an unhandled 500 instead of this
+    route's documented 400) — binding this POST to the exact pending request the consent page was
+    rendered for, the CSRF-style guard `nonce` exists for (`app.auth.oauth_request`'s own module
+    docstring).
 
     Approve records an `OAuthConsent` row (`app.services.oauth_consents.record_consent`) and then
     issues the code via `_issue_code_and_redirect`, identically to `oauth_authorize_continue`'s own
@@ -502,7 +505,7 @@ def oauth_authorize_decision(
             pending.state,
         )
 
-    if nonce is None or not hmac.compare_digest(nonce, pending.nonce):
+    if nonce is None or not nonce.isascii() or not hmac.compare_digest(nonce, pending.nonce):
         raise OAuthError("invalid_request", "Consent form token mismatch.")
 
     if decision == "deny":

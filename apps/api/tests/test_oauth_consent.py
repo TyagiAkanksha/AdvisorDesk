@@ -48,7 +48,7 @@ from app.config import Settings
 from app.db import make_session_factory
 from app.factory import create_app
 from app.models import User
-from app.models.oauth import OAuthAuthorizationCode, OAuthConsent
+from app.models.oauth import OAuthAuthorizationCode, OAuthClient, OAuthConsent
 
 _ISSUER = "https://api.example"
 _ADMIN_APP_URL = "https://admin.example"
@@ -231,6 +231,39 @@ def test_consent_page_has_no_script(tmp_engine: Engine) -> None:
     html, _nonce = _reach_consent(client)
 
     assert "<script" not in html
+
+
+def test_continue_unknown_client_invalid_client(tmp_engine: Engine, db_session: Session) -> None:
+    """A pending request whose `client_id` no longer names a registered client (deleted mid-flow,
+    between `/authorize` and `/continue` — e.g. via `prune_stale_clients` on a later `/register`
+    call) -> 400 `invalid_client`, exact description "Unknown client.", `Cache-Control: no-store`.
+
+    Fix round 1, review finding M-3: pins `oauth_authorize_continue`'s `get_client(session,
+    pending.client_id) is None` branch, previously unpinned by any test — the pending cookie
+    carries `client_id` by value, so deleting the `OAuthClient` row directly (rather than through
+    any route) is what makes `get_client` return `None` while the pending cookie is still valid.
+    """
+    app = _build_app(tmp_engine)
+    client = TestClient(app)
+    client_id = _register(client, client_name="Claude")
+
+    authorize_response = client.get(
+        _AUTHORIZE_PATH, params=_authorize_params(client_id), follow_redirects=False
+    )
+    assert authorize_response.status_code == 303, authorize_response.text
+    login_as(client, "admin@example.com")
+
+    client_row = db_session.get(OAuthClient, client_id)
+    assert client_row is not None
+    db_session.delete(client_row)
+    db_session.commit()
+
+    response = client.get(_CONTINUE_PATH, follow_redirects=False)
+
+    assert response.status_code == 400, response.text
+    assert response.json()["error"] == "invalid_client"
+    assert response.json()["error_description"] == "Unknown client."
+    assert response.headers.get("cache-control") == "no-store"
 
 
 # ---------------------------------------------------------------------------
@@ -521,6 +554,40 @@ def test_decision_post_without_nonce_400(tmp_engine: Engine, db_session: Session
     assert db_session.execute(select(OAuthConsent)).first() is None
 
 
+def test_non_ascii_nonce_400(tmp_engine: Engine, db_session: Session) -> None:
+    """A decision POST whose `nonce` contains a non-ASCII character -> 400 `invalid_request`,
+    exact description "Consent form token mismatch." — never a 500.
+
+    Fix round 1, review finding I-1: `hmac.compare_digest` on `str` operands raises `TypeError`
+    when either side is non-ASCII (`pending.nonce` is always ASCII — `secrets.token_urlsafe` — but
+    the submitted `nonce` comes straight off the form with no charset guard). Before the fix, this
+    exact request 500'd instead of answering the documented 400; the route must reject a non-ASCII
+    `nonce` the same way it already rejects an absent one, before ever calling `compare_digest`.
+    """
+    app = _build_app(tmp_engine)
+    client = TestClient(app)
+    client_id = _register(client, client_name="Claude")
+    authorize_response = client.get(
+        _AUTHORIZE_PATH, params=_authorize_params(client_id), follow_redirects=False
+    )
+    assert authorize_response.status_code == 303, authorize_response.text
+    login_as(client, "admin@example.com")
+    continue_response = client.get(_CONTINUE_PATH, follow_redirects=False)
+    assert continue_response.status_code == 200, continue_response.text
+
+    response = client.post(
+        _DECISION_PATH,
+        data={"decision": "approve", "nonce": "é" * 8},
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 400, response.text
+    assert response.json()["error"] == "invalid_request"
+    assert response.json()["error_description"] == "Consent form token mismatch."
+    assert db_session.execute(select(OAuthAuthorizationCode)).first() is None
+    assert db_session.execute(select(OAuthConsent)).first() is None
+
+
 def test_decision_without_cookie_400(tmp_engine: Engine) -> None:
     """A decision POST with no pending-authorization cookie at all -> 400 `invalid_request` — the
     checked-first branch, before any session/nonce concern even applies."""
@@ -567,6 +634,47 @@ def test_decision_without_session_401(tmp_engine: Engine) -> None:
 
     assert response.status_code == 401, response.text
     assert response.json()["error"]["code"] == "auth_required"
+
+
+def test_decision_deallowlisted_user_access_denied(tmp_engine: Engine, db_session: Session) -> None:
+    """An admin whose email has fallen off the allowlist BETWEEN reaching the consent page and
+    submitting the decision -> `access_denied`, redirected with `state` preserved; no code, no
+    consent row — the decision route's own allowlist re-check (mirrors `oauth_authorize_continue`'s
+    identical guard for the "allowlist edited after the session was minted" window).
+
+    Fix round 1, review finding M-2: pins `oauth_authorize_decision`'s allowlist check, previously
+    unpinned by any test.
+    """
+    app = _build_app(tmp_engine)
+    client = TestClient(app)
+    client_id = _register(client, client_name="Claude")
+    authorize_response = client.get(
+        _AUTHORIZE_PATH, params=_authorize_params(client_id), follow_redirects=False
+    )
+    assert authorize_response.status_code == 303, authorize_response.text
+    login_as(client, "admin@example.com")
+    continue_response = client.get(_CONTINUE_PATH, follow_redirects=False)
+    assert continue_response.status_code == 200, continue_response.text
+    nonce_match = _NONCE_RE.search(continue_response.text)
+    assert nonce_match is not None, continue_response.text
+
+    client.app.state.settings.admin_emails = "someone-else@example.com"  # type: ignore[attr-defined]
+
+    response = client.post(
+        _DECISION_PATH,
+        data={"decision": "approve", "nonce": nonce_match.group(1)},
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 302, response.text
+    location = response.headers["location"]
+    assert location.startswith(_REDIRECT_URI)
+    query = _redirect_query(location)
+    assert query["error"] == ["access_denied"]
+    assert query["state"] == [_STATE]
+
+    assert db_session.execute(select(OAuthAuthorizationCode)).first() is None
+    assert db_session.execute(select(OAuthConsent)).first() is None
 
 
 def test_bad_decision_value_400(tmp_engine: Engine) -> None:
@@ -730,3 +838,47 @@ def test_redirect_uri_with_query_uses_ampersand(tmp_engine: Engine) -> None:
     assert success_location.startswith(f"{redirect_uri}&"), success_location
     assert "code=" in success_location
     assert "state=xyz" in success_location
+
+
+def test_redirect_uri_with_query_uses_ampersand_on_deny(tmp_engine: Engine) -> None:
+    """The DENY redirect also `&`-joins onto a `redirect_uri` that already carries its own query
+    string, never a second `?` — the other half of `_redirect_with_params`'s two call sites
+    (`test_redirect_uri_with_query_uses_ampersand` above only drives the approve/success half).
+
+    Fix round 1, review finding M-1: `_redirect_with_params` is used at both
+    `_issue_code_and_redirect` (success) and `oauth_authorize_decision`'s deny branch — reverting
+    just the deny call site to a bare `?` would previously have left the suite green.
+    """
+    app = _build_app(tmp_engine)
+    client = TestClient(app)
+    redirect_uri = "https://claude.ai/api/mcp/auth_callback?tenant=x"
+    register_response = client.post(
+        _REGISTER_PATH,
+        json={"redirect_uris": [redirect_uri], "client_name": "Claude"},
+    )
+    assert register_response.status_code == 201, register_response.text
+    client_id = register_response.json()["client_id"]
+
+    authorize_response = client.get(
+        _AUTHORIZE_PATH,
+        params=_authorize_params(client_id, redirect_uri=redirect_uri),
+        follow_redirects=False,
+    )
+    assert authorize_response.status_code == 303, authorize_response.text
+    login_as(client, "admin@example.com")
+    continue_response = client.get(_CONTINUE_PATH, follow_redirects=False)
+    assert continue_response.status_code == 200, continue_response.text
+    nonce_match = _NONCE_RE.search(continue_response.text)
+    assert nonce_match is not None, continue_response.text
+
+    deny_response = client.post(
+        _DECISION_PATH,
+        data={"decision": "deny", "nonce": nonce_match.group(1)},
+        follow_redirects=False,
+    )
+
+    assert deny_response.status_code == 302, deny_response.text
+    deny_location = deny_response.headers["location"]
+    assert deny_location.startswith(f"{redirect_uri}&"), deny_location
+    assert "error=access_denied" in deny_location
+    assert "state=xyz" in deny_location

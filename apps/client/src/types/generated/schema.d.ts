@@ -488,9 +488,12 @@ export interface paths {
          *     401, never loop back through Google login (task-06 controller carry-over, t05 review context).
          *     The submitted `nonce` is compared against the pending request's own `PendingAuthorization.
          *     nonce` with `hmac.compare_digest` — an absent `nonce` is rejected up front (never passed to
-         *     `compare_digest` as `None`) — binding this POST to the exact pending request the consent page
-         *     was rendered for, the CSRF-style guard `nonce` exists for (`app.auth.oauth_request`'s own
-         *     module docstring).
+         *     `compare_digest` as `None`), and a non-ASCII `nonce` is rejected the same way before reaching
+         *     `compare_digest` (fix round 1, review finding I-1: `hmac.compare_digest` raises `TypeError` on
+         *     a non-ASCII `str` operand, which would otherwise escape as an unhandled 500 instead of this
+         *     route's documented 400) — binding this POST to the exact pending request the consent page was
+         *     rendered for, the CSRF-style guard `nonce` exists for (`app.auth.oauth_request`'s own module
+         *     docstring).
          *
          *     Approve records an `OAuthConsent` row (`app.services.oauth_consents.record_consent`) and then
          *     issues the code via `_issue_code_and_redirect`, identically to `oauth_authorize_continue`'s own
@@ -516,6 +519,60 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/oauth/clients": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Oauth Clients List
+         * @description List every registered `OAuthClient` with its live-token summary, newest-first.
+         *
+         *     `app.services.oauth_clients.list_connected_apps` does the actual (single-statement,
+         *     aggregate-joined — see its own docstring) query; this route only converts each
+         *     `ConnectedAppRow` dataclass to the wire-shape `ConnectedApp` model (`from_attributes=True`,
+         *     so the conversion is a direct field-for-field mapping, no manual construction).
+         */
+        get: operations["oauth_clients_list"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/oauth/clients/{client_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Oauth Client Revoke
+         * @description Delete one `OAuthClient` outright — the admin "Disconnect" action.
+         *
+         *     `app.services.oauth_clients.delete_client` issues a real DB-level `DELETE`; every dependent
+         *     row (authorization codes, refresh tokens, consents, api tokens) is removed along with it via
+         *     `ondelete="CASCADE"` FKs (that function's own docstring), so every token this client ever
+         *     held stops working immediately.
+         *
+         *     Raises:
+         *         NotFoundError: `client_id` names no registered `OAuthClient` — 404 §9 envelope, "Client
+         *             not found."
+         */
+        delete: operations["oauth_client_revoke"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/oauth/register": {
         parameters: {
             query?: never;
@@ -534,6 +591,45 @@ export interface paths {
          *     authorize a user or mint a token.
          */
         post: operations["oauth_register"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/oauth/revoke": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Oauth Revoke
+         * @description Revoke one refresh or access token (RFC 7009 §2.1 token revocation request).
+         *
+         *     docs/plans/mcp-oauth/task-08-revoke-admin-api.md: validation order mirrors `/token`'s own
+         *     pinned pattern — rate limit -> `token` presence -> `client_id` presence AND that it names a
+         *     REGISTERED client (the one 401 this endpoint ever returns; every other rejection is 400).
+         *     Past that point `revoke_token` (`app.services.oauth_tokens`) does the actual work and can
+         *     never fail: RFC 7009 §2.2 requires this endpoint to answer 200 whether or not `token` ever
+         *     existed, belonged to this client, or was already revoked — the response carries no signal
+         *     either way. `token_type_hint` is accepted (so a spec-compliant client's request never 422s
+         *     for including it) but never read — `revoke_token` tries both a refresh-token and an
+         *     access-token lookup unconditionally, which is cheap enough that the hint buys nothing.
+         *
+         *     Always answers 200 with an empty body and `Cache-Control: no-store`/`Pragma: no-cache` (RFC
+         *     7009 §2.2) — a plain `Response` (mirrors `oauth_token`'s own `JSONResponse` reasoning) so
+         *     those headers are set directly on every reachable return path, success included.
+         *
+         *     Raises:
+         *         OAuthError: `"invalid_request"`, "token is required." (400) if `token` is absent;
+         *             `"invalid_client"`, "Unknown client." (401) if `client_id` is absent or unregistered.
+         *             Never raised for an unknown/foreign/already-revoked `token` — see above.
+         */
+        post: operations["oauth_revoke"];
         delete?: never;
         options?: never;
         head?: never;
@@ -781,6 +877,15 @@ export interface components {
             /** Nonce */
             nonce?: string | null;
         };
+        /** Body_oauth_revoke */
+        Body_oauth_revoke: {
+            /** Client Id */
+            client_id?: string | null;
+            /** Token */
+            token?: string | null;
+            /** Token Type Hint */
+            token_type_hint?: string | null;
+        };
         /** Body_oauth_token */
         Body_oauth_token: {
             /** Client Id */
@@ -883,6 +988,45 @@ export interface components {
              * @constant
              */
             token_endpoint_auth_method: "none";
+        };
+        /**
+         * ConnectedApp
+         * @description `GET /api/v1/oauth/clients`'s per-client wire shape (mcp-oauth plan, task 08).
+         *
+         *     `model_config = ConfigDict(from_attributes=True)`: maps directly from an
+         *     `app.services.oauth_clients.ConnectedAppRow` (a frozen dataclass with the exact same field
+         *     names) — field-for-field, no manual construction call site needed.
+         */
+        ConnectedApp: {
+            /** Active Access Tokens */
+            active_access_tokens: number;
+            /** Active Refresh Tokens */
+            active_refresh_tokens: number;
+            /** Client Id */
+            client_id: string;
+            /** Client Name */
+            client_name: string;
+            /** Consent Granted At */
+            consent_granted_at: string | null;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Last Used At */
+            last_used_at: string | null;
+            /** Latest Expires At */
+            latest_expires_at: string | null;
+            /** Redirect Uris */
+            redirect_uris: string[];
+        };
+        /**
+         * ConnectedAppsResponse
+         * @description `GET /api/v1/oauth/clients`'s top-level wire shape — one `items` list, task-08 brief.
+         */
+        ConnectedAppsResponse: {
+            /** Items */
+            items: components["schemas"]["ConnectedApp"][];
         };
         /**
          * ContentCreate
@@ -1910,6 +2054,82 @@ export interface operations {
             };
         };
     };
+    oauth_clients_list: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConnectedAppsResponse"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    oauth_client_revoke: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                client_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
     oauth_register: {
         parameters: {
             query?: never;
@@ -1942,6 +2162,78 @@ export interface operations {
                      * @example {
                      *       "error": "invalid_client_metadata",
                      *       "error_description": "…"
+                     *     }
+                     */
+                    "application/json": unknown;
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too Many Requests */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    oauth_revoke: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/x-www-form-urlencoded": components["schemas"]["Body_oauth_revoke"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description OAuth error — token is required. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "error": "invalid_request",
+                     *       "error_description": "token is required."
+                     *     }
+                     */
+                    "application/json": unknown;
+                };
+            };
+            /** @description Unknown client_id. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "error": "invalid_client",
+                     *       "error_description": "Unknown client."
                      *     }
                      */
                     "application/json": unknown;

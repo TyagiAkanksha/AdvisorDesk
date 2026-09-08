@@ -70,6 +70,45 @@
         "title": "Body_oauth_authorize_decision",
         "type": "object"
       },
+      "Body_oauth_revoke": {
+        "properties": {
+          "client_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Client Id"
+          },
+          "token": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Token"
+          },
+          "token_type_hint": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Token Type Hint"
+          }
+        },
+        "title": "Body_oauth_revoke",
+        "type": "object"
+      },
       "Body_oauth_token": {
         "properties": {
           "client_id": {
@@ -332,6 +371,105 @@
           "response_types"
         ],
         "title": "ClientRegistrationResponse",
+        "type": "object"
+      },
+      "ConnectedApp": {
+        "description": "`GET /api/v1/oauth/clients`'s per-client wire shape (mcp-oauth plan, task 08).\n\n`model_config = ConfigDict(from_attributes=True)`: maps directly from an\n`app.services.oauth_clients.ConnectedAppRow` (a frozen dataclass with the exact same field\nnames) \u2014 field-for-field, no manual construction call site needed.",
+        "properties": {
+          "active_access_tokens": {
+            "title": "Active Access Tokens",
+            "type": "integer"
+          },
+          "active_refresh_tokens": {
+            "title": "Active Refresh Tokens",
+            "type": "integer"
+          },
+          "client_id": {
+            "title": "Client Id",
+            "type": "string"
+          },
+          "client_name": {
+            "title": "Client Name",
+            "type": "string"
+          },
+          "consent_granted_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Consent Granted At"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "last_used_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Used At"
+          },
+          "latest_expires_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Latest Expires At"
+          },
+          "redirect_uris": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Redirect Uris",
+            "type": "array"
+          }
+        },
+        "required": [
+          "client_id",
+          "client_name",
+          "redirect_uris",
+          "created_at",
+          "consent_granted_at",
+          "active_access_tokens",
+          "active_refresh_tokens",
+          "last_used_at",
+          "latest_expires_at"
+        ],
+        "title": "ConnectedApp",
+        "type": "object"
+      },
+      "ConnectedAppsResponse": {
+        "description": "`GET /api/v1/oauth/clients`'s top-level wire shape \u2014 one `items` list, task-08 brief.",
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/ConnectedApp"
+            },
+            "title": "Items",
+            "type": "array"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "title": "ConnectedAppsResponse",
         "type": "object"
       },
       "ContentCreate": {
@@ -1731,7 +1869,7 @@
     },
     "/api/v1/oauth/authorize/decision": {
       "post": {
-        "description": "Handle the consent page's Approve/Deny submission (mcp-oauth plan, task 06).\n\ndocs/plans/mcp-oauth/task-06-consent-screen.md: guarded by `require_admin` (raise-on-failure),\nNOT `resolve_admin` (which `oauth_authorize_continue` uses to bridge to a 307 login redirect) \u2014\na session that vanished between rendering the consent page and submitting the form must answer\n401, never loop back through Google login (task-06 controller carry-over, t05 review context).\nThe submitted `nonce` is compared against the pending request's own `PendingAuthorization.\nnonce` with `hmac.compare_digest` \u2014 an absent `nonce` is rejected up front (never passed to\n`compare_digest` as `None`) \u2014 binding this POST to the exact pending request the consent page\nwas rendered for, the CSRF-style guard `nonce` exists for (`app.auth.oauth_request`'s own\nmodule docstring).\n\nApprove records an `OAuthConsent` row (`app.services.oauth_consents.record_consent`) and then\nissues the code via `_issue_code_and_redirect`, identically to `oauth_authorize_continue`'s own\nalready-consented path. Deny redirects to the pending request's own `redirect_uri` with\n`error=access_denied` and clears the pending cookie \u2014 records no consent, issues no code \u2014 so a\nsecond `GET /authorize/continue` right after is NOT resumable (400 `invalid_request`, since the\ncookie is already gone).\n\nRaises:\n    OAuthError: no valid pending-authorization cookie (`\"invalid_request\"`, 400); the\n        submitted `nonce` is missing or does not match the pending request's own\n        (`\"invalid_request\"`, \"Consent form token mismatch.\", 400); `decision` is neither\n        `\"approve\"` nor `\"deny\"` (`\"invalid_request\"`, 400).\n    OAuthRedirectError: the resolved admin's email is not in `settings.admin_email_set`\n        (`\"access_denied\"`) \u2014 redirects to the pending request's own `redirect_uri`.\n    AuthRequiredError: no valid admin session (`require_admin`) \u2014 401 \u00a79 `auth_required`\n        envelope.",
+        "description": "Handle the consent page's Approve/Deny submission (mcp-oauth plan, task 06).\n\ndocs/plans/mcp-oauth/task-06-consent-screen.md: guarded by `require_admin` (raise-on-failure),\nNOT `resolve_admin` (which `oauth_authorize_continue` uses to bridge to a 307 login redirect) \u2014\na session that vanished between rendering the consent page and submitting the form must answer\n401, never loop back through Google login (task-06 controller carry-over, t05 review context).\nThe submitted `nonce` is compared against the pending request's own `PendingAuthorization.\nnonce` with `hmac.compare_digest` \u2014 an absent `nonce` is rejected up front (never passed to\n`compare_digest` as `None`), and a non-ASCII `nonce` is rejected the same way before reaching\n`compare_digest` (fix round 1, review finding I-1: `hmac.compare_digest` raises `TypeError` on\na non-ASCII `str` operand, which would otherwise escape as an unhandled 500 instead of this\nroute's documented 400) \u2014 binding this POST to the exact pending request the consent page was\nrendered for, the CSRF-style guard `nonce` exists for (`app.auth.oauth_request`'s own module\ndocstring).\n\nApprove records an `OAuthConsent` row (`app.services.oauth_consents.record_consent`) and then\nissues the code via `_issue_code_and_redirect`, identically to `oauth_authorize_continue`'s own\nalready-consented path. Deny redirects to the pending request's own `redirect_uri` with\n`error=access_denied` and clears the pending cookie \u2014 records no consent, issues no code \u2014 so a\nsecond `GET /authorize/continue` right after is NOT resumable (400 `invalid_request`, since the\ncookie is already gone).\n\nRaises:\n    OAuthError: no valid pending-authorization cookie (`\"invalid_request\"`, 400); the\n        submitted `nonce` is missing or does not match the pending request's own\n        (`\"invalid_request\"`, \"Consent form token mismatch.\", 400); `decision` is neither\n        `\"approve\"` nor `\"deny\"` (`\"invalid_request\"`, 400).\n    OAuthRedirectError: the resolved admin's email is not in `settings.admin_email_set`\n        (`\"access_denied\"`) \u2014 redirects to the pending request's own `redirect_uri`.\n    AuthRequiredError: no valid admin session (`require_admin`) \u2014 401 \u00a79 `auth_required`\n        envelope.",
         "operationId": "oauth_authorize_decision",
         "requestBody": {
           "content": {
@@ -1789,6 +1927,94 @@
         "summary": "Oauth Authorize Decision",
         "tags": [
           "oauth"
+        ]
+      }
+    },
+    "/api/v1/oauth/clients": {
+      "get": {
+        "description": "List every registered `OAuthClient` with its live-token summary, newest-first.\n\n`app.services.oauth_clients.list_connected_apps` does the actual (single-statement,\naggregate-joined \u2014 see its own docstring) query; this route only converts each\n`ConnectedAppRow` dataclass to the wire-shape `ConnectedApp` model (`from_attributes=True`,\nso the conversion is a direct field-for-field mapping, no manual construction).",
+        "operationId": "oauth_clients_list",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConnectedAppsResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          }
+        },
+        "summary": "Oauth Clients List",
+        "tags": [
+          "oauth-admin"
+        ]
+      }
+    },
+    "/api/v1/oauth/clients/{client_id}": {
+      "delete": {
+        "description": "Delete one `OAuthClient` outright \u2014 the admin \"Disconnect\" action.\n\n`app.services.oauth_clients.delete_client` issues a real DB-level `DELETE`; every dependent\nrow (authorization codes, refresh tokens, consents, api tokens) is removed along with it via\n`ondelete=\"CASCADE\"` FKs (that function's own docstring), so every token this client ever\nheld stops working immediately.\n\nRaises:\n    NotFoundError: `client_id` names no registered `OAuthClient` \u2014 404 \u00a79 envelope, \"Client\n        not found.\"",
+        "operationId": "oauth_client_revoke",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "client_id",
+            "required": true,
+            "schema": {
+              "title": "Client Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          }
+        },
+        "summary": "Oauth Client Revoke",
+        "tags": [
+          "oauth-admin"
         ]
       }
     },
@@ -1850,6 +2076,77 @@
           }
         },
         "summary": "Oauth Register",
+        "tags": [
+          "oauth"
+        ]
+      }
+    },
+    "/api/v1/oauth/revoke": {
+      "post": {
+        "description": "Revoke one refresh or access token (RFC 7009 \u00a72.1 token revocation request).\n\ndocs/plans/mcp-oauth/task-08-revoke-admin-api.md: validation order mirrors `/token`'s own\npinned pattern \u2014 rate limit -> `token` presence -> `client_id` presence AND that it names a\nREGISTERED client (the one 401 this endpoint ever returns; every other rejection is 400).\nPast that point `revoke_token` (`app.services.oauth_tokens`) does the actual work and can\nnever fail: RFC 7009 \u00a72.2 requires this endpoint to answer 200 whether or not `token` ever\nexisted, belonged to this client, or was already revoked \u2014 the response carries no signal\neither way. `token_type_hint` is accepted (so a spec-compliant client's request never 422s\nfor including it) but never read \u2014 `revoke_token` tries both a refresh-token and an\naccess-token lookup unconditionally, which is cheap enough that the hint buys nothing.\n\nAlways answers 200 with an empty body and `Cache-Control: no-store`/`Pragma: no-cache` (RFC\n7009 \u00a72.2) \u2014 a plain `Response` (mirrors `oauth_token`'s own `JSONResponse` reasoning) so\nthose headers are set directly on every reachable return path, success included.\n\nRaises:\n    OAuthError: `\"invalid_request\"`, \"token is required.\" (400) if `token` is absent;\n        `\"invalid_client\"`, \"Unknown client.\" (401) if `client_id` is absent or unregistered.\n        Never raised for an unknown/foreign/already-revoked `token` \u2014 see above.",
+        "operationId": "oauth_revoke",
+        "requestBody": {
+          "content": {
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_oauth_revoke"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": "invalid_request",
+                  "error_description": "token is required."
+                }
+              }
+            },
+            "description": "OAuth error \u2014 token is required."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": "invalid_client",
+                  "error_description": "Unknown client."
+                }
+              }
+            },
+            "description": "Unknown client_id."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          }
+        },
+        "summary": "Oauth Revoke",
         "tags": [
           "oauth"
         ]

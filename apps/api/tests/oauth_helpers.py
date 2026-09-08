@@ -114,7 +114,10 @@ def complete_authorization(
 
     Drives, on `client`, exactly the sequence a real MCP client + admin browser would:
 
-    1. `POST /oauth/register` with `redirect_uris=[_REDIRECT_URI]` -> a fresh `client_id`.
+    1. `POST /oauth/register` with `redirect_uris=[_REDIRECT_URI]` and `client_name="Claude"`
+       (mcp-oauth plan, task 08: matches DESIGN.md's own end-to-end flow narrative, "Claude ->
+       POST /register (DCR)" — `tests/test_oauth_revoke_admin.py::test_admin_list_shape` asserts
+       the admin "Connected apps" list surfaces this real registered name) -> a fresh `client_id`.
     2. `GET /oauth/authorize` with a full valid RFC 7636 request (the well-known Appendix B
        vector, `state="xyz"`, `resource=_RESOURCE`) -> asserts 303 (the pending-authorization
        cookie lands in `client`'s jar — `TestClient` persists `Set-Cookie` across requests on the
@@ -144,7 +147,9 @@ def complete_authorization(
             reach the expected 303/200/302 status at each step — surfaces exactly where the flow
             broke, the same fail-fast contract `login_as` itself gives its callers.
     """
-    register_response = client.post(_REGISTER_PATH, json={"redirect_uris": [_REDIRECT_URI]})
+    register_response = client.post(
+        _REGISTER_PATH, json={"redirect_uris": [_REDIRECT_URI], "client_name": "Claude"}
+    )
     assert register_response.status_code == 201, register_response.text
     client_id: str = register_response.json()["client_id"]
 

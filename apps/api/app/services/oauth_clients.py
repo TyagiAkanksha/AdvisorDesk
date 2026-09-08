@@ -26,11 +26,12 @@ CONVENTIONS.md §3: every function here is session-first and only ever `flush()`
 from __future__ import annotations
 
 import secrets
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any, cast
 from urllib.parse import urlsplit
 
-from sqlalchemy import delete, exists, func, select
+from sqlalchemy import case, delete, exists, func, or_, select
 from sqlalchemy.engine import CursorResult
 from sqlalchemy.orm import Session
 
@@ -257,3 +258,187 @@ def prune_stale_clients(session: Session, *, now: datetime) -> int:
     # returns at runtime) so mypy strict sees `.rowcount` as the `int` it really is.
     result = cast("CursorResult[Any]", session.execute(stmt))
     return result.rowcount
+
+
+@dataclass(frozen=True)
+class ConnectedAppRow:
+    """One `OAuthClient`'s row on the admin "Connected apps" page (mcp-oauth plan, task 08;
+    docs/plans/mcp-oauth/task-08-revoke-admin-api.md; the frozen counterpart of
+    `app.models.schemas.oauth.ConnectedApp`, which maps directly from this via
+    `ConfigDict(from_attributes=True)`).
+
+    Every field here is computed by `list_connected_apps` below, never queried piecemeal per
+    client — see that function's own docstring for the exact query shape.
+
+    Attributes:
+        client_id: the `OAuthClient.client_id` this row summarizes.
+        client_name: the client's registered display name.
+        redirect_uris: the client's registered redirect URIs.
+        created_at: when the client was registered.
+        consent_granted_at: `OAuthConsent.created_at` of the client's currently-active
+            (`revoked_at IS NULL`) consent row, or `None` if no user has ever granted it consent.
+            Controller ruling (task-08 dispatch; the brief's own comment here cites a nonexistent
+            `OAuthConsent.updated_at` column — that column does not exist): this is the FIRST
+            grant's timestamp — a later re-grant after a revoke does not move it, since a fresh
+            `OAuthConsent` row's own `created_at` becomes the new active row's `created_at`, not a
+            retroactively-updated older one.
+        active_access_tokens: live `ApiToken` rows for this client — `expires_at IS NULL OR
+            expires_at > now` (task-07 review M-6 carry-over: refresh rotation hard-deletes the
+            old `ApiToken` row, so this is a true LIVE count, never a historical one).
+        active_refresh_tokens: live `OAuthRefreshToken` rows for this client — `revoked_at IS NULL
+            AND expires_at > now`.
+        last_used_at: `max(ApiToken.last_used_at)` over every `ApiToken` row this client has ever
+            owned (not filtered to only-active rows) — `None` if the client owns no `ApiToken` row,
+            or none of them has ever been used.
+        latest_expires_at: `max(OAuthRefreshToken.expires_at)` over this client's ACTIVE refresh
+            rows only (the same `revoked_at IS NULL AND expires_at > now` predicate as
+            `active_refresh_tokens`) — `None` once no refresh row is active, even if a revoked or
+            expired one still exists.
+    """
+
+    client_id: str
+    client_name: str
+    redirect_uris: list[str]
+    created_at: datetime
+    consent_granted_at: datetime | None
+    active_access_tokens: int
+    active_refresh_tokens: int
+    last_used_at: datetime | None
+    latest_expires_at: datetime | None
+
+
+def list_connected_apps(session: Session, *, now: datetime) -> list[ConnectedAppRow]:
+    """Return every registered `OAuthClient`, newest-first, with its live-token summary.
+
+    docs/plans/mcp-oauth/task-08-revoke-admin-api.md; task brief acceptance criterion ("the list
+    query is not N+1"): this is exactly ONE SQL statement — three grouped aggregate subqueries
+    (one over `api_tokens`, one over `oauth_refresh_tokens`, one over `oauth_consents`, each
+    `GROUP BY client_id`), LEFT OUTER JOINed onto `oauth_clients` and ordered once. There is no
+    per-client query in a loop, so this function's cost is O(1) round trips regardless of how many
+    clients or tokens exist.
+
+    - The `api_tokens` aggregate computes `active_access_tokens` (a conditional `COUNT`: only rows
+      with `expires_at IS NULL OR expires_at > now` count) and `last_used_at` (an unconditional
+      `MAX` over every row for that client) in the SAME grouped subquery — one pass over the
+      table, two aggregates.
+    - The `oauth_refresh_tokens` aggregate computes `active_refresh_tokens` and
+      `latest_expires_at` the same way: both conditioned on `revoked_at IS NULL AND expires_at >
+      now`, `latest_expires_at`'s `MAX` returning NULL for a client with no currently-active row
+      (a `CASE` inside `MAX`, not a `WHERE`, since a client with zero active rows must still
+      appear via the outer join — a `WHERE` would filter the whole group out of this subquery
+      instead of just zeroing its aggregates).
+    - The `oauth_consents` aggregate is `MAX(created_at)` filtered to `revoked_at IS NULL` (there
+      is at most one active row per `(user, client)` — the table's own unique constraint — but
+      several distinct users may each hold an active consent for the same client, so `MAX` over
+      however many active rows exist is the "first still-active grant" this field means, per
+      `ConnectedAppRow.consent_granted_at`'s own docstring).
+
+    A client with zero tokens/consents ever (a fresh `/register` with no authorization) still
+    appears, via the LEFT OUTER JOIN: every aggregate subquery's columns come back NULL for it,
+    turned into `0` for the two counts (`coalesce`) and left `None` for the two timestamps (no
+    coalesce needed — `None` already IS this field's "never happened" value).
+
+    Args:
+        session: the caller's `Session`. Read-only — never flushes or commits.
+        now: the reference "current time" for both "active" predicates (CONVENTIONS.md §10's
+            injectable-clock seam).
+
+    Returns:
+        One `ConnectedAppRow` per `oauth_clients` row, ordered by `created_at` DESC (newest
+        registration first).
+    """
+    access_active = or_(ApiToken.expires_at.is_(None), ApiToken.expires_at > now)
+    access_stats = (
+        select(
+            ApiToken.client_id.label("client_id"),
+            func.count(case((access_active, 1))).label("active_access_tokens"),
+            func.max(ApiToken.last_used_at).label("last_used_at"),
+        )
+        .group_by(ApiToken.client_id)
+        .subquery()
+    )
+
+    refresh_active = (OAuthRefreshToken.revoked_at.is_(None)) & (OAuthRefreshToken.expires_at > now)
+    refresh_stats = (
+        select(
+            OAuthRefreshToken.client_id.label("client_id"),
+            func.count(case((refresh_active, 1))).label("active_refresh_tokens"),
+            func.max(case((refresh_active, OAuthRefreshToken.expires_at))).label(
+                "latest_expires_at"
+            ),
+        )
+        .group_by(OAuthRefreshToken.client_id)
+        .subquery()
+    )
+
+    consent_stats = (
+        select(
+            OAuthConsent.client_id.label("client_id"),
+            func.max(OAuthConsent.created_at).label("consent_granted_at"),
+        )
+        .where(OAuthConsent.revoked_at.is_(None))
+        .group_by(OAuthConsent.client_id)
+        .subquery()
+    )
+
+    stmt = (
+        select(
+            OAuthClient.client_id,
+            OAuthClient.client_name,
+            OAuthClient.redirect_uris,
+            OAuthClient.created_at,
+            consent_stats.c.consent_granted_at,
+            func.coalesce(access_stats.c.active_access_tokens, 0).label("active_access_tokens"),
+            func.coalesce(refresh_stats.c.active_refresh_tokens, 0).label("active_refresh_tokens"),
+            access_stats.c.last_used_at,
+            refresh_stats.c.latest_expires_at,
+        )
+        .select_from(OAuthClient)
+        .outerjoin(access_stats, access_stats.c.client_id == OAuthClient.client_id)
+        .outerjoin(refresh_stats, refresh_stats.c.client_id == OAuthClient.client_id)
+        .outerjoin(consent_stats, consent_stats.c.client_id == OAuthClient.client_id)
+        .order_by(OAuthClient.created_at.desc())
+    )
+
+    rows = session.execute(stmt).all()
+    return [
+        ConnectedAppRow(
+            client_id=row.client_id,
+            client_name=row.client_name,
+            redirect_uris=list(row.redirect_uris),
+            created_at=row.created_at,
+            consent_granted_at=row.consent_granted_at,
+            active_access_tokens=row.active_access_tokens,
+            active_refresh_tokens=row.active_refresh_tokens,
+            last_used_at=row.last_used_at,
+            latest_expires_at=row.latest_expires_at,
+        )
+        for row in rows
+    ]
+
+
+def delete_client(session: Session, client_id: str) -> bool:
+    """Delete one `OAuthClient` outright — the admin "Disconnect" action (mcp-oauth plan, task 08).
+
+    `session.delete(client)` on a LOADED row (from `get_client`, never `session.expunge`d) issues
+    a real DB-level `DELETE`, which every dependent table's `ondelete="CASCADE"` FK
+    (`oauth_authorization_codes.client_id`, `oauth_refresh_tokens.client_id`,
+    `oauth_consents.client_id`, `api_tokens.client_id` — `app.models.oauth`'s own module
+    docstring) removes along with it in the same statement, at the database level — not an ORM
+    relationship cascade (none is configured on `OAuthClient`), so this works regardless of
+    whether any dependent row happens to be loaded into this `session`.
+
+    Args:
+        session: the caller's `Session`. Flushed (never committed) — CONVENTIONS.md §3.
+        client_id: the `OAuthClient.client_id` to delete.
+
+    Returns:
+        `True` if a client was found and deleted; `False` if `client_id` names no registered
+        client (the caller — the admin route — raises `NotFoundError` in that case).
+    """
+    client = get_client(session, client_id)
+    if client is None:
+        return False
+    session.delete(client)
+    session.flush()
+    return True

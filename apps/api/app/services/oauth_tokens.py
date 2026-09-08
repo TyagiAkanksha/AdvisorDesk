@@ -362,3 +362,55 @@ def revoke_family(session: Session, family_id: uuid.UUID, now: datetime) -> int:
             session.execute(delete(ApiToken).where(ApiToken.id == row.access_token_id))
     session.flush()
     return len(rows)
+
+
+def revoke_token(session: Session, *, raw_token: str, client_id: str, now: datetime) -> None:
+    """Revoke one caller-presented token (RFC 7009 §2.1 revocation request).
+
+    docs/plans/mcp-oauth/task-08-revoke-admin-api.md: the route this backs (`POST /oauth/revoke`)
+    always answers 200 regardless of what this function does — RFC 7009 §2.2 "the authorization
+    server responds with HTTP status code 200 ... The client MUST NOT rely on this behavior [to
+    infer whether the token exists]." This function embodies that: every branch below is a no-op
+    or a real revocation, and NONE of them raises — an unknown token, an already-revoked token, or
+    a token belonging to a DIFFERENT client than the one presented here all fall through silently.
+
+    Tries `raw_token` as a refresh token first, then as an access token — RFC 7009 doesn't require
+    trying both (the caller's `token_type_hint` is a hint, not a guarantee), and both lookups are
+    single indexed-hash equality queries, cheap enough to always run rather than branch on the
+    hint (the route accepts `token_type_hint` for RFC-shape compliance but never reads it).
+
+    A refresh token match kills its whole rotation family via `revoke_family` (this module,
+    above) — the same "kill the grant, not just one token" lever `rotate_refresh_token`'s reuse
+    detection already uses — so revoking a refresh token also takes down every access token it, or
+    any of its rotated descendants, ever minted. An access token match deletes only that one
+    `ApiToken` row — revoking one still-live access token must never touch the refresh token that
+    can mint a replacement.
+
+    Cross-client isolation (task brief acceptance: "`revoke_token` must never revoke across
+    clients"): a match is only acted on when its own `client_id` equals the `client_id` presented
+    to this call — a token that resolves to a DIFFERENT client is treated exactly like an unknown
+    token (silent no-op), never revoked. Never logs `raw_token` or its hash, in either branch.
+
+    Args:
+        session: the caller's `Session`. Flushed (never committed) — CONVENTIONS.md §3.
+        raw_token: the token value as presented at `/oauth/revoke` — never logged.
+        client_id: the `client_id` presented alongside `raw_token` — already verified by the
+            route to name a registered `OAuthClient` before this function is ever called.
+        now: the timestamp forwarded to `revoke_family` for the refresh-token branch.
+    """
+    hashed = hash_token(raw_token)
+
+    refresh = session.execute(
+        select(OAuthRefreshToken).where(OAuthRefreshToken.token_hash == hashed)
+    ).scalar_one_or_none()
+    if refresh is not None:
+        if refresh.client_id == client_id:
+            revoke_family(session, refresh.family_id, now)
+        return
+
+    access = session.execute(
+        select(ApiToken).where(ApiToken.token_hash == hashed)
+    ).scalar_one_or_none()
+    if access is not None and access.client_id == client_id:
+        session.delete(access)
+        session.flush()

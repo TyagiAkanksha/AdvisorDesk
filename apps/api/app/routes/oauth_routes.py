@@ -2,7 +2,11 @@
 `GET /oauth/authorize` + `GET /oauth/authorize/continue` (mcp-oauth plan, task 05; RFC 6749 §4.1,
 RFC 7636 PKCE); `POST /oauth/token` (mcp-oauth plan, task 07; RFC 6749 §4.1.3/§4.1.4 code grant,
 §6 refresh grant); the consent screen + `POST /oauth/authorize/decision` (mcp-oauth plan, task 06;
-docs/plans/mcp-oauth/task-06-consent-screen.md).
+docs/plans/mcp-oauth/task-06-consent-screen.md); `POST /oauth/revoke` (mcp-oauth plan, task 08;
+RFC 7009 token revocation; docs/plans/mcp-oauth/task-08-revoke-admin-api.md). The sibling admin
+"Connected apps" router (`GET`/`DELETE /oauth/clients...`) lives in `app.routes.oauth_admin_routes`
+instead — those two are cookie-gated (`require_admin`), not `/oauth/*`'s own bare-OAuth-error/
+rate-limited shape, so they get their own router rather than living here.
 
 docs/plans/mcp-oauth/DESIGN.md §"End-to-end flow" step 4: "Claude -> POST /register (DCR) with
 its redirect_uris + name -> { client_id, ... } (public client, no secret)". CONVENTIONS.md §4:
@@ -70,7 +74,7 @@ from app.services.oauth_clients import (
 )
 from app.services.oauth_codes import issue_authorization_code
 from app.services.oauth_consents import find_active_consent, record_consent
-from app.services.oauth_tokens import redeem_authorization_code, rotate_refresh_token
+from app.services.oauth_tokens import redeem_authorization_code, revoke_token, rotate_refresh_token
 
 router = APIRouter(prefix="/oauth", tags=["oauth"])
 
@@ -656,5 +660,82 @@ def oauth_token(
     )
     return JSONResponse(
         body.model_dump(),
+        headers={"Cache-Control": "no-store", "Pragma": "no-cache"},
+    )
+
+
+@router.post(
+    "/revoke",
+    operation_id="oauth_revoke",
+    status_code=200,
+    responses={
+        400: {
+            "description": "OAuth error — token is required.",
+            "content": {
+                "application/json": {
+                    "example": {
+                        "error": "invalid_request",
+                        "error_description": "token is required.",
+                    }
+                }
+            },
+        },
+        401: {
+            "description": "Unknown client_id.",
+            "content": {
+                "application/json": {
+                    "example": {
+                        "error": "invalid_client",
+                        "error_description": "Unknown client.",
+                    }
+                }
+            },
+        },
+        422: {"model": ErrorEnvelope},
+        429: {"model": ErrorEnvelope},
+    },
+)
+def oauth_revoke(
+    request: Request,
+    token: Annotated[str | None, Form()] = None,
+    token_type_hint: Annotated[str | None, Form()] = None,
+    client_id: Annotated[str | None, Form()] = None,
+    session: Session = Depends(get_session),
+    limiter: RateLimiter = Depends(get_rate_limiter),
+) -> Response:
+    """Revoke one refresh or access token (RFC 7009 §2.1 token revocation request).
+
+    docs/plans/mcp-oauth/task-08-revoke-admin-api.md: validation order mirrors `/token`'s own
+    pinned pattern — rate limit -> `token` presence -> `client_id` presence AND that it names a
+    REGISTERED client (the one 401 this endpoint ever returns; every other rejection is 400).
+    Past that point `revoke_token` (`app.services.oauth_tokens`) does the actual work and can
+    never fail: RFC 7009 §2.2 requires this endpoint to answer 200 whether or not `token` ever
+    existed, belonged to this client, or was already revoked — the response carries no signal
+    either way. `token_type_hint` is accepted (so a spec-compliant client's request never 422s
+    for including it) but never read — `revoke_token` tries both a refresh-token and an
+    access-token lookup unconditionally, which is cheap enough that the hint buys nothing.
+
+    Always answers 200 with an empty body and `Cache-Control: no-store`/`Pragma: no-cache` (RFC
+    7009 §2.2) — a plain `Response` (mirrors `oauth_token`'s own `JSONResponse` reasoning) so
+    those headers are set directly on every reachable return path, success included.
+
+    Raises:
+        OAuthError: `"invalid_request"`, "token is required." (400) if `token` is absent;
+            `"invalid_client"`, "Unknown client." (401) if `client_id` is absent or unregistered.
+            Never raised for an unknown/foreign/already-revoked `token` — see above.
+    """
+    client_ip = request.client.host if request.client is not None else "unknown"
+    limiter.check_oauth_request(client_ip)
+
+    if token is None:
+        raise OAuthError("invalid_request", "token is required.")
+
+    if client_id is None or get_client(session, client_id) is None:
+        raise OAuthError("invalid_client", "Unknown client.", status_code=401)
+
+    revoke_token(session, raw_token=token, client_id=client_id, now=datetime.now(UTC))
+
+    return Response(
+        status_code=200,
         headers={"Cache-Control": "no-store", "Pragma": "no-cache"},
     )

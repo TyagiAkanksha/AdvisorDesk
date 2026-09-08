@@ -2,11 +2,14 @@
 (mcp-oauth plan, task 04; docs/plans/mcp-oauth/DESIGN.md §"End-to-end flow" step 4: "Claude ->
 POST /register (DCR) with its redirect_uris + name -> { client_id, ... } (public client, no
 secret)"). `TokenResponse` (mcp-oauth plan, task 07) is `POST /api/v1/oauth/token`'s wire shape
-(RFC 6749 §4.1.4/§5.1 access token response).
+(RFC 6749 §4.1.4/§5.1 access token response). `ConnectedApp`/`ConnectedAppsResponse` (mcp-oauth
+plan, task 08; docs/plans/mcp-oauth/task-08-revoke-admin-api.md) are `GET /api/v1/oauth/clients`'s
+wire shape — the admin "Connected apps" page's list of registered clients.
 """
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -68,3 +71,30 @@ class TokenResponse(BaseModel):
     expires_in: int
     refresh_token: str
     scope: str
+
+
+class ConnectedApp(BaseModel):
+    """`GET /api/v1/oauth/clients`'s per-client wire shape (mcp-oauth plan, task 08).
+
+    `model_config = ConfigDict(from_attributes=True)`: maps directly from an
+    `app.services.oauth_clients.ConnectedAppRow` (a frozen dataclass with the exact same field
+    names) — field-for-field, no manual construction call site needed.
+    """
+
+    model_config = ConfigDict(from_attributes=True)
+
+    client_id: str
+    client_name: str
+    redirect_uris: list[str]
+    created_at: datetime
+    consent_granted_at: datetime | None
+    active_access_tokens: int
+    active_refresh_tokens: int
+    last_used_at: datetime | None
+    latest_expires_at: datetime | None
+
+
+class ConnectedAppsResponse(BaseModel):
+    """`GET /api/v1/oauth/clients`'s top-level wire shape — one `items` list, task-08 brief."""
+
+    items: list[ConnectedApp]

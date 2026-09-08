@@ -14,15 +14,26 @@ from here automatically — nothing reads this directory at deploy time.
    `/opt/advisordesk/` and re-run/restart whatever the change requires
    (`docker compose up -d` for compose changes, `docker compose restart caddy` for `Caddyfile`
    changes).
-   - For a release that ships a new Alembic migration, run
-     `docker compose exec api uv run alembic upgrade head` **BEFORE** `docker compose up -d` —
-     migrations are **not** run automatically by the api container's start command (`database.md`'s
-     own top-of-file note: "Do this BEFORE bringing the API up"), and for an additive, nullable
-     migration like this one the currently-deployed (old) image runs against the upgraded schema
-     unaffected, so migrating first avoids a window where the NEW image is already live against
-     the OLD schema and 500s on every route that touches the missing tables/columns — including,
-     for this specific migration, the existing CLI-minted MCP bearer-token path (see the "MCP
-     OAuth Connect" section below).
+   - For a release that ships a new Alembic migration: bumping the `api` image tag in
+     `docker-compose.yml` (the compose-file edit — see "Image tags" below) is what selects the new
+     image; `docker compose up -d` only recreates the container from whatever tag is already in
+     the file. `docker compose exec api …` therefore runs INSIDE the still-running OLD container —
+     its image has no new migration yet, so `alembic upgrade head` there resolves to the schema
+     already applied and silently no-ops. Run the migration from the NEW image instead, in a
+     one-off container that doesn't touch the running service, **before** `docker compose up -d`:
+     `docker compose pull api && docker compose run --rm api uv run alembic upgrade head` (the
+     form `infra/Dockerfile.api:8` documents; the prod `api` service has no `depends_on`, so
+     nothing else starts). A **fresh** deploy or upgrade to this release must run the same
+     `pull`/`run --rm` command — there is no running `api` container to `exec` into yet, so this
+     form covers both cases (`exec` would either no-op against the old image or error outright
+     against no container). Migrations are **not** run automatically by the api container's start
+     command (`database.md`'s own top-of-file note: "Do this BEFORE bringing the API up") — the
+     equivalent alternative, from a local checkout with network access to the DB, is
+     `database.md:38-41`'s form (`cd apps/api && DATABASE_URL=… uv run alembic upgrade head`),
+     which needs no running container at all. Either way, migrating first avoids a window where a
+     NEW image is live against the OLD schema and 500s on every route that touches the missing
+     tables/columns — including, for this specific migration, the existing CLI-minted MCP
+     bearer-token path (see the "MCP OAuth Connect" section below).
 3. Re-run the relevant checks in `../VERIFY.md` against the live deployment.
 4. If applying the change on the box surfaced any drift from what's committed here (a manual
    fix made directly on the box, a value that had to differ), commit that drift back in the same
@@ -101,10 +112,15 @@ CLI-mint-and-paste flow as the primary path.
    requirement.
 4. **Migration:** the four new OAuth tables (Alembic migration `0007`) are **not** created by any
    automatic step at container start — see the "Change procedure" step 2 sub-bullet above, which
-   pins the order: run `docker compose exec api uv run alembic upgrade head` **BEFORE**
-   `docker compose up -d` bumps the image tags for this release, not after. Getting the order
-   backwards is not just an `/oauth/*` or `/.well-known/*` problem — the NEW image's
-   `resolve_bearer_token` (`app/auth/tokens.py`) selects `api_tokens.client_id`, `.resource`, and
-   `.last_used_at`, columns migration `0007` adds, so **every** request that resolves a bearer
-   token 500s against the missing columns, including the pre-existing, currently-working
-   CLI-minted connector path (`scripts/mint_mcp_token.py`) — not only the new OAuth surface.
+   pins both the order and the command: bump the `api` tag in `docker-compose.yml` first (the
+   compose-file edit is what selects the new image — `docker compose up -d` merely recreates the
+   container from whatever tag is already in the file), then run
+   `docker compose pull api && docker compose run --rm api uv run alembic upgrade head` — a
+   one-off container from the NEW image, **before** `docker compose up -d` — never
+   `docker compose exec api …`, which runs inside the still-running OLD container and silently
+   no-ops (its image has no `0007` to resolve against). Getting the order backwards is not just an
+   `/oauth/*` or `/.well-known/*` problem — the NEW image's `resolve_bearer_token`
+   (`app/auth/tokens.py`) selects `api_tokens.client_id`, `.resource`, and `.last_used_at`, columns
+   migration `0007` adds, so **every** request that resolves a bearer token 500s against the
+   missing columns, including the pre-existing, currently-working CLI-minted connector path
+   (`scripts/mint_mcp_token.py`) — not only the new OAuth surface.

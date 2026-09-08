@@ -236,23 +236,31 @@ any agent:
 - **Merge** — `feat/mcp-oauth` has not been merged to `main`.
 - **Push** — no commit on this branch was pushed to any remote.
 - **Deploy** — no image build/push/redeploy was performed. Deploying this feature requires, in
-  THIS order (final fix round 1, F-2/F-24 — migrate-before-up, not up-before-migrate; see
-  `infra/deploy/prod/README.md`'s "Change procedure" step 2 sub-bullet and
-  `infra/deploy/database.md:10-17`'s own "Do this BEFORE bringing the API up"):
+  THIS order (final fix round 2 correction — `docker compose exec` runs inside the OLD, already-
+  running container and silently no-ops there, so the migration must come from the NEW image via
+  a one-off `run --rm`, not `exec`; see `infra/deploy/prod/README.md`'s "Change procedure" step 2
+  sub-bullet and `infra/deploy/database.md:10-17`'s own "Do this BEFORE bringing the API up"):
   1. **Merge + push** — merge `feat/mcp-oauth` to `main` and push.
   2. **Build + push the three images** at the merged SHA (`../push_ecr.sh`) and **bump the
      `api`/`admin`/`client` tags** in `infra/deploy/prod/docker-compose.yml` (both the box's copy
-     and this committed copy — `prod/README.md`'s "Image tags" section) to that SHA. Update the
-     box-local `.env`/compose rendering so `OAUTH_ISSUER_URL` (now pinned in
-     `infra/deploy/prod/docker-compose.yml`) actually reaches the `api` container.
-  3. **`docker compose exec api uv run alembic upgrade head` FIRST** — migrations are **not** run
-     automatically by the api container's start command (`infra/deploy/database.md:41`). Migration
-     `0007` is additive and nullable, so the currently-deployed (pre-bump) image runs against the
-     upgraded schema unaffected — migrating before the tag bump means there is no window where a
-     NEW image is live against the OLD schema, which for THIS migration would 500 not only
-     `/oauth/*`/`/.well-known/*` but every request that resolves a bearer token (including the
-     pre-existing CLI-minted connector path — `resolve_bearer_token` selects the three columns
-     `0007` adds).
+     and this committed copy — `prod/README.md`'s "Image tags" section) to that SHA — this is the
+     step that actually selects the new image; `docker compose up -d` later only recreates the
+     container from whatever tag is already in the file. Update the box-local `.env`/compose
+     rendering so `OAUTH_ISSUER_URL` (now pinned in `infra/deploy/prod/docker-compose.yml`)
+     actually reaches the `api` container.
+  3. **`docker compose pull api && docker compose run --rm api uv run alembic upgrade head`** — a
+     one-off container built from the NEW (just-bumped) image, not `docker compose exec` (which
+     would run inside the OLD, still-running container, whose image has no `0007` and would
+     silently no-op instead of migrating). Migrations are **not** run automatically by the api
+     container's start command (`infra/deploy/database.md:41`); the prod `api` service has no
+     `depends_on`, so `run --rm` starts nothing else. Equivalent alternative from a local checkout
+     with network access to the DB: `infra/deploy/database.md:38-41`'s
+     `cd apps/api && DATABASE_URL=… uv run alembic upgrade head`, no running container needed at
+     all. Migration `0007` is additive and nullable, so migrating before `up -d` means there is no
+     window where a NEW image is live against the OLD schema, which for THIS migration would 500
+     not only `/oauth/*`/`/.well-known/*` but every request that resolves a bearer token
+     (including the pre-existing CLI-minted connector path — `resolve_bearer_token` selects the
+     three columns `0007` adds).
   4. **`docker compose up -d`** (per `infra/deploy/prod/README.md`'s "Change procedure") — only now,
      after the schema is already at `0007`.
   5. Re-run `infra/deploy/VERIFY.md` §5a's three curl checks against the live deployment (the

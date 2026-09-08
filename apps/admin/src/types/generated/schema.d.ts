@@ -506,7 +506,10 @@ export interface paths {
          *         OAuthError: no valid pending-authorization cookie (`"invalid_request"`, 400); the
          *             submitted `nonce` is missing or does not match the pending request's own
          *             (`"invalid_request"`, "Consent form token mismatch.", 400); `decision` is neither
-         *             `"approve"` nor `"deny"` (`"invalid_request"`, 400).
+         *             `"approve"` nor `"deny"` (`"invalid_request"`, 400); on approve, the pending
+         *             authorization's `client_id` no longer names a registered client — deleted between
+         *             rendering the consent page and this POST (`"invalid_client"`, "Unknown client.", 400;
+         *             final fix round 1, finding F-12 — mirrors `oauth_authorize_continue`'s own check).
          *         OAuthRedirectError: the resolved admin's email is not in `settings.admin_email_set`
          *             (`"access_denied"`) — redirects to the pending request's own `redirect_uri`.
          *         AuthRequiredError: no valid admin session (`require_admin`) — 401 §9 `auth_required`
@@ -2023,7 +2026,7 @@ export interface operations {
                 };
                 content?: never;
             };
-            /** @description OAuth error — no pending-authorization cookie, a missing/mismatched consent form nonce, or a decision value other than approve/deny. */
+            /** @description OAuth error — no pending-authorization cookie, a missing/mismatched consent form nonce, a decision value other than approve/deny, or (approve only) the pending authorization's client was deleted before the decision was submitted. */
             400: {
                 headers: {
                     [name: string]: unknown;

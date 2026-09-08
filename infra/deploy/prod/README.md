@@ -14,11 +14,15 @@ from here automatically — nothing reads this directory at deploy time.
    `/opt/advisordesk/` and re-run/restart whatever the change requires
    (`docker compose up -d` for compose changes, `docker compose restart caddy` for `Caddyfile`
    changes).
-   - For a release that ships a new Alembic migration, also run
-     `docker compose exec api uv run alembic upgrade head` — migrations are **not** run
-     automatically by the api container's start command (`database.md`'s own top-of-file note),
-     so `docker compose up -d` alone leaves new tables/columns missing and the API will 500 on
-     any route that touches them.
+   - For a release that ships a new Alembic migration, run
+     `docker compose exec api uv run alembic upgrade head` **BEFORE** `docker compose up -d` —
+     migrations are **not** run automatically by the api container's start command (`database.md`'s
+     own top-of-file note: "Do this BEFORE bringing the API up"), and for an additive, nullable
+     migration like this one the currently-deployed (old) image runs against the upgraded schema
+     unaffected, so migrating first avoids a window where the NEW image is already live against
+     the OLD schema and 500s on every route that touches the missing tables/columns — including,
+     for this specific migration, the existing CLI-minted MCP bearer-token path (see the "MCP
+     OAuth Connect" section below).
 3. Re-run the relevant checks in `../VERIFY.md` against the live deployment.
 4. If applying the change on the box surfaced any drift from what's committed here (a manual
    fix made directly on the box, a value that had to differ), commit that drift back in the same
@@ -85,16 +89,22 @@ CLI-mint-and-paste flow as the primary path.
    pasted into the connector config for this path.
 2. **Admin app → Connected apps** lists every registered client (name, admin, issued, last used,
    live token counts) with a **Revoke** action that deletes the client and cascades every
-   dependent authorization code/refresh/access token row. Note: the table's "Approved" column is
-   `consent_granted_at` — the FIRST time an admin approved that client's consent — not a
-   last-approved timestamp; revoking a client and re-approving it later revives the same consent
-   record, so "Approved" keeps showing the original grant date, not the date of the re-approval.
+   dependent authorization code/refresh/access token row. Note: "Approved" is `consent_granted_at`
+   — the first time an admin approved that client. Revoking deletes the client and cascades every
+   dependent row (consent included), so a later reconnect arrives as a **new** client with a new
+   `client_id` and a new Approved date. `POST /oauth/revoke` (RFC 7009) is different: it kills
+   tokens but leaves the consent standing, so that client can re-authorize without a new consent
+   prompt.
 3. **CLI mint fallback:** for ops/CI callers that can't drive an OAuth redirect, the pre-existing
    `scripts/mint_mcp_token.py --mint` CLI still works exactly as before — see
    `env-checklist.md`'s "MCP bearer-token note" for the exact command and its `OAUTH_ISSUER_URL`
    requirement.
 4. **Migration:** the four new OAuth tables (Alembic migration `0007`) are **not** created by any
-   automatic step at container start — see the "Change procedure" step 2 sub-bullet above. A fresh
-   deploy or upgrade to this release must run
-   `docker compose exec api uv run alembic upgrade head` before `/oauth/*` or `/.well-known/*`
-   traffic is sent to the box, or every OAuth route 500s against the missing tables.
+   automatic step at container start — see the "Change procedure" step 2 sub-bullet above, which
+   pins the order: run `docker compose exec api uv run alembic upgrade head` **BEFORE**
+   `docker compose up -d` bumps the image tags for this release, not after. Getting the order
+   backwards is not just an `/oauth/*` or `/.well-known/*` problem — the NEW image's
+   `resolve_bearer_token` (`app/auth/tokens.py`) selects `api_tokens.client_id`, `.resource`, and
+   `.last_used_at`, columns migration `0007` adds, so **every** request that resolves a bearer
+   token 500s against the missing columns, including the pre-existing, currently-working
+   CLI-minted connector path (`scripts/mint_mcp_token.py`) — not only the new OAuth surface.

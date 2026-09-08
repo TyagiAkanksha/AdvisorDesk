@@ -31,6 +31,12 @@ MCP Authorization spec (rev 2025-06-18) — our server plays **both** OAuth role
     the issued token's audience to it.
   - All endpoints HTTPS; redirect URIs `localhost` or HTTPS only.
 
+**Implemented carve-outs (mcp-oauth, ruled at plan time):** with a single `mcp` scope there is no
+insufficient-scope state — a token either resolves to an allowlisted admin or it does not — so no
+403 path exists; and a malformed `Authorization` header stays **401** (`reason=malformed`) rather
+than 400, preserving the byte-identical 401 envelope that keeps the rejection reason unobservable
+from outside.
+
 **Canonical resource URI** (the `resource` value + audience): `https://api.advisordesk.tyagiakanksha.com/api/v1/mcp`
 (most-specific, no trailing slash).
 
@@ -99,7 +105,10 @@ endpoints (list + revoke → `/revoke`). Revoking calls `revoke_family` (kills t
 family and its current access token) or deletes the client outright (`CASCADE`s every dependent
 row) — **not** an epoch bump: `/auth/logout`'s epoch bump only invalidates the current access
 token, and the next refresh silently re-mints a new one under the new epoch, so web logout is not
-connected-app revocation (task-07 review, finding I-1).
+connected-app revocation (task-07 review, finding I-1). `POST /oauth/revoke` (RFC 7009) kills
+tokens but does not retract consent — `OAuthConsent.revoked_at` has no writer yet — so that
+client can re-authorize without a new prompt; only the admin's Revoke (client `DELETE`, cascading
+the consent row) fully de-authorizes.
 
 ## Security / threat model (all MUST unless noted)
 

@@ -10,9 +10,18 @@ Base commit: `14b5af9` (mcp-oauth task 09 status built) plus this task's own wor
 (config/doc edits + the e2e test file), committed together as this record's own commit. Run date:
 2026-09-08.
 
+**Final review fix wave (this section, 2026-09-08):** the whole-branch Opus review
+(`.superpowers/sdd/mcp-oauth/task-10-review.md`, verdict "Ready to merge — With fixes") named one
+fix wave of ten items (six code, four documentation; everything else DEFERRED or DROPPED per the
+review's own triage). All ten landed in two commits on top of task 10's own commit `f365fcf`:
+`70b9691` (code + tests — F-10/P7, P13, F-12, F-14, F-13, F-5) and the doc-only commit this
+record's own update is part of (F-1/A-I1, F-4-doc, F-2+F-24, F-3, this refreshed §1). The counts
+below are the REAL gate output re-run after `70b9691` landed, not carried over from task 10's
+original pass.
+
 ---
 
-## 1. Full gate run (real, this pass — 2026-09-08)
+## 1. Full gate run (real, this pass — 2026-09-08, after the final fix wave's code commit `70b9691`)
 
 ### `apps/api`
 
@@ -49,35 +58,41 @@ nothing imports app.main; only app.main imports app.factory KEPT
 Contracts: 8 kept, 0 broken.
 
 $ uv run pytest -q -p no:cacheprovider --cov=app --cov-fail-under=95
-733 passed, 1 skipped in 197.26s (0:03:17)
-Required test coverage of 95% reached. Total coverage: 96.49%
+738 passed, 1 skipped in 188.30s (0:03:08)
+Required test coverage of 95% reached. Total coverage: 96.50%
 ```
 
 **Result: PASS** (ruff check, ruff format, mypy 0 issues across 82 source files, lint-imports
-8/8 contracts kept, pytest **733 passed / 1 skipped**, coverage **96.49%** — mypy excludes
-`tests/`).
+8/8 contracts kept, pytest **738 passed / 1 skipped** (+5 over task 10's `733`: one new test each
+for P13's revoke-audit line, P13's admin-delete-audit line, F-12's deleted-mid-consent 400,
+F-14's doubled-trailing-slash case, and F-13's control-character/whitespace redirect-URI case;
+F-10/P7 extended an existing assertion rather than adding a new test), coverage **96.50%** — mypy
+excludes `tests/`).
 
 ### Wire gate — OpenAPI/codegen drift
 
 ```
 $ cd apps/api && uv run python scripts/export_openapi.py
-$ cd ../.. && git status --short
- M apps/api/app/mcp/server.py
- M docs/plans/README.md
- M docs/plans/mcp-oauth/00-INDEX.md
- M docs/plans/mcp-oauth/DESIGN.md
- M docs/plans/mcp-oauth/task-10-wiring-e2e.md
- M infra/deploy/VERIFY.md
- M infra/deploy/env-checklist.md
- M infra/deploy/prod/Caddyfile
- M infra/deploy/prod/README.md
- M infra/deploy/prod/docker-compose.yml
-?? apps/api/tests/test_oauth_e2e_flow.py
+$ pnpm -C apps/admin codegen && pnpm -C apps/client codegen
+$ git status --short
+ M apps/admin/src/components/connectedApps/ConnectedAppsScreen/useConnectedApps.ts
+ M apps/api/app/config.py
+ M apps/api/app/routes/oauth_admin_routes.py
+ M apps/api/app/routes/oauth_routes.py
+ M apps/api/app/routes/ratelimit.py
+ M apps/api/app/services/oauth_clients.py
+ M apps/api/tests/test_oauth_consent.py
+ M apps/api/tests/test_oauth_register.py
+ M apps/api/tests/test_oauth_revoke_admin.py
+ M apps/api/tests/test_oauth_settings.py
 ```
 
-**Result: PASS (no drift).** `apps/api/openapi.json` and the two generated `schema.d.ts` files
-do not appear in the status output — regenerating the OpenAPI spec produced no diff, confirming
-no runtime/route code changed in this task (docs + config + one new test file only).
+(Captured right after the fix wave's code edits, before commit `70b9691` — the list is exactly the
+ten files that commit contains.) **Result: PASS (no drift).** `apps/api/openapi.json` and both
+generated `schema.d.ts` files (admin + client) do not appear in the status output — none of the
+six fix-wave code items touch a route signature, request/response schema, or operation id (they
+change response headers, log lines, a validator's normalisation, a guard clause, and dead
+frontend state), so both codegens reproduced byte-identical output.
 
 ### `apps/admin` (via `pnpm gates`)
 
@@ -114,16 +129,20 @@ $ vitest run
 
 ```
 $ pnpm gates:api
-... 251 passed, 483 skipped in 5.82s ...
+... 252 passed, 487 skipped in 5.80s ...
 ```
 
 This is the same `uv run pytest -q` invocation the root `package.json` chains ahead of
 `gates:admin`/`gates:client`; without `TEST_DATABASE_URL` exported in that shell, every
-DB-backed test is skipped (`483 skipped`) and only the non-DB unit tests run (`251 passed`) — the
-chain completing and falling through to `gates:admin`/`gates:client` confirms ruff/mypy/lint-imports
-passed here too, consistent with the explicit-env run above. The authoritative, full-coverage
-pytest run is the one in the `apps/api` section above (733 passed / 1 skipped, 96.49% coverage,
-`TEST_DATABASE_URL` exported explicitly in the same command).
+DB-backed test is skipped. Of the fix wave's 5 new tests, 4 request `tmp_engine`/`db_session`
+(P13's two, F-12's one, F-13's one) and skip here, while F-14's
+`test_issuer_doubled_trailing_slash_stripped` is a pure `Settings()` unit test with no DB fixture
+and runs regardless — accounting for the move from task 10's `483 skipped`/`251 passed` to this
+pass's `487 skipped`/`252 passed` (+4 / +1 = the same 5 new tests). The chain completing and
+falling through to `gates:admin`/`gates:client` confirms ruff/mypy/lint-imports passed here too,
+consistent with the explicit-env run above. The authoritative, full-coverage pytest run is the one
+in the `apps/api` section above (738 passed / 1 skipped, 96.50% coverage, `TEST_DATABASE_URL`
+exported explicitly in the same command).
 
 ### Gate summary
 
@@ -133,8 +152,8 @@ pytest run is the one in the `apps/api` section above (733 passed / 1 skipped, 9
 | `apps/api` ruff format --check | PASS |
 | `apps/api` mypy | PASS (0 issues, 82 source files) |
 | `apps/api` lint-imports | PASS (8/8 contracts kept) |
-| `apps/api` pytest (`--cov=app --cov-fail-under=95`) | PASS (733 passed, 1 skipped, **96.49%** coverage) |
-| OpenAPI/codegen drift (`export_openapi.py` + `git status`) | PASS (no diff) |
+| `apps/api` pytest (`--cov=app --cov-fail-under=95`) | PASS (738 passed, 1 skipped, **96.50%** coverage) |
+| OpenAPI/codegen drift (`export_openapi.py` + both codegens + `git status`) | PASS (no diff) |
 | `apps/admin` lint / type-check / format / test | PASS (38 files / 127 tests) |
 | `apps/client` lint / type-check / format / test | PASS (14 files / 58 tests) |
 
@@ -148,7 +167,7 @@ File: `apps/api/tests/test_oauth_e2e_flow.py`. Test names: `test_full_connect_li
 narrative), `test_openapi_lists_every_oauth_operation`, `test_create_app_without_db_registers_oauth_routes`.
 Written by a separate test-author (`.superpowers/sdd/mcp-oauth/task-10-testauthor-report.md`);
 GREEN on first run against the built t01–t09 branch — the plan's own stated acceptance proof, not
-a defect. Re-verified GREEN in this task's full-suite run above (733 passed includes these 3).
+a defect. Re-verified GREEN in this task's full-suite run above (738 passed includes these 3).
 
 | # | Step | Covered by |
 |---|---|---|
@@ -216,16 +235,26 @@ any agent:
 
 - **Merge** — `feat/mcp-oauth` has not been merged to `main`.
 - **Push** — no commit on this branch was pushed to any remote.
-- **Deploy** — no image build/push/redeploy was performed. Deploying this feature requires, on the
-  EC2 box:
-  1. Pull/rebuild the `api` image at the merged commit.
-  2. Update the box-local `.env`/compose rendering so `OAUTH_ISSUER_URL` (now pinned in
+- **Deploy** — no image build/push/redeploy was performed. Deploying this feature requires, in
+  THIS order (final fix round 1, F-2/F-24 — migrate-before-up, not up-before-migrate; see
+  `infra/deploy/prod/README.md`'s "Change procedure" step 2 sub-bullet and
+  `infra/deploy/database.md:10-17`'s own "Do this BEFORE bringing the API up"):
+  1. **Merge + push** — merge `feat/mcp-oauth` to `main` and push.
+  2. **Build + push the three images** at the merged SHA (`../push_ecr.sh`) and **bump the
+     `api`/`admin`/`client` tags** in `infra/deploy/prod/docker-compose.yml` (both the box's copy
+     and this committed copy — `prod/README.md`'s "Image tags" section) to that SHA. Update the
+     box-local `.env`/compose rendering so `OAUTH_ISSUER_URL` (now pinned in
      `infra/deploy/prod/docker-compose.yml`) actually reaches the `api` container.
-  3. `docker compose up -d` (per `infra/deploy/prod/README.md`'s "Change procedure").
-  4. **`docker compose exec api uv run alembic upgrade head`** — migrations are **not** run
-     automatically by the api container's start command (`infra/deploy/database.md:41`), so step
-     3 alone leaves the four new OAuth tables missing and every `/oauth/*` / `/.well-known/*`
-     route would 500.
+  3. **`docker compose exec api uv run alembic upgrade head` FIRST** — migrations are **not** run
+     automatically by the api container's start command (`infra/deploy/database.md:41`). Migration
+     `0007` is additive and nullable, so the currently-deployed (pre-bump) image runs against the
+     upgraded schema unaffected — migrating before the tag bump means there is no window where a
+     NEW image is live against the OLD schema, which for THIS migration would 500 not only
+     `/oauth/*`/`/.well-known/*` but every request that resolves a bearer token (including the
+     pre-existing CLI-minted connector path — `resolve_bearer_token` selects the three columns
+     `0007` adds).
+  4. **`docker compose up -d`** (per `infra/deploy/prod/README.md`'s "Change procedure") — only now,
+     after the schema is already at `0007`.
   5. Re-run `infra/deploy/VERIFY.md` §5a's three curl checks against the live deployment (the
      `(recorded during deployment)` placeholders in that section are intentionally still empty —
      the feature is not deployed, so no output has been fabricated).

@@ -20,4 +20,8 @@ export interface ButtonProps {
   'aria-expanded'?: boolean;
   'aria-haspopup'?: boolean | 'true' | 'false' | 'menu' | 'listbox' | 'tree' | 'grid' | 'dialog';
   'aria-controls'?: string;
+  // mcp-oauth task-09: same passthrough precedent as the three aria-* props above — the
+  // ConnectedAppsTable's per-row "Revoke" button needs an accessible name distinct from its
+  // visible label ("Revoke <client_name>", docs/plans/mcp-oauth/task-09-admin-connected-apps-ui.md).
+  'aria-label'?: string;
 }

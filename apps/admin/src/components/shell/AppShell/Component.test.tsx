@@ -85,7 +85,7 @@ describe('AppShell', () => {
     expect(await screen.findByText('Dashboard body')).toBeInTheDocument();
   });
 
-  it('shows Dashboard (href /) and Content (href /content) nav links by role and accessible name', async () => {
+  it('shows Dashboard (/), Content (/content) and Connected apps (/connected-apps) nav links by role and accessible name', async () => {
     mockFetch();
 
     renderShell();
@@ -93,6 +93,10 @@ describe('AppShell', () => {
     await screen.findByText('Dashboard body');
     expect(screen.getByRole('link', { name: 'Dashboard' })).toHaveAttribute('href', '/');
     expect(screen.getByRole('link', { name: 'Content' })).toHaveAttribute('href', '/content');
+    expect(screen.getByRole('link', { name: 'Connected apps' })).toHaveAttribute(
+      'href',
+      '/connected-apps',
+    );
   });
 
   it("surfaces the signed-in user's name from the Me query (via the store) in the account menu", async () => {

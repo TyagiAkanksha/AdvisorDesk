@@ -23,6 +23,8 @@ import type { AppShellProps } from './interface';
 const NAV_ITEMS = [
   { label: 'Dashboard', href: '/' },
   { label: 'Content', href: '/content' },
+  // mcp-oauth task-09: the admin "Connected apps" page (docs/plans/mcp-oauth/task-09-admin-connected-apps-ui.md).
+  { label: 'Connected apps', href: '/connected-apps' },
 ];
 
 export default function Component({ children }: AppShellProps) {

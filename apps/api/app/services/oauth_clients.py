@@ -279,9 +279,10 @@ class ConnectedAppRow:
             (`revoked_at IS NULL`) consent row, or `None` if no user has ever granted it consent.
             Controller ruling (task-08 dispatch; the brief's own comment here cites a nonexistent
             `OAuthConsent.updated_at` column — that column does not exist): this is the FIRST
-            grant's timestamp — a later re-grant after a revoke does not move it, since a fresh
-            `OAuthConsent` row's own `created_at` becomes the new active row's `created_at`, not a
-            retroactively-updated older one.
+            grant's timestamp — a later re-grant after a revoke does not move it, since
+            `record_consent` revives the same row rather than inserting a new one
+            (`app.services.oauth_consents.record_consent`), and that row's `created_at` is never
+            updated.
         active_access_tokens: live `ApiToken` rows for this client — `expires_at IS NULL OR
             expires_at > now` (task-07 review M-6 carry-over: refresh rotation hard-deletes the
             old `ApiToken` row, so this is a true LIVE count, never a historical one).
@@ -329,9 +330,8 @@ def list_connected_apps(session: Session, *, now: datetime) -> list[ConnectedApp
       instead of just zeroing its aggregates).
     - The `oauth_consents` aggregate is `MAX(created_at)` filtered to `revoked_at IS NULL` (there
       is at most one active row per `(user, client)` — the table's own unique constraint — but
-      several distinct users may each hold an active consent for the same client, so `MAX` over
-      however many active rows exist is the "first still-active grant" this field means, per
-      `ConnectedAppRow.consent_granted_at`'s own docstring).
+      several distinct users may each hold an active consent for the same client, so this is the
+      most recent still-active grant across all users).
 
     A client with zero tokens/consents ever (a fresh `/register` with no authorization) still
     appears, via the LEFT OUTER JOIN: every aggregate subquery's columns come back NULL for it,

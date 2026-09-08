@@ -229,7 +229,12 @@ def _revoke(
 def test_revoke_refresh_token_kills_family(tmp_engine: Engine, db_session: Session) -> None:
     """Revoking a live refresh token kills its whole rotation family (`revoke_family`): 200, empty
     body, `no-store`/`no-cache`; the refresh row's `revoked_at` is set; the access token it minted
-    401s at MCP afterward. RED today: 404, not 200 (and no `revoked_at`/401 to observe at all)."""
+    401s at MCP afterward. RED today: 404, not 200 (and no `revoked_at`/401 to observe at all).
+
+    Fix round 1 (review M-4): passes `token_type_hint="refresh_token"` so the RFC 7009 field the
+    route declares (accepted, per `revoke_token`'s own docstring, but never read) is actually
+    exercised end to end by at least one call in this file — a spec-compliant client's request is
+    accepted verbatim, same assertions as before this hint was added."""
     app = _build_app(tmp_engine)
     client = TestClient(app)
     result = complete_authorization(client)
@@ -238,7 +243,12 @@ def test_revoke_refresh_token_kills_family(tmp_engine: Engine, db_session: Sessi
     access_token = exchange.json()["access_token"]
     refresh_token = exchange.json()["refresh_token"]
 
-    response = _revoke(client, token=refresh_token, client_id=result.client_id)
+    response = _revoke(
+        client,
+        token=refresh_token,
+        client_id=result.client_id,
+        token_type_hint="refresh_token",
+    )
 
     assert response.status_code == 200, response.text
     assert response.text == ""
@@ -318,6 +328,34 @@ def test_revoke_other_clients_token_noop(tmp_engine: Engine, db_session: Session
         select(OAuthRefreshToken).where(OAuthRefreshToken.token_hash == hash_token(refresh_token))
     ).scalar_one()
     assert refresh_row.revoked_at is None
+
+    mcp_response = _mcp_initialize(client, access_token)
+    assert mcp_response.status_code < 400, mcp_response.text
+
+
+def test_revoke_other_clients_access_token_noop(tmp_engine: Engine, db_session: Session) -> None:
+    """The access-token twin of `test_revoke_other_clients_token_noop` above (fix round 1, review
+    M-3): presenting client A's ACCESS token alongside client B's `client_id` is also a no-op —
+    200, but the `ApiToken` row is left untouched and the access token still works at MCP
+    afterward (`revoke_token`'s access branch only acts when `access.client_id == client_id`,
+    docs/plans/mcp-oauth/task-08-revoke-admin-api.md)."""
+    app = _build_app(tmp_engine)
+    client = TestClient(app)
+    result = complete_authorization(client)
+    exchange = _exchange(client, result)
+    assert exchange.status_code == 200, exchange.text
+    access_token = exchange.json()["access_token"]
+    other_client_id = _register_client(client, result.redirect_uri)
+
+    response = _revoke(client, token=access_token, client_id=other_client_id)
+
+    assert response.status_code == 200, response.text
+
+    db_session.expire_all()
+    access_row = db_session.execute(
+        select(ApiToken).where(ApiToken.token_hash == hash_token(access_token))
+    ).scalar_one()
+    assert access_row is not None
 
     mcp_response = _mcp_initialize(client, access_token)
     assert mcp_response.status_code < 400, mcp_response.text
@@ -615,7 +653,12 @@ def test_openapi_has_revoke_and_admin_operations(tmp_engine: Engine) -> None:
     `components.schemas` carries `ConnectedApp`/`ConnectedAppsResponse` — CONVENTIONS.md §5's
     "every route has a stable unique operation_id", codegen-visible for both frontend apps
     (task-08 brief acceptance: "task 09 can `components['schemas']['ConnectedApp']`"). RED today:
-    all three operation ids and both schemas are absent from the baseline."""
+    all three operation ids and both schemas are absent from the baseline.
+
+    Fix round 1 (review M-5, assertion added by the controller): `/oauth/revoke`'s 200 response
+    declares no `content` — the route actually returns a bodyless `Response`
+    (`response_class=Response` on the decorator), so the OpenAPI document must not claim an
+    `"application/json"` body a generated client's `.json()` call would choke on."""
     app = _build_app(tmp_engine)
     client = TestClient(app)
 
@@ -635,3 +678,5 @@ def test_openapi_has_revoke_and_admin_operations(tmp_engine: Engine) -> None:
     schemas = spec["components"]["schemas"]
     assert "ConnectedApp" in schemas
     assert "ConnectedAppsResponse" in schemas
+
+    assert "content" not in spec["paths"]["/api/v1/oauth/revoke"]["post"]["responses"]["200"]

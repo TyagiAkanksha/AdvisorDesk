@@ -668,6 +668,7 @@ def oauth_token(
     "/revoke",
     operation_id="oauth_revoke",
     status_code=200,
+    response_class=Response,
     responses={
         400: {
             "description": "OAuth error — token is required.",
@@ -718,6 +719,10 @@ def oauth_revoke(
     Always answers 200 with an empty body and `Cache-Control: no-store`/`Pragma: no-cache` (RFC
     7009 §2.2) — a plain `Response` (mirrors `oauth_token`'s own `JSONResponse` reasoning) so
     those headers are set directly on every reachable return path, success included.
+    `response_class=Response` (fix round 1, review M-5) documents the 200 in `openapi.json` with
+    no content, matching what the route actually returns — the same shape the admin DELETE's 204
+    already gets; without it FastAPI's default declared 200 as an untyped
+    `"application/json"` body, which a generated client calling `.json()` on would choke on.
 
     Raises:
         OAuthError: `"invalid_request"`, "token is required." (400) if `token` is absent;

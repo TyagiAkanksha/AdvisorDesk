@@ -2083,7 +2083,7 @@
     },
     "/api/v1/oauth/revoke": {
       "post": {
-        "description": "Revoke one refresh or access token (RFC 7009 \u00a72.1 token revocation request).\n\ndocs/plans/mcp-oauth/task-08-revoke-admin-api.md: validation order mirrors `/token`'s own\npinned pattern \u2014 rate limit -> `token` presence -> `client_id` presence AND that it names a\nREGISTERED client (the one 401 this endpoint ever returns; every other rejection is 400).\nPast that point `revoke_token` (`app.services.oauth_tokens`) does the actual work and can\nnever fail: RFC 7009 \u00a72.2 requires this endpoint to answer 200 whether or not `token` ever\nexisted, belonged to this client, or was already revoked \u2014 the response carries no signal\neither way. `token_type_hint` is accepted (so a spec-compliant client's request never 422s\nfor including it) but never read \u2014 `revoke_token` tries both a refresh-token and an\naccess-token lookup unconditionally, which is cheap enough that the hint buys nothing.\n\nAlways answers 200 with an empty body and `Cache-Control: no-store`/`Pragma: no-cache` (RFC\n7009 \u00a72.2) \u2014 a plain `Response` (mirrors `oauth_token`'s own `JSONResponse` reasoning) so\nthose headers are set directly on every reachable return path, success included.\n\nRaises:\n    OAuthError: `\"invalid_request\"`, \"token is required.\" (400) if `token` is absent;\n        `\"invalid_client\"`, \"Unknown client.\" (401) if `client_id` is absent or unregistered.\n        Never raised for an unknown/foreign/already-revoked `token` \u2014 see above.",
+        "description": "Revoke one refresh or access token (RFC 7009 \u00a72.1 token revocation request).\n\ndocs/plans/mcp-oauth/task-08-revoke-admin-api.md: validation order mirrors `/token`'s own\npinned pattern \u2014 rate limit -> `token` presence -> `client_id` presence AND that it names a\nREGISTERED client (the one 401 this endpoint ever returns; every other rejection is 400).\nPast that point `revoke_token` (`app.services.oauth_tokens`) does the actual work and can\nnever fail: RFC 7009 \u00a72.2 requires this endpoint to answer 200 whether or not `token` ever\nexisted, belonged to this client, or was already revoked \u2014 the response carries no signal\neither way. `token_type_hint` is accepted (so a spec-compliant client's request never 422s\nfor including it) but never read \u2014 `revoke_token` tries both a refresh-token and an\naccess-token lookup unconditionally, which is cheap enough that the hint buys nothing.\n\nAlways answers 200 with an empty body and `Cache-Control: no-store`/`Pragma: no-cache` (RFC\n7009 \u00a72.2) \u2014 a plain `Response` (mirrors `oauth_token`'s own `JSONResponse` reasoning) so\nthose headers are set directly on every reachable return path, success included.\n`response_class=Response` (fix round 1, review M-5) documents the 200 in `openapi.json` with\nno content, matching what the route actually returns \u2014 the same shape the admin DELETE's 204\nalready gets; without it FastAPI's default declared 200 as an untyped\n`\"application/json\"` body, which a generated client calling `.json()` on would choke on.\n\nRaises:\n    OAuthError: `\"invalid_request\"`, \"token is required.\" (400) if `token` is absent;\n        `\"invalid_client\"`, \"Unknown client.\" (401) if `client_id` is absent or unregistered.\n        Never raised for an unknown/foreign/already-revoked `token` \u2014 see above.",
         "operationId": "oauth_revoke",
         "requestBody": {
           "content": {
@@ -2096,11 +2096,6 @@
         },
         "responses": {
           "200": {
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            },
             "description": "Successful Response"
           },
           "400": {

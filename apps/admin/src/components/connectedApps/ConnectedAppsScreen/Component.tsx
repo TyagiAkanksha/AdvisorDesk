@@ -9,7 +9,7 @@ import {
   Typography,
 } from '@/components/common';
 
-import ConnectedAppsTable from './components/ConnectedAppsTable';
+import { ConnectedAppsTable } from './components/ConnectedAppsTable';
 import { useConnectedApps } from './useConnectedApps';
 
 // docs/plans/mcp-oauth/task-09-admin-connected-apps-ui.md — dumb per

@@ -1,6 +1,6 @@
 import { Box, Button } from '@/components/common';
 
-import type { ConnectedAppsTableProps } from '../interface';
+import type { ConnectedAppsTableProps } from './interface';
 
 // docs/plans/mcp-oauth/task-09-admin-connected-apps-ui.md — dumb per
 // docs/FRONTEND-CONVENTIONS.md §3 (rows in, one click callback out); mirrors ContentTable's

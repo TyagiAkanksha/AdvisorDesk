@@ -3,8 +3,9 @@
 **Scope:** this record documents the **local verification pass** for the whole `mcp-oauth`
 branch (tasks 01–10, `feat/mcp-oauth`) — a full gate run, the narrative end-to-end test's 12
 steps, and a real alembic round-trip on the test database. Merge, push, deploy, and the real
-claude.ai Connect against the deployed API are **owner-gated and were NOT performed** — see §4
-below.
+claude.ai Connect against the deployed API were **owner-gated and NOT performed** as part of
+task 10 — see §4 below. They were performed afterwards, on 2026-09-08; the live outcome is
+recorded in §5.
 
 Base commit: `14b5af9` (mcp-oauth task 09 status built) plus this task's own working-tree edits
 (config/doc edits + the e2e test file), committed together as this record's own commit. Run date:
@@ -284,3 +285,57 @@ any agent:
 
 None of the above was performed by this task. Everything in §1–§3 is real, locally-produced
 output from commands actually run against this working tree and the test database.
+
+## 5. Live outcome (2026-09-08, after task 10 — owner-driven)
+
+What §4 deferred was then done, in order, on 2026-09-08:
+
+- **Merge + push + deploy** — PR #23 merged → `main` `8f9cab3`; images pushed as `8f9cab3`; the
+  migration ran via `compose run --rm api uv run alembic upgrade head` BEFORE `up -d` and walked
+  prod **0004 → 0007** (0005/0006 had never been applied — see `infra/deploy/VERIFY.md` §5a's
+  deploy-session note). §5a's three curls recorded in `VERIFY.md`; bookkeeping PR #24 → `main`
+  `1557320`.
+- **Real claude.ai Connect — steps 1–4 DONE, verified from the prod api access log** (read-only
+  SSM `docker compose logs api`; times UTC). The successful run, connector added from the phone
+  (mobile Chrome) with the detected defaults ("Always required", "No client ID — register one
+  automatically" = DCR):
+
+  ```
+  16:25:06  160.79.106.x  POST /api/v1/mcp 401 → GET /.well-known/oauth-protected-resource 200
+                          → GET /.well-known/oauth-authorization-server 200 → POST /api/v1/oauth/register 201
+  16:26:28  phone         GET  /api/v1/oauth/authorize?response_type=code&client_id=adkc_QMvq…&redirect_uri=
+                               https://claude.ai/api/mcp/auth_callback&code_challenge=…&code_challenge_method=S256
+                               &state=…&scope=mcp&resource=https://api.adviso…            303
+  16:26:28  phone         GET  /api/v1/oauth/authorize/continue                           200  (consent page)
+  16:26:31  phone         POST /api/v1/oauth/authorize/decision                           302  (code issued)
+  16:38:24  phone         GET  /api/v1/oauth/authorize?…client_id=adkc_QMvq…               303  (same client, re-Connect)
+  16:38:25  phone         GET  /api/v1/oauth/authorize/continue                           302  (consent on file → code issued, no prompt)
+  16:38:25  160.79.106.x  POST /api/v1/oauth/token                                        200  ← code exchanged
+  16:38:26  160.79.106.x  POST /api/v1/mcp 200 ×2                                              (initialize + tools/list)
+  16:38:29  160.79.106.x  POST /api/v1/mcp 200 ×2                                              (tool calls — "31 non-deleted content items")
+  16:39:14  160.79.106.x  POST /api/v1/mcp 200 ×2
+  ERROR/Traceback lines in the api log for the window: 0
+  ```
+
+  claude.ai's chat then reported "Connected. AdvisorDesk is live and responding — there are 31
+  non-deleted content items" and listed the tool families (browse/search, drafts, tags,
+  archive/delete, `report_content_gaps`). Observations worth keeping:
+  - claude.ai sends the `resource` parameter on `/authorize` (from 16:25Z on; the very first
+    attempts of the day did not) — the P8 `resource=""` fallback was not exercised.
+  - Between 16:19Z and 16:26Z, **seven** approvals produced a `decision 302` but claude.ai never
+    called `/oauth/token` — the code was issued and the redirect to
+    `https://claude.ai/api/mcp/auth_callback?code=…&state=…` sent every time; the callback-side
+    handoff on the phone simply did not complete. The 16:38Z re-Connect (same client, consent
+    already standing → `/authorize/continue` 302 fast path) completed within 0.6 s. Server side
+    was correct throughout; nothing was changed between the failing and the succeeding runs.
+  - Two of the earlier attempts used a connector URL with a stray space (`/api%20/v1/mcp` → 404
+    on every MCP POST and on the path-suffixed PRM lookup); claude.ai then fell back to the
+    root PRM document and still registered a client. Re-adding with the exact URL fixed it.
+  - A second tap on **Approve** after the 302 returns `400 {"error":"invalid_request",
+    "error_description":"No pending authorization request."}` — single-use pending cookie, by
+    design; harmless.
+  - The retries left ~8 DCR client rows (`adkc_X2Cif…`, `adkc_3UX_q…`, `adkc_KvZPo…`,
+    `adkc_DnnUs…`, `adkc_YCNyU…`, `adkc_fxAZU…`, `adkc_E2tyd…`, `adkc_QMvqA…` — the last one
+    is the live connector); the others can be cleaned up from Admin → Connected apps → Revoke.
+- **Steps 5–7 (Connected apps shows the client with live token counts + `last_used_at`; Revoke;
+  claude.ai re-prompts) — still owner-pending.**

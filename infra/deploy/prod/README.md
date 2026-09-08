@@ -34,7 +34,11 @@ from here automatically — nothing reads this directory at deploy time.
      NEW image is live against the OLD schema and 500s on every route that touches the missing
      tables/columns — including, for this specific migration, the existing CLI-minted MCP
      bearer-token path (see the "MCP OAuth Connect" section below).
-3. Re-run the relevant checks in `../VERIFY.md` against the live deployment.
+3. Re-run the relevant checks in `../VERIFY.md` against the live deployment. For any release
+   that touches the api image, also record `docker compose exec -T api uv run alembic current`
+   before and after — the 2026-09-08 mcp-oauth deploy found prod still at `0004` (migrations
+   `0005`/`0006` had never been applied by the two earlier deploys) and walked it to `0007` in
+   one go; see the deploy-session note at the end of `../VERIFY.md` §5a.
 4. If applying the change on the box surfaced any drift from what's committed here (a manual
    fix made directly on the box, a value that had to differ), commit that drift back in the same
    sitting — docs must equal reality.

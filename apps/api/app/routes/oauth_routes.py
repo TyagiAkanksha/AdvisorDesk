@@ -1,6 +1,7 @@
 """RFC 7591 dynamic client registration route — `POST /oauth/register` (mcp-oauth plan, task 04);
 `GET /oauth/authorize` + `GET /oauth/authorize/continue` (mcp-oauth plan, task 05; RFC 6749 §4.1,
-RFC 7636 PKCE).
+RFC 7636 PKCE); `POST /oauth/token` (mcp-oauth plan, task 07; RFC 6749 §4.1.3/§4.1.4 code grant,
+§6 refresh grant).
 
 docs/plans/mcp-oauth/DESIGN.md §"End-to-end flow" step 4: "Claude -> POST /register (DCR) with
 its redirect_uris + name -> { client_id, ... } (public client, no secret)". CONVENTIONS.md §4:
@@ -29,11 +30,13 @@ undeclared here would reintroduce it just for this one route.
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from datetime import UTC, datetime
+from typing import Annotated
 from urllib.parse import urlencode
 
-from fastapi import APIRouter, Depends, Request, Response
-from fastapi.responses import RedirectResponse
+from fastapi import APIRouter, Depends, Form, Request, Response
+from fastapi.responses import JSONResponse, RedirectResponse
 from sqlalchemy.orm import Session
 
 from app.auth.deps import AdminPrincipal, resolve_admin
@@ -48,17 +51,23 @@ from app.auth.oauth_request import (
 )
 from app.config import Settings
 from app.models.schemas.common import ErrorEnvelope
-from app.models.schemas.oauth import ClientRegistrationRequest, ClientRegistrationResponse
+from app.models.schemas.oauth import (
+    ClientRegistrationRequest,
+    ClientRegistrationResponse,
+    TokenResponse,
+)
 from app.routes.deps import get_rate_limiter, get_session, get_settings
 from app.routes.ratelimit import RateLimiter
 from app.services.errors import OAuthError, OAuthRedirectError
 from app.services.oauth_clients import (
     count_clients,
+    get_client,
     prune_stale_clients,
     register_client,
     validate_redirect_uri,
 )
 from app.services.oauth_codes import issue_authorization_code
+from app.services.oauth_tokens import redeem_authorization_code, rotate_refresh_token
 
 router = APIRouter(prefix="/oauth", tags=["oauth"])
 
@@ -353,3 +362,176 @@ def oauth_authorize_continue(
         )
 
     return _issue_code_and_redirect(session, pending, principal, settings)
+
+
+def _get_token_session(request: Request) -> Iterator[Session]:
+    """Session dependency for `POST /oauth/token` ONLY: commits on success AND on `OAuthError`.
+
+    Identical to `app.routes.deps.get_session` except for one widened branch. RFC 6749 §10.4 (and
+    this task's own brief): a replayed authorization code or a reused, already-rotated refresh
+    token is treated as evidence of compromise — `app.services.oauth_codes.
+    consume_authorization_code`'s replay branch and `app.services.oauth_tokens.
+    rotate_refresh_token`'s reuse branch each call `app.services.oauth_tokens.revoke_family`
+    (killing every token in the affected rotation family) and then raise `OAuthError` to answer
+    the request with a 400. Those two writes MUST be durable regardless of the 400 that follows —
+    an attacker who triggers reuse detection must not get to keep the very tokens this mechanism
+    exists to kill. `app.services` functions still only ever `flush()` (CONVENTIONS.md §3: no
+    `commit()`/`rollback()` in services) — the plain `get_session` dependency's "roll back on any
+    exception" default would otherwise undo that flushed revocation before it ever reaches disk,
+    since `OAuthError` is still an exception from `get_session`'s point of view. This dependency
+    is the one place that widens "commit" to cover `OAuthError` too, scoped to this single route
+    (not `app.routes.deps.get_session` itself, which every other route still uses unchanged).
+
+    Every OTHER `OAuthError` this endpoint raises (`invalid_request`/`invalid_client`/an ordinary
+    `invalid_grant`/`invalid_target`/`invalid_scope` with no side effects — e.g. an unknown code,
+    an expired token, a PKCE mismatch) has flushed nothing by the time it's raised, so committing
+    on those is a no-op beyond what a rollback would have discarded anyway: there is nothing to
+    lose. A non-`OAuthError` exception (a genuine bug, or `RateLimitedError` from the rate-limit
+    check that runs before any DB write) still rolls back, exactly like `get_session`.
+
+    Raises:
+        RuntimeError: same guard as `get_session` — the app was built without a session factory.
+    """
+    session_factory = getattr(request.app.state, "session_factory", None)
+    if session_factory is None:
+        raise RuntimeError(
+            "_get_token_session() requires app.state.session_factory, but none was configured — "
+            "this app was built by create_app() without a session_factory (DB-less mode)."
+        )
+
+    session: Session = session_factory()
+    try:
+        yield session
+        session.commit()
+    except OAuthError:
+        session.commit()
+        raise
+    except Exception:
+        session.rollback()
+        raise
+    finally:
+        session.close()
+
+
+@router.post(
+    "/token",
+    operation_id="oauth_token",
+    response_model=TokenResponse,
+    responses={
+        400: {
+            "description": "OAuth error — invalid_request/invalid_grant/invalid_target/"
+            "invalid_scope/unsupported_grant_type.",
+            "content": {
+                "application/json": {
+                    "example": {
+                        "error": "invalid_grant",
+                        "error_description": "…",
+                    }
+                }
+            },
+        },
+        401: {
+            "description": "Unknown client_id.",
+            "content": {
+                "application/json": {
+                    "example": {
+                        "error": "invalid_client",
+                        "error_description": "Unknown client.",
+                    }
+                }
+            },
+        },
+        422: {"model": ErrorEnvelope},
+        429: {"model": ErrorEnvelope},
+    },
+)
+def oauth_token(
+    request: Request,
+    grant_type: Annotated[str | None, Form()] = None,
+    code: Annotated[str | None, Form()] = None,
+    redirect_uri: Annotated[str | None, Form()] = None,
+    code_verifier: Annotated[str | None, Form()] = None,
+    client_id: Annotated[str | None, Form()] = None,
+    resource: Annotated[str | None, Form()] = None,
+    refresh_token: Annotated[str | None, Form()] = None,
+    scope: Annotated[str | None, Form()] = None,
+    session: Session = Depends(_get_token_session),
+    settings: Settings = Depends(get_settings),
+    limiter: RateLimiter = Depends(get_rate_limiter),
+) -> Response:
+    """Exchange an authorization code, or an existing refresh token, for a fresh token pair
+    (RFC 6749 §4.1.3/§4.1.4 code grant, §6 refresh grant).
+
+    Validation order (task-07 brief's own pinned route pseudocode): rate limit -> `grant_type`
+    presence -> `client_id` presence AND that it names a REGISTERED client (401 `invalid_client`,
+    the one 401 this endpoint ever returns — every other rejection is 400) -> grant-type-specific
+    required-field checks -> the grant's own service function, which does the rest (PKCE/
+    redirect/expiry/replay for a code; expiry/reuse/client/resource/scope for a refresh).
+
+    Always returns `Cache-Control: no-store`/`Pragma: no-cache` on a 200 (RFC 6749 §5.1) — a
+    plain `JSONResponse` is used (rather than relying on FastAPI's own response serialization) so
+    those headers can be set directly, while `response_model=TokenResponse` still documents and
+    validates the shape for OpenAPI/codegen.
+
+    Raises:
+        OAuthError: as described above; never a bare framework exception (CONVENTIONS.md §4 — no
+            `try/except` in routes, mapping happens in the registered `OAuthError` handler).
+    """
+    client_ip = request.client.host if request.client is not None else "unknown"
+    limiter.check_oauth_request(client_ip)
+
+    if grant_type is None:
+        raise OAuthError("invalid_request", "grant_type is required.")
+
+    if client_id is None or get_client(session, client_id) is None:
+        raise OAuthError("invalid_client", "Unknown client.", status_code=401)
+
+    now = datetime.now(UTC)
+
+    if grant_type == "authorization_code":
+        if code is None:
+            raise OAuthError("invalid_request", "code is required.")
+        if redirect_uri is None:
+            raise OAuthError("invalid_request", "redirect_uri is required.")
+        if code_verifier is None:
+            raise OAuthError("invalid_request", "code_verifier is required.")
+
+        tokens = redeem_authorization_code(
+            session,
+            raw_code=code,
+            client_id=client_id,
+            redirect_uri=redirect_uri,
+            code_verifier=code_verifier,
+            resource=resource or settings.mcp_resource_url,
+            now=now,
+            settings=settings,
+        )
+    elif grant_type == "refresh_token":
+        if refresh_token is None:
+            raise OAuthError("invalid_request", "refresh_token is required.")
+
+        tokens = rotate_refresh_token(
+            session,
+            raw_refresh_token=refresh_token,
+            client_id=client_id,
+            resource=resource,
+            scope=scope,
+            now=now,
+            settings=settings,
+        )
+    else:
+        raise OAuthError(
+            "unsupported_grant_type",
+            "Only authorization_code and refresh_token are supported.",
+        )
+
+    body = TokenResponse(
+        access_token=tokens.access_token,
+        expires_in=tokens.expires_in,
+        refresh_token=tokens.refresh_token,
+        scope=tokens.scope,
+    )
+    return JSONResponse(
+        body.model_dump(),
+        headers={"Cache-Control": "no-store", "Pragma": "no-cache"},
+    )

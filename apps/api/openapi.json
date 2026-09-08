@@ -42,6 +42,100 @@
         "title": "AgentMessage",
         "type": "object"
       },
+      "Body_oauth_token": {
+        "properties": {
+          "client_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Client Id"
+          },
+          "code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Code"
+          },
+          "code_verifier": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Code Verifier"
+          },
+          "grant_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Grant Type"
+          },
+          "redirect_uri": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Redirect Uri"
+          },
+          "refresh_token": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Refresh Token"
+          },
+          "resource": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Resource"
+          },
+          "scope": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Scope"
+          }
+        },
+        "title": "Body_oauth_token",
+        "type": "object"
+      },
       "ChatRequest": {
         "description": "`POST /public/chat`'s request body (PRD \u00a75.3, exact field set).\n\n`session_id` absent or referencing an unknown session both mean \"start a new session\" (\u00a75.3)\n\u2014 `app.services.chat.get_or_create_session` handles both cases identically once this schema\nhas parsed a syntactically valid UUID (or `None`) out of the request body.\n\n`message` is `min_length=1` plus a whitespace-only rejection (review round 1, finding M-5) \u2014\nmirrors `app.models.schemas.content.ContentCreate.title`'s established two-guard pattern\nexactly: `min_length=1` alone still lets a whitespace-only string (`\"   \"`) through, since\nPydantic's length check counts characters, not content. An empty/blank message would otherwise\nstill burn an LLM call and a \u00a79 rate-limit slot, and poison phase-7's `report_content_gaps`\nwith empty \"questions\" (probe P7).",
         "properties": {
@@ -609,6 +703,41 @@
           "count"
         ],
         "title": "TagWithCount",
+        "type": "object"
+      },
+      "TokenResponse": {
+        "description": "RFC 6749 \u00a74.1.4/\u00a75.1 access token response \u2014 `POST /api/v1/oauth/token`'s 200 wire shape.\n\nReturned for BOTH the `authorization_code` and `refresh_token` grants (mcp-oauth plan, task\n07) \u2014 a refresh always mints a brand-new pair (rotation), so the response shape never needs to\ndistinguish which grant produced it.",
+        "properties": {
+          "access_token": {
+            "title": "Access Token",
+            "type": "string"
+          },
+          "expires_in": {
+            "title": "Expires In",
+            "type": "integer"
+          },
+          "refresh_token": {
+            "title": "Refresh Token",
+            "type": "string"
+          },
+          "scope": {
+            "title": "Scope",
+            "type": "string"
+          },
+          "token_type": {
+            "const": "Bearer",
+            "default": "Bearer",
+            "title": "Token Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "access_token",
+          "expires_in",
+          "refresh_token",
+          "scope"
+        ],
+        "title": "TokenResponse",
         "type": "object"
       }
     }
@@ -1629,6 +1758,79 @@
           }
         },
         "summary": "Oauth Register",
+        "tags": [
+          "oauth"
+        ]
+      }
+    },
+    "/api/v1/oauth/token": {
+      "post": {
+        "description": "Exchange an authorization code, or an existing refresh token, for a fresh token pair\n(RFC 6749 \u00a74.1.3/\u00a74.1.4 code grant, \u00a76 refresh grant).\n\nValidation order (task-07 brief's own pinned route pseudocode): rate limit -> `grant_type`\npresence -> `client_id` presence AND that it names a REGISTERED client (401 `invalid_client`,\nthe one 401 this endpoint ever returns \u2014 every other rejection is 400) -> grant-type-specific\nrequired-field checks -> the grant's own service function, which does the rest (PKCE/\nredirect/expiry/replay for a code; expiry/reuse/client/resource/scope for a refresh).\n\nAlways returns `Cache-Control: no-store`/`Pragma: no-cache` on a 200 (RFC 6749 \u00a75.1) \u2014 a\nplain `JSONResponse` is used (rather than relying on FastAPI's own response serialization) so\nthose headers can be set directly, while `response_model=TokenResponse` still documents and\nvalidates the shape for OpenAPI/codegen.\n\nRaises:\n    OAuthError: as described above; never a bare framework exception (CONVENTIONS.md \u00a74 \u2014 no\n        `try/except` in routes, mapping happens in the registered `OAuthError` handler).",
+        "operationId": "oauth_token",
+        "requestBody": {
+          "content": {
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_oauth_token"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TokenResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": "invalid_grant",
+                  "error_description": "\u2026"
+                }
+              }
+            },
+            "description": "OAuth error \u2014 invalid_request/invalid_grant/invalid_target/invalid_scope/unsupported_grant_type."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": "invalid_client",
+                  "error_description": "Unknown client."
+                }
+              }
+            },
+            "description": "Unknown client_id."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          }
+        },
+        "summary": "Oauth Token",
         "tags": [
           "oauth"
         ]

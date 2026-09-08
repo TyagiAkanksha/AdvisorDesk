@@ -1,7 +1,8 @@
 """RFC 7591 dynamic client registration DTOs — `POST /api/v1/oauth/register`'s wire shape
 (mcp-oauth plan, task 04; docs/plans/mcp-oauth/DESIGN.md §"End-to-end flow" step 4: "Claude ->
 POST /register (DCR) with its redirect_uris + name -> { client_id, ... } (public client, no
-secret)").
+secret)"). `TokenResponse` (mcp-oauth plan, task 07) is `POST /api/v1/oauth/token`'s wire shape
+(RFC 6749 §4.1.4/§5.1 access token response).
 """
 
 from __future__ import annotations
@@ -52,3 +53,18 @@ class ClientRegistrationResponse(BaseModel):
     grant_types: list[str]
     response_types: list[str]
     scope: Literal["mcp"] = "mcp"
+
+
+class TokenResponse(BaseModel):
+    """RFC 6749 §4.1.4/§5.1 access token response — `POST /api/v1/oauth/token`'s 200 wire shape.
+
+    Returned for BOTH the `authorization_code` and `refresh_token` grants (mcp-oauth plan, task
+    07) — a refresh always mints a brand-new pair (rotation), so the response shape never needs to
+    distinguish which grant produced it.
+    """
+
+    access_token: str
+    token_type: Literal["Bearer"] = "Bearer"
+    expires_in: int
+    refresh_token: str
+    scope: str

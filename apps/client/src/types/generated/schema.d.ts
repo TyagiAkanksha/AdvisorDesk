@@ -488,6 +488,42 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/oauth/token": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Oauth Token
+         * @description Exchange an authorization code, or an existing refresh token, for a fresh token pair
+         *     (RFC 6749 §4.1.3/§4.1.4 code grant, §6 refresh grant).
+         *
+         *     Validation order (task-07 brief's own pinned route pseudocode): rate limit -> `grant_type`
+         *     presence -> `client_id` presence AND that it names a REGISTERED client (401 `invalid_client`,
+         *     the one 401 this endpoint ever returns — every other rejection is 400) -> grant-type-specific
+         *     required-field checks -> the grant's own service function, which does the rest (PKCE/
+         *     redirect/expiry/replay for a code; expiry/reuse/client/resource/scope for a refresh).
+         *
+         *     Always returns `Cache-Control: no-store`/`Pragma: no-cache` on a 200 (RFC 6749 §5.1) — a
+         *     plain `JSONResponse` is used (rather than relying on FastAPI's own response serialization) so
+         *     those headers can be set directly, while `response_model=TokenResponse` still documents and
+         *     validates the shape for OpenAPI/codegen.
+         *
+         *     Raises:
+         *         OAuthError: as described above; never a bare framework exception (CONVENTIONS.md §4 — no
+         *             `try/except` in routes, mapping happens in the registered `OAuthError` handler).
+         */
+        post: operations["oauth_token"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/public/chat": {
         parameters: {
             query?: never;
@@ -685,6 +721,25 @@ export interface components {
              * @enum {string}
              */
             role: "user" | "assistant";
+        };
+        /** Body_oauth_token */
+        Body_oauth_token: {
+            /** Client Id */
+            client_id?: string | null;
+            /** Code */
+            code?: string | null;
+            /** Code Verifier */
+            code_verifier?: string | null;
+            /** Grant Type */
+            grant_type?: string | null;
+            /** Redirect Uri */
+            redirect_uri?: string | null;
+            /** Refresh Token */
+            refresh_token?: string | null;
+            /** Resource */
+            resource?: string | null;
+            /** Scope */
+            scope?: string | null;
         };
         /**
          * ChatRequest
@@ -989,6 +1044,30 @@ export interface components {
             id: string;
             /** Name */
             name: string;
+        };
+        /**
+         * TokenResponse
+         * @description RFC 6749 §4.1.4/§5.1 access token response — `POST /api/v1/oauth/token`'s 200 wire shape.
+         *
+         *     Returned for BOTH the `authorization_code` and `refresh_token` grants (mcp-oauth plan, task
+         *     07) — a refresh always mints a brand-new pair (rotation), so the response shape never needs to
+         *     distinguish which grant produced it.
+         */
+        TokenResponse: {
+            /** Access Token */
+            access_token: string;
+            /** Expires In */
+            expires_in: number;
+            /** Refresh Token */
+            refresh_token: string;
+            /** Scope */
+            scope: string;
+            /**
+             * Token Type
+             * @default Bearer
+             * @constant
+             */
+            token_type: "Bearer";
         };
     };
     responses: never;
@@ -1739,6 +1818,78 @@ export interface operations {
                      * @example {
                      *       "error": "invalid_client_metadata",
                      *       "error_description": "…"
+                     *     }
+                     */
+                    "application/json": unknown;
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too Many Requests */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    oauth_token: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/x-www-form-urlencoded": components["schemas"]["Body_oauth_token"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TokenResponse"];
+                };
+            };
+            /** @description OAuth error — invalid_request/invalid_grant/invalid_target/invalid_scope/unsupported_grant_type. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "error": "invalid_grant",
+                     *       "error_description": "…"
+                     *     }
+                     */
+                    "application/json": unknown;
+                };
+            };
+            /** @description Unknown client_id. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "error": "invalid_client",
+                     *       "error_description": "Unknown client."
                      *     }
                      */
                     "application/json": unknown;

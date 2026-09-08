@@ -2,11 +2,22 @@
 docs/plans/mcp-oauth/DESIGN.md §"End-to-end flow" step 4, §"Security / threat model").
 
 DCR (`POST /api/v1/oauth/register`) is open per the Model Context Protocol — any client can
-self-register with no operator approval — so this module also carries the two server-side guards
+self-register with no operator approval — so this module also carries the server-side guards
 DESIGN.md's threat model requires for an open registration endpoint: a hard cap on the total
 number of registered clients (`prune_stale_clients`, `count_clients` — enforced by the ROUTE, not
-here) and pruning of stale, never-used registrations so an unbounded flood of throwaway
-registrations doesn't grow `oauth_clients` forever.
+here), pruning of stale, never-used registrations so an unbounded flood of throwaway
+registrations doesn't grow `oauth_clients` forever, and (fix round 1, review finding M-2) a hard
+cap on both the number and length of `redirect_uris` entries a single registration may persist
+(`MAX_REDIRECT_URIS`, `MAX_REDIRECT_URI_LENGTH` below) — the same "an open, unauthenticated
+endpoint's every unbounded input is a DoS vector" rationale, applied to persisted row *size*
+rather than row *count*.
+
+Fix round 1 (review findings I-1, I-2, I-3, M-1): `validate_redirect_uri` also closes three gaps
+a redirect-URI-bypass probe found in the original implementation — an uncaught `ValueError` from
+`urlsplit` on malformed input (I-1, -> unauthenticated 500 instead of 400), a Python/WHATWG
+parser differential reachable via a backslash or userinfo component in the authority (I-2/M-1),
+and an empty fragment (`"...#"`) evading the original truthiness-based fragment check (I-3). See
+`validate_redirect_uri`'s own docstring for the mechanism of each.
 
 CONVENTIONS.md §3: every function here is session-first and only ever `flush()`es — the caller
 (the route's `get_session` dependency) owns the transaction boundary and commits.
@@ -37,6 +48,19 @@ redirect URI may target — a local development client cannot obtain a TLS certi
 _CLIENT_ID_PREFIX = "adkc_"
 _STALE_CLIENT_AGE = timedelta(hours=24)
 
+MAX_REDIRECT_URIS = 10
+"""Fix round 1 (review finding M-2): a hard cap on `len(redirect_uris)` per registration.
+DESIGN.md §"Security / threat model": DCR is an OPEN, unauthenticated endpoint, so every
+unbounded input it accepts is a persisted-size DoS vector — `oauth_max_clients` already bounds
+row *count*; this bounds row *size* the same way. Enforced by `register_client`, not here.
+"""
+
+MAX_REDIRECT_URI_LENGTH = 2000
+"""Fix round 1 (review finding M-2): a hard cap on one `redirect_uris` entry's length — same
+DESIGN.md §"Security / threat model" rationale as `MAX_REDIRECT_URIS` above, applied per-URI
+instead of to the list as a whole. Enforced by `validate_redirect_uri` below.
+"""
+
 
 def validate_redirect_uri(uri: str) -> None:
     """Validate one `redirect_uris` entry (RFC 7591 §3, mcp-oauth Global Constraints "Redirect
@@ -45,7 +69,28 @@ def validate_redirect_uri(uri: str) -> None:
     Accepts `https://` at any host, or `http://` ONLY when the host is `localhost`, `127.0.0.1`,
     or `[::1]` (any port, any path) — the standard loopback carve-out (RFC 8252 §7.3) for a local
     development client. Rejects a fragment component unconditionally (RFC 6749 §3.1.2: a
-    redirection URI "MUST NOT include a fragment component") and an empty/missing scheme or host.
+    redirection URI "MUST NOT include a fragment component"), a backslash or userinfo component
+    (fix round 1, findings I-2/M-1 — see below), an empty/missing scheme or host, and anything
+    over `MAX_REDIRECT_URI_LENGTH` characters (fix round 1, finding M-2).
+
+    Fix round 1 (review findings I-1/I-2/I-3, an open unauthenticated endpoint's input validator):
+
+    - **I-1**: `urlsplit` can raise `ValueError` on a bracket-mismatched authority (e.g.
+      `"http://[::1"`) — previously uncaught, so it fell through the route's no-`try/except` rule
+      straight into the generic 500 handler instead of a 400. Caught here and re-raised as the
+      same `OAuthError` every other rejection in this function raises.
+    - **I-2/M-1**: `parts.hostname` is resolved *after* userinfo — Python's `urlsplit` does not
+      treat a literal backslash as an authority terminator, but WHATWG (every browser) does for
+      special schemes, so `"http://evil.example\\@localhost/cb"` parses as host `localhost` in
+      Python while a browser resolves it to `evil.example`. Rejecting any backslash, or any `@` in
+      the netloc (which also closes the plain-userinfo case, M-1, e.g.
+      `"http://user:pass@localhost/cb"`), closes that parser differential before the host check
+      ever runs.
+    - **I-3**: `if parts.fragment:` is a truthiness test, and `urlsplit("https://a.example/cb#")
+      .fragment == ""` — a bare trailing `#` is indistinguishable from "no fragment" to that check,
+      so RFC 6749 §3.1.2's "MUST NOT include a fragment component" was silently violated for any
+      URI ending in a lone `#`. Testing the raw string for `"#"` (rather than the parsed
+      `.fragment`) catches an empty fragment too.
 
     Args:
         uri: one candidate redirect URI from the registration request.
@@ -54,11 +99,27 @@ def validate_redirect_uri(uri: str) -> None:
         OAuthError: `"invalid_redirect_uri"`, with a field-specific description, if `uri` fails
             any rule above.
     """
-    parts = urlsplit(uri)
+    if len(uri) > MAX_REDIRECT_URI_LENGTH:
+        raise OAuthError(
+            "invalid_redirect_uri",
+            f"redirect_uris: {uri!r} is longer than {MAX_REDIRECT_URI_LENGTH} characters.",
+        )
 
-    if parts.fragment:
+    try:
+        parts = urlsplit(uri)
+    except ValueError as exc:
+        raise OAuthError(
+            "invalid_redirect_uri", f"redirect_uris: {uri!r} is not a valid absolute URI."
+        ) from exc
+
+    if "#" in uri:
         raise OAuthError(
             "invalid_redirect_uri", f"redirect_uris: {uri!r} must not include a fragment."
+        )
+    if "\\" in uri or "@" in parts.netloc:
+        raise OAuthError(
+            "invalid_redirect_uri",
+            f"redirect_uris: {uri!r} must not contain a backslash or userinfo component.",
         )
     if not parts.scheme or not parts.hostname:
         raise OAuthError(
@@ -89,11 +150,17 @@ def register_client(session: Session, *, redirect_uris: list[str], client_name: 
     CALLER (the route, via `count_clients`) before this function is ever invoked — this function
     performs no cap check of its own.
 
+    Fix round 1 (review finding M-2): rejects `len(redirect_uris) > MAX_REDIRECT_URIS` up front,
+    before validating any individual URI — DESIGN.md §"Security / threat model": DCR is an open,
+    unauthenticated endpoint, so an unbounded `redirect_uris` list is a persisted-size DoS vector
+    (`oauth_clients.redirect_uris` is an unbounded `ARRAY(Text)`) just like an unbounded per-URI
+    length is (`validate_redirect_uri`'s own `MAX_REDIRECT_URI_LENGTH` check).
+
     Args:
         session: the caller's `Session`. Flushed (never committed) so `client.created_at` (a
             server-side default) is populated before the caller reads it.
-        redirect_uris: one or more candidate redirect URIs — every entry must pass
-            `validate_redirect_uri`.
+        redirect_uris: one or more candidate redirect URIs, at most `MAX_REDIRECT_URIS` of them —
+            every entry must also pass `validate_redirect_uri`.
         client_name: the client's human-readable display name (the route defaults this to
             `"Unnamed client"` when absent/blank before calling here).
 
@@ -101,8 +168,14 @@ def register_client(session: Session, *, redirect_uris: list[str], client_name: 
         The newly persisted `OAuthClient`, with `created_at` populated.
 
     Raises:
-        OAuthError: any `redirect_uris` entry fails `validate_redirect_uri`.
+        OAuthError: `len(redirect_uris) > MAX_REDIRECT_URIS`, or any entry fails
+            `validate_redirect_uri`.
     """
+    if len(redirect_uris) > MAX_REDIRECT_URIS:
+        raise OAuthError(
+            "invalid_redirect_uri",
+            f"redirect_uris: at most {MAX_REDIRECT_URIS} entries are allowed.",
+        )
     for uri in redirect_uris:
         validate_redirect_uri(uri)
 

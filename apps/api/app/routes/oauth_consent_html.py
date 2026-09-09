@@ -6,24 +6,75 @@ Pure rendering only: `render_consent_page` takes plain strings in and returns an
 no FastAPI import, no request/response handling, no DB access. `app.routes.oauth_routes` is the
 only caller, wrapping the returned string in an `HTMLResponse` with its own headers (`Cache-
 Control`/`Pragma`/`Content-Security-Policy`). Keeping this module import-linter-clean of
-`app.services`/`app.auth` (stdlib `html` only) is what lets it stay a leaf: nothing here can ever
-import something that imports back to routes.
+`app.services`/`app.auth` (stdlib `urllib.parse`/`html` only) is what lets it stay a leaf: nothing
+here can ever import something that imports back to routes.
 
 This page is the confused-deputy guard's user-facing half: a hostile DCR registration controls
 `client_name` (RFC 7591 `/oauth/register` is open, unauthenticated — mcp-oauth task 04), so EVERY
 interpolated value is `html.escape(..., quote=True)`d before landing in the markup, and the page
-carries no `<script>` tag and loads no external asset — `CONSENT_CSP` below is a second,
-belt-and-suspenders layer against exactly that, not the only one.
+carries no `<script>` tag and loads no external asset — `CONSENT_CSP`/`consent_csp` below are a
+second, belt-and-suspenders layer against exactly that, not the only one.
+
+mcp-oauth CSP hotfix (`.superpowers/sdd/mcp-oauth/hotfix-csp-brief.md`, prod incident observed
+2026-09-08/09): Chrome/Edge enforce `form-action` against every redirect that FOLLOWS a form
+submission, not just the form's own POST target. `CONSENT_CSP`'s bare `form-action 'self'` let the
+Approve/Deny form POST to `/oauth/authorize/decision` (same-origin, allowed), but then silently
+blocked the resulting `302 Location: <client's redirect_uri>` to the third-party client (e.g.
+`https://claude.ai/api/mcp/auth_callback`) — the browser never followed it, so the client never
+received the authorization code and never called `/oauth/token`. `consent_csp` appends that
+client's redirect origin onto the directive so the post-Approve 302 is allowed through.
 """
 
 from __future__ import annotations
 
 import html
+from urllib.parse import urlsplit
 
 CONSENT_CSP = "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'"
 """Locks the rendered page down to inline styles and same-origin form submission only — no
 script, no image, no fetch, no external stylesheet/font can load even if an escaping bug ever let
-markup slip through. Task-06 brief's own pinned literal."""
+markup slip through. Task-06 brief's own pinned literal.
+
+Kept byte-identical as the base/fallback for `consent_csp` below (mcp-oauth CSP hotfix): it is
+still exactly correct for the form's own same-origin POST, and is what `consent_csp` returns
+unchanged when its `redirect_uri` argument fails to parse."""
+
+
+def consent_csp(redirect_uri: str) -> str:
+    """Build the consent page's `Content-Security-Policy` header, with the client's redirect
+    origin appended onto `form-action` (mcp-oauth CSP hotfix).
+
+    Chrome/Edge enforce `form-action` against every redirect that follows a form submission, not
+    only the form's own POST target — so a bare `form-action 'self'` silently blocks the
+    post-Approve `302` from `/oauth/authorize/decision` to the client's `redirect_uri`. Appending
+    that origin (scheme + netloc only — no path, query, or fragment; `form-action` matches on
+    origin) restores the redirect while keeping every other directive as locked-down as
+    `CONSENT_CSP`.
+
+    The interpolated origin is safe to embed literally: `redirect_uri` is DCR-validated
+    (`validate_redirect_uri`, `app/services/oauth_clients.py`) before ever reaching a
+    `PendingAuthorization`, and that validator already rejects whitespace/control characters,
+    userinfo, backslashes, fragments, and any scheme other than `https` (or `http` for the
+    loopback carve-out) — so it cannot carry a CSP metacharacter (`;`, whitespace) that would let
+    the interpolation smuggle in an extra directive.
+
+    Args:
+        redirect_uri: the pending authorization's registered `redirect_uri`. Not re-validated
+            here — this function only ever guards against a malformed/empty value by falling
+            back, it never trusts blindly.
+
+    Returns:
+        `CONSENT_CSP` with `" {scheme}://{netloc}"` appended to it when `redirect_uri` parses to a
+        non-empty scheme and netloc; otherwise `CONSENT_CSP` unchanged.
+    """
+    try:
+        parts = urlsplit(redirect_uri)
+    except ValueError:
+        return CONSENT_CSP
+    if not parts.scheme or not parts.netloc:
+        return CONSENT_CSP
+    return f"{CONSENT_CSP} {parts.scheme}://{parts.netloc}"
+
 
 _SCOPE_LINE = "mcp — use the AdvisorDesk MCP tools (admin-level access)"
 """The one scope this authorization server ever grants (`PendingAuthorization.scope` is always

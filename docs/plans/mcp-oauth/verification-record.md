@@ -350,3 +350,16 @@ What §4 deferred was then done, in order, on 2026-09-08:
   reconnect attempt re-hit the CSP bug above (a deleted client means a fresh consent form, whose
   post-Approve redirect the header blocked) — a fresh Connect only works reliably once PR #26 is
   deployed (stopgap: Firefox, which does not enforce `form-action` on redirects).
+- **CSP fix DEPLOYED + fresh-client Connect VERIFIED (2026-09-09).** PR #26 merged → `main`
+  `6983941`, deployed ~05:20Z (images ×3 at `6983941`; admin/client digests identical to the
+  `8f9cab3` builds — api/docs-only PRs; schema steady at `0007`, recorded before/after; box backup
+  `docker-compose.yml.bak-8f9cab3`). At 14:05Z the owner reconnected: **fresh** DCR client
+  (`adkc_nIhGO…`) → consent **form** rendered (`/authorize/continue` 200 — no consent-on-file
+  shortcut this time) → Approve → `decision` 302 → **`POST /oauth/token` 200 within 0.5 s** →
+  authenticated `POST /api/v1/mcp` 200 ×4. That is exactly the path that failed all eight times
+  pre-fix, now completing — the `form-action` root-cause diagnosis and fix are both confirmed
+  live. Post-deploy log sweep: the only errors since deploy are two isolated
+  `GET /api/v1/public/content` 500s (05:54Z, 06:05Z, uptime poller) from
+  `psycopg.OperationalError: … SSL connection has been closed unexpectedly` — stale pooled DB
+  connections right after the container recreate, self-healed, none since; the engine sets no
+  `pool_pre_ping` (`apps/api/app/db.py:45`), ledgered as a follow-up Minor.

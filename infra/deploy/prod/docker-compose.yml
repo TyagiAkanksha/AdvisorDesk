@@ -11,7 +11,7 @@ x-logging: &default-logging
 
 services:
   api:
-    image: 181040156847.dkr.ecr.us-east-1.amazonaws.com/advisordesk/api:8f9cab3
+    image: 181040156847.dkr.ecr.us-east-1.amazonaws.com/advisordesk/api:6983941
     env_file:
       - /opt/advisordesk/.env
     environment:
@@ -44,7 +44,7 @@ services:
     restart: unless-stopped
 
   admin:
-    image: 181040156847.dkr.ecr.us-east-1.amazonaws.com/advisordesk/admin:8f9cab3
+    image: 181040156847.dkr.ecr.us-east-1.amazonaws.com/advisordesk/admin:6983941
     environment:
       HOSTNAME: 0.0.0.0
       PORT: "3000"
@@ -54,7 +54,7 @@ services:
     restart: unless-stopped
 
   client:
-    image: 181040156847.dkr.ecr.us-east-1.amazonaws.com/advisordesk/client:8f9cab3
+    image: 181040156847.dkr.ecr.us-east-1.amazonaws.com/advisordesk/client:6983941
     environment:
       HOSTNAME: 0.0.0.0
       PORT: "3000"

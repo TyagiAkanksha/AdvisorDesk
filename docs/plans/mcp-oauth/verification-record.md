@@ -324,10 +324,18 @@ What §4 deferred was then done, in order, on 2026-09-08:
     attempts of the day did not) — the P8 `resource=""` fallback was not exercised.
   - Between 16:19Z and 16:26Z, **seven** approvals produced a `decision 302` but claude.ai never
     called `/oauth/token` — the code was issued and the redirect to
-    `https://claude.ai/api/mcp/auth_callback?code=…&state=…` sent every time; the callback-side
-    handoff on the phone simply did not complete. The 16:38Z re-Connect (same client, consent
-    already standing → `/authorize/continue` 302 fast path) completed within 0.6 s. Server side
-    was correct throughout; nothing was changed between the failing and the succeeding runs.
+    `https://claude.ai/api/mcp/auth_callback?code=…&state=…` sent every time, yet the browser
+    never delivered it. **Root cause (found 2026-09-09, after an eighth blocked approval on
+    reconnect): our own bug, not the phone.** The consent page's
+    `Content-Security-Policy: … form-action 'self'` header made Chrome/Edge refuse to follow the
+    post-form-submission 302 to claude.ai (`form-action` is enforced against the redirects that
+    follow a form POST, not just the form's target). The 16:38Z re-Connect succeeded precisely
+    because consent was already on file — `/authorize/continue` issued the code via a plain GET
+    redirect, no form submission, so the CSP check never applied. An earlier revision of this
+    bullet claimed "server side was correct throughout"; the redirect was correct, but the header
+    served with the consent page was the blocker. Fixed by `consent_csp(redirect_uri)` (PR #26,
+    `fix/oauth-consent-csp`), which appends the client's DCR-validated redirect origin to
+    `form-action`.
   - Two of the earlier attempts used a connector URL with a stray space (`/api%20/v1/mcp` → 404
     on every MCP POST and on the path-suffixed PRM lookup); claude.ai then fell back to the
     root PRM document and still registered a client. Re-adding with the exact URL fixed it.
@@ -338,4 +346,7 @@ What §4 deferred was then done, in order, on 2026-09-08:
     `adkc_DnnUs…`, `adkc_YCNyU…`, `adkc_fxAZU…`, `adkc_E2tyd…`, `adkc_QMvqA…` — the last one
     is the live connector); the others can be cleaned up from Admin → Connected apps → Revoke.
 - **Steps 5–7 (Connected apps shows the client with live token counts + `last_used_at`; Revoke;
-  claude.ai re-prompts) — still owner-pending.**
+  claude.ai re-prompts) — still owner-pending.** Note: the owner's 2026-09-09 disconnect +
+  reconnect attempt re-hit the CSP bug above (a deleted client means a fresh consent form, whose
+  post-Approve redirect the header blocked) — a fresh Connect only works reliably once PR #26 is
+  deployed (stopgap: Firefox, which does not enforce `form-action` on redirects).

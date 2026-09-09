@@ -101,6 +101,18 @@ def validate_redirect_uri(uri: str) -> None:
     closed here for the same reason the rest of this function is defence-in-depth: rejects any
     control character or whitespace anywhere in the raw string, before it ever reaches `urlsplit`.
 
+    mcp-oauth CSP hotfix review, finding I-1: this validated `redirect_uri` is also the source of
+    the origin `app.routes.oauth_consent_html.consent_csp` appends onto the consent page's
+    `form-action` directive — a header value, not markup, so `html.escape` never runs on it. A
+    literal `;` in the raw string survives straight into `urlsplit(...).netloc`
+    (`urlsplit("https://evil.com;fake-directive/cb").netloc == "evil.com;fake-directive"`), and
+    without this check that `;` would ride along into the served CSP header, appending a second,
+    attacker-named directive token (bounded impact — no directive *value* is smuggleable, since
+    every whitespace character is independently rejected above, but a real correctness gap in a
+    stated security invariant). Rejected here, at the one place every `redirect_uri` in the system
+    is validated, rather than requiring `consent_csp` to re-implement sanitization for a value it
+    only ever reads back out.
+
     Args:
         uri: one candidate redirect URI from the registration request.
 
@@ -118,6 +130,12 @@ def validate_redirect_uri(uri: str) -> None:
         raise OAuthError(
             "invalid_redirect_uri",
             f"redirect_uris: {uri!r} must not contain whitespace or control characters.",
+        )
+
+    if ";" in uri:
+        raise OAuthError(
+            "invalid_redirect_uri",
+            f"redirect_uris: {uri!r} must not contain a semicolon.",
         )
 
     try:

@@ -37,6 +37,7 @@ import re
 import urllib.parse
 from datetime import UTC, datetime
 
+import pytest
 from auth_helpers import FakeGoogleOAuthClient, login_as
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -62,7 +63,15 @@ _DECISION_PATH = "/api/v1/oauth/authorize/decision"
 #: Not yet exported by any existing module (`app.routes.oauth_consent_html` lands this task's
 #: GREEN step) — defined locally per this file's own module docstring.
 _AUTHORIZE_COOKIE_NAME = "advisordesk_oauth_authz"
-_CONSENT_CSP = "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'"
+#: The header the consent page for `_REDIRECT_URI` is expected to carry once
+#: `hotfix-csp-brief.md` lands: `consent_csp(_REDIRECT_URI)`'s own `CONSENT_CSP` base
+#: (`form-action 'self'`) with `_REDIRECT_URI`'s origin (`https://claude.ai`) appended — the fix
+#: for Chrome/Edge enforcing `form-action` against the 302 that FOLLOWS the consent form's POST
+#: (the client's own redirect target), not just the form's own same-origin POST target. Was the
+#: bare `"default-src 'none'; style-src 'unsafe-inline'; form-action 'self'"` before this hotfix;
+#: still not assumed to be a module export, so defined locally per this file's own module
+#: docstring.
+_CONSENT_CSP = "default-src 'none'; style-src 'unsafe-inline'; form-action 'self' https://claude.ai"
 
 _REDIRECT_URI = "https://claude.ai/api/mcp/auth_callback"
 #: RFC 7636 Appendix B's worked example: `S256(_CODE_VERIFIER) == _CODE_CHALLENGE`.
@@ -169,6 +178,88 @@ def _reach_consent(
     nonce_match = _NONCE_RE.search(html)
     assert nonce_match is not None, html
     return html, nonce_match.group(1)
+
+
+# ---------------------------------------------------------------------------
+# consent_csp: appends the client's redirect_uri origin onto form-action (hotfix-csp brief).
+# `app.routes.oauth_consent_html.consent_csp` does not exist yet — imported inside each test
+# function (not at module level) so the rest of this file keeps collecting even before the
+# hotfix's GREEN step lands (mirrors this file's own established "not yet exported" pattern for
+# module-level constants like `_AUTHORIZE_COOKIE_NAME` above).
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("redirect_uri", "expected"),
+    [
+        (
+            "https://claude.ai/api/mcp/auth_callback",
+            "default-src 'none'; style-src 'unsafe-inline'; form-action 'self' https://claude.ai",
+        ),
+        (
+            "https://example.com:8443/cb?x=1",
+            "default-src 'none'; style-src 'unsafe-inline'; "
+            "form-action 'self' https://example.com:8443",
+        ),
+        (
+            "http://127.0.0.1:33418/callback",
+            "default-src 'none'; style-src 'unsafe-inline'; "
+            "form-action 'self' http://127.0.0.1:33418",
+        ),
+    ],
+)
+def test_consent_csp_appends_redirect_origin(redirect_uri: str, expected: str) -> None:
+    """`consent_csp(redirect_uri)` appends `" {scheme}://{netloc}"` onto `CONSENT_CSP`'s own
+    `form-action 'self'` directive when `redirect_uri` parses to a non-empty scheme AND netloc —
+    the hotfix for Chrome/Edge enforcing `form-action` against the redirect that FOLLOWS the
+    consent form's POST (the client's own callback origin), not just the form's own same-origin
+    POST target (hotfix-csp brief, "Expected values", verbatim)."""
+    from app.routes.oauth_consent_html import consent_csp
+
+    assert consent_csp(redirect_uri) == expected
+
+
+@pytest.mark.parametrize("redirect_uri", ["not a uri", ""])
+def test_consent_csp_falls_back_on_unparseable_redirect_uri(redirect_uri: str) -> None:
+    """A `redirect_uri` that does not yield both a non-empty scheme AND a non-empty netloc (an
+    empty string, or a string with neither) falls back to the bare `CONSENT_CSP` unchanged
+    (hotfix-csp brief, "Expected values": `consent_csp("not a uri") == CONSENT_CSP`,
+    `consent_csp("") == CONSENT_CSP`)."""
+    from app.routes.oauth_consent_html import CONSENT_CSP, consent_csp
+
+    assert consent_csp(redirect_uri) == CONSENT_CSP
+
+
+def test_consent_csp_falls_back_when_origin_contains_semicolon() -> None:
+    """Fix round 1, hotfix-csp review finding I-1 (belt-and-suspenders): `consent_csp` no longer
+    trusts `validate_redirect_uri` alone to keep a `;` out of the derived origin — it re-checks
+    the origin it just built and falls back to `CONSENT_CSP` unchanged if it contains a `;` or any
+    whitespace. `urlsplit("https://evil.com;x/cb").netloc == "evil.com;x"`, so a `redirect_uri`
+    that (were it not now also rejected by `validate_redirect_uri`, see
+    `tests/test_oauth_register.py::test_register_rejects_semicolon_redirect_uri`) would otherwise
+    inject a second, attacker-named CSP directive token onto `form-action`."""
+    from app.routes.oauth_consent_html import CONSENT_CSP, consent_csp
+
+    assert consent_csp("https://evil.com;x/cb") == CONSENT_CSP
+
+
+def test_consent_csp_falls_back_on_urlsplit_value_error() -> None:
+    """Fix round 1, hotfix-csp review finding M-1: the implementer report previously claimed the
+    `except ValueError` branch was exercised by the two `["not a uri", ""]` fallback cases above —
+    it was not (neither raises; both just parse to an empty scheme/netloc and hit the *next* `if`
+    instead). Verified empirically in this environment that `urlsplit` DOES raise `ValueError` for
+    a bracket-mismatched IPv6-looking authority: `urllib.parse.urlsplit("http://[invalid")` raises
+    `ValueError: Invalid IPv6 URL` (the same input shape `validate_redirect_uri`'s own I-1 fix
+    round 1 guards against, `tests/test_oauth_register.py::
+    test_register_rejects_malformed_bracket_authority`). This test genuinely exercises the
+    `except ValueError: return CONSENT_CSP` branch, not just the sibling empty-scheme/netloc one.
+    """
+    with pytest.raises(ValueError):
+        urllib.parse.urlsplit("http://[invalid")
+
+    from app.routes.oauth_consent_html import CONSENT_CSP, consent_csp
+
+    assert consent_csp("http://[invalid") == CONSENT_CSP
 
 
 # ---------------------------------------------------------------------------

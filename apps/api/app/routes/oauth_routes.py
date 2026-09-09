@@ -63,7 +63,7 @@ from app.models.schemas.oauth import (
     TokenResponse,
 )
 from app.routes.deps import get_oauth_token_session, get_rate_limiter, get_session, get_settings
-from app.routes.oauth_consent_html import CONSENT_CSP, render_consent_page
+from app.routes.oauth_consent_html import consent_csp, render_consent_page
 from app.routes.ratelimit import RateLimiter
 from app.services.errors import OAuthError, OAuthRedirectError
 from app.services.oauth_clients import (
@@ -421,7 +421,7 @@ def oauth_authorize_continue(
         headers={
             "Cache-Control": "no-store",
             "Pragma": "no-cache",
-            "Content-Security-Policy": CONSENT_CSP,
+            "Content-Security-Policy": consent_csp(pending.redirect_uri),
         },
     )
 

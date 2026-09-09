@@ -276,6 +276,29 @@ def test_register_rejects_control_character_or_whitespace_redirect_uri(tmp_engin
         assert response.headers.get("cache-control") == "no-store"
 
 
+def test_register_rejects_semicolon_redirect_uri(tmp_engine: Engine) -> None:
+    """mcp-oauth CSP hotfix review, finding I-1: a `;` in the raw `redirect_uri` survives straight
+    into `urlsplit(...).netloc` (`urlsplit("https://evil.com;fake-directive/cb").netloc ==
+    "evil.com;fake-directive"`) and was not rejected anywhere in `validate_redirect_uri` — so it
+    would ride along into `app.routes.oauth_consent_html.consent_csp`'s appended origin, injecting
+    a second, attacker-named token onto the consent page's `form-action` directive. Rejected here,
+    at the one place every `redirect_uri` in the system is validated.
+    """
+    app = _build_app(tmp_engine)
+    client = TestClient(app)
+
+    response = client.post(
+        "/api/v1/oauth/register",
+        json={"redirect_uris": ["https://evil.com;fake-directive/cb"]},
+    )
+
+    assert response.status_code == 400, response.text
+    body = response.json()
+    assert body["error"] == "invalid_redirect_uri"
+    assert "error_description" in body
+    assert response.headers.get("cache-control") == "no-store"
+
+
 def test_register_rejects_empty_fragment(tmp_engine: Engine) -> None:
     """Fix round 1, finding I-3: `https://a.example/cb#` (a lone trailing `#`, no fragment text)
     previously passed the original `if parts.fragment:` truthiness check — `urlsplit(...)

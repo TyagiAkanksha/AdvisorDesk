@@ -230,6 +230,38 @@ def test_consent_csp_falls_back_on_unparseable_redirect_uri(redirect_uri: str) -
     assert consent_csp(redirect_uri) == CONSENT_CSP
 
 
+def test_consent_csp_falls_back_when_origin_contains_semicolon() -> None:
+    """Fix round 1, hotfix-csp review finding I-1 (belt-and-suspenders): `consent_csp` no longer
+    trusts `validate_redirect_uri` alone to keep a `;` out of the derived origin — it re-checks
+    the origin it just built and falls back to `CONSENT_CSP` unchanged if it contains a `;` or any
+    whitespace. `urlsplit("https://evil.com;x/cb").netloc == "evil.com;x"`, so a `redirect_uri`
+    that (were it not now also rejected by `validate_redirect_uri`, see
+    `tests/test_oauth_register.py::test_register_rejects_semicolon_redirect_uri`) would otherwise
+    inject a second, attacker-named CSP directive token onto `form-action`."""
+    from app.routes.oauth_consent_html import CONSENT_CSP, consent_csp
+
+    assert consent_csp("https://evil.com;x/cb") == CONSENT_CSP
+
+
+def test_consent_csp_falls_back_on_urlsplit_value_error() -> None:
+    """Fix round 1, hotfix-csp review finding M-1: the implementer report previously claimed the
+    `except ValueError` branch was exercised by the two `["not a uri", ""]` fallback cases above —
+    it was not (neither raises; both just parse to an empty scheme/netloc and hit the *next* `if`
+    instead). Verified empirically in this environment that `urlsplit` DOES raise `ValueError` for
+    a bracket-mismatched IPv6-looking authority: `urllib.parse.urlsplit("http://[invalid")` raises
+    `ValueError: Invalid IPv6 URL` (the same input shape `validate_redirect_uri`'s own I-1 fix
+    round 1 guards against, `tests/test_oauth_register.py::
+    test_register_rejects_malformed_bracket_authority`). This test genuinely exercises the
+    `except ValueError: return CONSENT_CSP` branch, not just the sibling empty-scheme/netloc one.
+    """
+    with pytest.raises(ValueError):
+        urllib.parse.urlsplit("http://[invalid")
+
+    from app.routes.oauth_consent_html import CONSENT_CSP, consent_csp
+
+    assert consent_csp("http://[invalid") == CONSENT_CSP
+
+
 # ---------------------------------------------------------------------------
 # The consent page itself: renders, escapes, no script tags.
 # ---------------------------------------------------------------------------

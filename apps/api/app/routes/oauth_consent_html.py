@@ -51,12 +51,16 @@ def consent_csp(redirect_uri: str) -> str:
     origin) restores the redirect while keeping every other directive as locked-down as
     `CONSENT_CSP`.
 
-    The interpolated origin is safe to embed literally: `redirect_uri` is DCR-validated
-    (`validate_redirect_uri`, `app/services/oauth_clients.py`) before ever reaching a
-    `PendingAuthorization`, and that validator already rejects whitespace/control characters,
-    userinfo, backslashes, fragments, and any scheme other than `https` (or `http` for the
-    loopback carve-out) — so it cannot carry a CSP metacharacter (`;`, whitespace) that would let
-    the interpolation smuggle in an extra directive.
+    `redirect_uri` is DCR-validated (`validate_redirect_uri`, `app/services/oauth_clients.py`)
+    before ever reaching a `PendingAuthorization`, and that validator rejects whitespace/control
+    characters, userinfo, backslashes, fragments, `;` (mcp-oauth CSP hotfix review, finding I-1 —
+    a `;` in the raw `redirect_uri` used to survive straight into `urlsplit(...).netloc` and ride
+    along into this header, appending a second, attacker-named CSP directive token), and any
+    scheme other than `https` (or `http` for the loopback carve-out). This function does NOT rely
+    on that validator alone, though: it re-checks the derived origin itself below (belt-and-
+    suspenders — a defence-in-depth module, per this file's own module docstring, does not get to
+    assume its one upstream guard is infallible or will never change), falling back to
+    `CONSENT_CSP` unchanged if the origin ever contains a `;` or any whitespace.
 
     Args:
         redirect_uri: the pending authorization's registered `redirect_uri`. Not re-validated
@@ -65,7 +69,8 @@ def consent_csp(redirect_uri: str) -> str:
 
     Returns:
         `CONSENT_CSP` with `" {scheme}://{netloc}"` appended to it when `redirect_uri` parses to a
-        non-empty scheme and netloc; otherwise `CONSENT_CSP` unchanged.
+        non-empty scheme and netloc and that derived origin carries no `;` or whitespace;
+        otherwise `CONSENT_CSP` unchanged.
     """
     try:
         parts = urlsplit(redirect_uri)
@@ -73,7 +78,10 @@ def consent_csp(redirect_uri: str) -> str:
         return CONSENT_CSP
     if not parts.scheme or not parts.netloc:
         return CONSENT_CSP
-    return f"{CONSENT_CSP} {parts.scheme}://{parts.netloc}"
+    origin = f"{parts.scheme}://{parts.netloc}"
+    if ";" in origin or any(c.isspace() for c in origin):
+        return CONSENT_CSP
+    return f"{CONSENT_CSP} {origin}"
 
 
 _SCOPE_LINE = "mcp — use the AdvisorDesk MCP tools (admin-level access)"

@@ -19,3 +19,9 @@ export const MARKDOWN_TABLE_LABEL = 'Table';
 // p8 final: `ChatSkeleton`'s `role="status"` label; also adopted by the three existing
 // skeletons (ContentListSkeleton, ArticleSkeleton) in place of their literal.
 export const LOADING_LABEL = 'Loading';
+
+// phase-8 task-08 (DESIGN.md §B1): site shell copy — nav labels and the PRD §8 disclaimer.
+export const NAV_ARTICLES_LABEL = 'Articles';
+export const NAV_ASK_LABEL = 'Ask a question';
+/** PRD §8 verbatim — the seed-content disclaimer, shown in the footer and on every article. */
+export const DISCLAIMER = 'Sample content for demonstration purposes — not financial advice.';

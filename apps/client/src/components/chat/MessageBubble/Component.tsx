@@ -50,7 +50,7 @@ export default function Component({ message }: MessageBubbleProps) {
   const citations = message.citations ?? [];
   const answer = (
     <>
-      <Markdown markdown={message.text} />
+      <Markdown markdown={message.text} variant="chat" />
       <CitationList citations={citations} />
     </>
   );

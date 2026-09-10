@@ -1,6 +1,10 @@
-// task-04 Interfaces: `{markdown: string}` in — frozen contract, also used by
-// apps/admin/src/components/content/MarkdownPreview (props unchanged across the internals
-// swap) and reused verbatim by phase-4 task-05 for assistant answers.
+export type MarkdownVariant = 'article' | 'chat';
+
 export interface MarkdownProps {
+  /** Markdown source. Prop name is the frozen contract from phase-3 task-04 — unchanged. */
   markdown: string;
+  /** 'article' (default): reading sizes/margins. 'chat': body2, tighter, headings capped at h4 size. */
+  variant?: MarkdownVariant;
+  /** 1 → a `#` in the source renders as <h2> because the screen already owns the page h1. */
+  headingOffset?: 0 | 1;
 }

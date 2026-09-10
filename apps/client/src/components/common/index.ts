@@ -6,6 +6,8 @@ export { Card } from './Card';
 export type { CardProps } from './Card';
 export { Chip } from './Chip';
 export type { ChipProps } from './Chip';
+export { Divider } from './Divider';
+export type { DividerProps } from './Divider';
 export { EmptyState } from './EmptyState';
 export type { EmptyStateProps } from './EmptyState';
 export { ErrorState } from './ErrorState';

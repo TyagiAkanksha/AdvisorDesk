@@ -47,11 +47,13 @@ describe('ArticleScreen', () => {
   it('renders the markdown body through the Markdown component — real structure, not raw text or a mock', () => {
     render(<ArticleScreen article={article} />);
 
-    // `body_md`'s `## Key Considerations` must come out as a genuine level-2 heading — proof
-    // it went through the shared Markdown renderer (never our own component mocked out, per
-    // FRONTEND-CONVENTIONS.md §7), not dumped as a raw `<pre>`/text blob.
+    // `body_md`'s `## Key Considerations` must come out as a genuine heading — proof it went
+    // through the shared Markdown renderer (never our own component mocked out, per
+    // FRONTEND-CONVENTIONS.md §7), not dumped as a raw `<pre>`/text blob. phase-8 task-03:
+    // `ArticleScreen` now passes `headingOffset={1}` unconditionally (the screen owns the page
+    // h1), so a source `##` lands one level deeper, at h3 — see that task's `Component.tsx`.
     expect(
-      screen.getByRole('heading', { level: 2, name: 'Key Considerations' }),
+      screen.getByRole('heading', { level: 3, name: 'Key Considerations' }),
     ).toBeInTheDocument();
     expect(screen.getByText('Evaluate your current tax bracket')).toBeInTheDocument();
     expect(screen.getByText('Consider a multi-year conversion plan')).toBeInTheDocument();
@@ -83,6 +85,29 @@ describe('ArticleScreen', () => {
     // demonstration purposes — not financial advice."
     expect(
       screen.getByText(/Sample content for demonstration purposes.*not financial advice/i),
+    ).toBeInTheDocument();
+  });
+
+  // phase-8 task-03 (DESIGN.md §A2): every CMS body starts with `# <title>` (seed convention),
+  // duplicating the title `ArticleScreen` already renders. RED until the implementer strips the
+  // leading heading and passes `headingOffset={1}` so `##` sections land at h3 under the one h1.
+  it('renders the title exactly once as the only h1 even though body_md starts with `# <title>`', () => {
+    render(
+      <ArticleScreen
+        article={{
+          title: 'Medicare Basics',
+          slug: 'medicare-basics',
+          tags: ['insurance'],
+          published_at: '2026-08-09T00:00:00Z',
+          body_md: '# Medicare Basics\n\n## Parts of Medicare\n\nBody.',
+        }}
+      />,
+    );
+
+    expect(screen.getAllByRole('heading', { level: 1 })).toHaveLength(1);
+    expect(screen.getByRole('heading', { level: 1, name: 'Medicare Basics' })).toBeInTheDocument();
+    expect(
+      screen.getByRole('heading', { level: 3, name: 'Parts of Medicare' }),
     ).toBeInTheDocument();
   });
 });

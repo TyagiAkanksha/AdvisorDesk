@@ -115,4 +115,65 @@ describe('Markdown', () => {
     expect(screen.getByText(/Safe intro text/)).toBeInTheDocument();
     expect(screen.getByText(/Safe outro text/)).toBeInTheDocument();
   });
+
+  // phase-8 task-03 (DESIGN.md §A2): `variant`/`headingOffset` are new props — RED until the
+  // implementer adds them to `MarkdownProps` and wires up the full tag mapping.
+  it('shifts every heading down one level when headingOffset is 1 (the screen owns the h1)', () => {
+    render(<Markdown markdown={'# Top\n\n## Section'} headingOffset={1} />);
+
+    expect(screen.queryByRole('heading', { level: 1 })).toBeNull();
+    expect(screen.getByRole('heading', { level: 2, name: 'Top' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { level: 3, name: 'Section' })).toBeInTheDocument();
+  });
+
+  it('caps chat-variant headings at the h4 size while keeping their semantic level', () => {
+    render(<Markdown markdown={'# Answer heading'} variant="chat" />);
+
+    const heading = screen.getByRole('heading', { level: 1, name: 'Answer heading' });
+    expect(heading.className).toContain('MuiTypography-h4');
+  });
+
+  it('uses body2 paragraphs in the chat variant and body1 in the article variant', () => {
+    const { unmount } = render(<Markdown markdown={'Plain paragraph.'} variant="chat" />);
+    expect(screen.getByText('Plain paragraph.').className).toContain('MuiTypography-body2');
+    unmount();
+
+    render(<Markdown markdown={'Plain paragraph.'} />);
+    expect(screen.getByText('Plain paragraph.').className).toContain('MuiTypography-body1');
+  });
+
+  it('renders fenced code as <pre><code> and inline code as <code>', () => {
+    const { container } = render(
+      <Markdown markdown={'Use `pnpm test`.\n\n```\nconst x = 1;\n```'} />,
+    );
+
+    const pre = container.querySelector('pre');
+    expect(pre).not.toBeNull();
+    expect(pre?.querySelector('code')).toHaveTextContent('const x = 1;');
+    expect(container.querySelectorAll('code')).toHaveLength(2);
+  });
+
+  it('renders blockquotes, thematic breaks, and images as their semantic elements', () => {
+    const { container } = render(
+      <Markdown markdown={'> Quoted line\n\n---\n\n![A chart](https://example.com/c.png)'} />,
+    );
+
+    expect(container.querySelector('blockquote')).toHaveTextContent('Quoted line');
+    expect(screen.getByRole('separator')).toBeInTheDocument();
+    expect(screen.getByRole('img', { name: 'A chart' })).toHaveAttribute(
+      'src',
+      'https://example.com/c.png',
+    );
+  });
+
+  it('opens external links in a new tab with rel=noopener and keeps internal links in-tab', () => {
+    render(<Markdown markdown={'[out](https://example.com) and [in](/content/slug)'} />);
+
+    const external = screen.getByRole('link', { name: 'out' });
+    expect(external).toHaveAttribute('target', '_blank');
+    expect(external).toHaveAttribute('rel', 'noopener noreferrer');
+    const internal = screen.getByRole('link', { name: 'in' });
+    expect(internal).not.toHaveAttribute('target');
+    expect(internal).toHaveAttribute('href', '/content/slug');
+  });
 });

@@ -85,4 +85,15 @@ describe('MessageBubble', () => {
 
     expect(screen.queryByRole('status')).not.toBeInTheDocument();
   });
+
+  // phase-8 task-03 (DESIGN.md §A2): assistant answers switch the shared Markdown renderer to
+  // the compact `chat` variant (body2, tighter margins). RED until `MessageBubble` passes
+  // `variant="chat"` to `<Markdown>`.
+  it('renders assistant markdown in the compact chat variant (body2 paragraphs)', () => {
+    const message: ChatMessage = { role: 'assistant', text: 'Short answer.' };
+
+    render(<MessageBubble message={message} />);
+
+    expect(screen.getByText('Short answer.').className).toContain('MuiTypography-body2');
+  });
 });

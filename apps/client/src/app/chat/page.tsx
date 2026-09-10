@@ -9,7 +9,7 @@ export const metadata: Metadata = { title: 'Ask a question' };
 
 export default function Page() {
   return (
-    <PageContainer>
+    <PageContainer maxWidth="md">
       <ChatScreen />
     </PageContainer>
   );

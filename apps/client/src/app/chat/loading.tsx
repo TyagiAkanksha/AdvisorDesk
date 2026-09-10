@@ -5,7 +5,7 @@ import { ChatSkeleton } from '@/components/chat/ChatSkeleton';
 // (docs/FRONTEND-CONVENTIONS.md §9 — never a silent blank region), mirroring app/loading.tsx.
 export default function Loading() {
   return (
-    <PageContainer>
+    <PageContainer maxWidth="md">
       <ChatSkeleton />
     </PageContainer>
   );

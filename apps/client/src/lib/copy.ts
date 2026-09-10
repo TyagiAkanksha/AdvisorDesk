@@ -42,3 +42,21 @@ export function noArticlesTaggedMessage(tag: string): string {
 // and the chat CTA label.
 export const RELATED_ARTICLES_TITLE = 'Related articles';
 export const ASK_ABOUT_TOPIC_LABEL = 'Ask a question about this topic';
+
+// phase-8 task-12 (DESIGN.md §B4): chat screen — welcome state, Sources list, and composer copy.
+export const CHAT_TITLE = 'Ask a question';
+export const CHAT_DESCRIPTION = 'Answers come from the published articles and cite their sources.';
+export const SUGGESTED_QUESTIONS = [
+  'When can I withdraw from a Roth IRA without penalty?',
+  'How does Medicare enrollment work if I am still employed at 65?',
+  'What is the difference between a 529 plan and a UTMA account?',
+  'Do I need umbrella insurance?',
+] as const;
+export const THINKING_LABEL = 'Thinking…';
+export const SOURCES_LABEL = 'Sources';
+export const MESSAGE_FIELD_LABEL = 'Message';
+export const SEND_LABEL = 'Send';
+export const STOP_LABEL = 'Stop';
+export const NEW_CONVERSATION_LABEL = 'New conversation';
+export const CHAT_HELPER_TEXT =
+  'Educational answers grounded in the published articles — not financial advice.';

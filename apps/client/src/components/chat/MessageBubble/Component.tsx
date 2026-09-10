@@ -1,4 +1,4 @@
-import { Box, Icon, Typography } from '@/components/common';
+import { Alert, Box, Paper, Typography } from '@/components/common';
 import { Markdown } from '@/components/content/Markdown';
 
 import { CitationList } from '../CitationList';
@@ -11,15 +11,12 @@ import type { MessageBubbleProps } from './interface';
 // §7.4/§7.5) wraps its content in `role="status"`, mirroring `common/EmptyState`'s existing
 // precedent (docs/FRONTEND-CONVENTIONS.md §9) rather than inventing a new pattern.
 //
-// task-05 review round 1 (I-1, I-2): both findings were "semantically distinct, visually
-// identical" — a sighted user could only infer a refusal from the ABSENCE of citation chips, and
-// user/assistant turns rendered as an undifferentiated transcript (the "You"/"Assistant" labels
-// existed only in `aria-label`). Fixed with theme-token-driven styling only (no hardcoded hex):
-// user turns are right-aligned, `primary.main`-filled bubbles; assistant turns are left-aligned,
-// neutral (`grey.100`) bubbles; a refusal additionally gets a bordered `warning`-toned panel and
-// an `Info` icon, distinct from both. `role="status"`/`role="article"` and every pinned
-// accessible name are unchanged — this is a pure presentation layer on top of them.
-const BUBBLE_MAX_WIDTH = '75%';
+// phase-8 task-12 (DESIGN.md §B4): navy/outlined `Paper` bubbles (replacing the old hand-styled
+// `grey.100`/`primary.main` `Box`es) capped at 640px so a wide viewport doesn't stretch a chat
+// turn edge-to-edge; a refusal is now a real `common/Alert` (`severity="warning"
+// variant="outlined"`) instead of a bordered `Box` + `Info` icon — same pinned `role="status"` +
+// text, MUI's own warning styling.
+const BUBBLE_MAX_WIDTH = 'min(100%, 640px)';
 
 export default function Component({ message }: MessageBubbleProps) {
   if (message.role === 'user') {
@@ -29,20 +26,21 @@ export default function Component({ message }: MessageBubbleProps) {
         aria-label="You"
         sx={{ display: 'flex', justifyContent: 'flex-end', mb: 2 }}
       >
-        <Box
+        <Paper
+          elevation={0}
           sx={{
-            maxWidth: BUBBLE_MAX_WIDTH,
             bgcolor: 'primary.main',
             color: 'primary.contrastText',
-            borderRadius: 2,
             px: 2,
-            py: 1,
+            py: 1.5,
+            borderRadius: 2,
+            maxWidth: BUBBLE_MAX_WIDTH,
           }}
         >
           <Typography component="p" sx={{ color: 'inherit' }}>
             {message.text}
           </Typography>
-        </Box>
+        </Paper>
       </Box>
     );
   }
@@ -62,30 +60,21 @@ export default function Component({ message }: MessageBubbleProps) {
       sx={{ display: 'flex', justifyContent: 'flex-start', mb: 2 }}
     >
       {message.refusal ? (
-        <Box
+        <Alert
+          severity="warning"
+          variant="outlined"
           role="status"
-          sx={{
-            display: 'flex',
-            alignItems: 'flex-start',
-            gap: 1,
-            maxWidth: BUBBLE_MAX_WIDTH,
-            bgcolor: 'warning.light',
-            border: 1,
-            borderColor: 'warning.main',
-            borderRadius: 2,
-            px: 2,
-            py: 1.5,
-          }}
-        >
-          <Icon name="Info" label="No published guidance" size="small" />
-          <Box sx={{ minWidth: 0 }}>{answer}</Box>
-        </Box>
-      ) : (
-        <Box
-          sx={{ maxWidth: BUBBLE_MAX_WIDTH, bgcolor: 'grey.100', borderRadius: 2, px: 2, py: 1 }}
+          sx={{ maxWidth: BUBBLE_MAX_WIDTH }}
         >
           {answer}
-        </Box>
+        </Alert>
+      ) : (
+        <Paper
+          variant="outlined"
+          sx={{ px: 2, py: 1.5, borderRadius: 2, maxWidth: BUBBLE_MAX_WIDTH }}
+        >
+          {answer}
+        </Paper>
       )}
     </Box>
   );

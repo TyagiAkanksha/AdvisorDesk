@@ -9,6 +9,8 @@ import InfoOutlinedIcon from '@mui/icons-material/InfoOutlined';
 import LogoutIcon from '@mui/icons-material/Logout';
 import MenuIcon from '@mui/icons-material/Menu';
 import SearchIcon from '@mui/icons-material/Search';
+import SendIcon from '@mui/icons-material/Send';
+import StopIcon from '@mui/icons-material/Stop';
 
 import type { IconProps } from './interface';
 
@@ -16,6 +18,7 @@ import type { IconProps } from './interface';
 // for why). Add a named import above + an entry here when a screen needs an icon that
 // isn't listed yet — `IconProps['name']` tracks this object automatically via `keyof typeof`.
 // `Info` added task-05 review round 1 (I-1): the refusal bubble's visual marker.
+// `Send`/`Stop` added phase-8 task-12: the chat composer's submit/abort icon button.
 export const ICONS = {
   Add: AddIcon,
   Article: ArticleIcon,
@@ -28,6 +31,8 @@ export const ICONS = {
   Logout: LogoutIcon,
   Menu: MenuIcon,
   Search: SearchIcon,
+  Send: SendIcon,
+  Stop: StopIcon,
 } as const;
 
 export default function Component({ name, label, size = 'medium', color }: IconProps) {

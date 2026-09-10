@@ -57,7 +57,9 @@ describe('MessageBubble', () => {
 
     render(<MessageBubble message={message} />);
 
-    const link = screen.getByRole('link', { name: '[1]' });
+    // phase-8 task-12 (DESIGN.md §B4): Sources links are now titled ('[1] <title>'), not bare
+    // '[n]' chips — a reader no longer has to hover to learn what a citation points to.
+    const link = screen.getByRole('link', { name: '[1] Roth IRA Basics' });
     expect(link).toHaveAttribute('href', '/content/roth-ira-basics');
   });
 
@@ -106,5 +108,23 @@ describe('MessageBubble', () => {
 
     expect(screen.getByRole('heading', { level: 2, name: 'Heading' })).toBeInTheDocument();
     expect(screen.queryByRole('heading', { level: 1 })).not.toBeInTheDocument();
+  });
+
+  // phase-8 task-12 (DESIGN.md §B4): a refusal now renders as a real `common/Alert`
+  // (`severity="warning"`, `variant="outlined"`) rather than a hand-styled bordered `Box` +
+  // `Info` icon — same pinned `role="status"` + text, now with MUI's own warning styling.
+  it('renders the refusal as an outlined warning alert in the status region', () => {
+    const message: ChatMessage = {
+      role: 'assistant',
+      text: 'No published guidance covers this.',
+      citations: [],
+      refusal: true,
+    };
+    render(<MessageBubble message={message} />);
+
+    const status = screen.getByRole('status');
+    // MUI 9 emits separate `outlined` + `colorWarning` classes (no combined `outlinedWarning`).
+    expect(status.className).toContain('MuiAlert-outlined');
+    expect(status.className).toContain('MuiAlert-colorWarning');
   });
 });

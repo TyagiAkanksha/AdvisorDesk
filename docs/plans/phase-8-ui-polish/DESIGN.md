@@ -94,7 +94,6 @@ export const theme = responsiveFontSizes(
     components: {
       MuiButton: { defaultProps: { disableElevation: true } },
       MuiCard: { defaultProps: { variant: 'outlined' } },
-      MuiPaper: { defaultProps: { elevation: 0 } },
       MuiChip: { defaultProps: { size: 'small' } },
       MuiLink: { defaultProps: { underline: 'hover' } },
       MuiTextField: { defaultProps: { size: 'small' } },
@@ -102,6 +101,11 @@ export const theme = responsiveFontSizes(
   }),
 );
 ```
+
+**Ruling (final review, 2026-09-10):** no `MuiPaper` default elevation — Menu, Dialog, Popover,
+Autocomplete and Drawer all render Paper and would go flat; flat surfaces are requested
+explicitly with `variant="outlined"` at the call site (`Card` defaults to outlined because it is
+never a popup).
 
 Fonts per app (`app/layout.tsx`): **client** heading = Source Serif 4, body = Inter;
 **admin** heading = Inter, body = Inter (an admin tool is sans-serif throughout). Each font is
@@ -186,10 +190,12 @@ in `eslint.config.mjs` fails on any `@mui/*` import outside `src/components/comm
   signed-in users; client: the B1 header/footer once they exist — in sub-phase A it is a plain
   centred block).
 - `app/loading.tsx` at root + per data route (`content/[slug]`, admin `(app)/content`,
-  `(app)/content/[id]`): skeletons shaped like the screen they replace.
+  `(app)/content/[id]`): skeletons shaped like the screen they replace (admin ships one
+  `(app)/loading.tsx` with a generic `PageSkeleton` in A; the table- and editor-shaped skeletons
+  come with C4/C5).
 - `app/icon.tsx` (both apps — both `favicon.ico` files turned out to be the untouched
   create-next-app default, so both are deleted): Next `ImageResponse`, 32×32 navy rounded
-  square with a white serif "A".
+  square with a white "A".
 - `metadata.title` per page: client `"<Article title> · AdvisorDesk"`, `"Ask a question ·
   AdvisorDesk"`; admin `"Content · AdvisorDesk Admin"` etc. (`title.template` in layout).
 - Client `error.tsx` passes Next's `reset` into `ErrorState action={{label:'Try again', onClick: reset}}`.

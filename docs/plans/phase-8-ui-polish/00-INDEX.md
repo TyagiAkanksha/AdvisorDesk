@@ -111,6 +111,7 @@ the owner has done the live visual checkpoint (DESIGN.md §6).
 ### Visual checkpoint (⚠️ owner, after 07)
 
 Chrome at 1440×900 and 390×844 against a local `pnpm dev` of both apps (or the deployed
-sub-phase A): no 96px headings; article title appears once; buttons in sentence case; off-white
-page background with white cards/paper; `/does-not-exist` shows the branded 404 in both apps;
-browser tab shows the navy "A" icon; `loading.tsx` skeletons visible on a throttled reload.
+sub-phase A): no 96px headings; no heading smaller than its surrounding body text; article title
+appears once; buttons in sentence case; off-white page background with white cards/paper;
+`/does-not-exist` shows the branded 404 in both apps; browser tab shows the navy "A" icon;
+`loading.tsx` skeletons visible on a throttled reload.

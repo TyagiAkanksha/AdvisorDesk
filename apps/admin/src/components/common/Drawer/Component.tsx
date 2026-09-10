@@ -17,8 +17,9 @@ export default function Component({
   open = true,
   onClose,
   id,
+  width: widthProp,
 }: DrawerProps) {
-  const width = anchor === 'left' ? NAV_DRAWER_WIDTH : PANEL_DRAWER_WIDTH;
+  const width = widthProp ?? (anchor === 'left' ? NAV_DRAWER_WIDTH : PANEL_DRAWER_WIDTH);
 
   return (
     <MuiDrawer
@@ -27,6 +28,9 @@ export default function Component({
       variant={variant}
       open={open}
       onClose={onClose}
+      // MUI's recommended mobile-drawer setting for the modal variant — better open
+      // performance on phones (phase-8 task-04).
+      ModalProps={variant === 'temporary' ? { keepMounted: true } : undefined}
       sx={{
         ...(variant === 'permanent' ? { width, flexShrink: 0 } : {}),
         '& .MuiDrawer-paper': { width, boxSizing: 'border-box' },

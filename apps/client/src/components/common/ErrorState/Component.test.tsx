@@ -1,7 +1,8 @@
 // @vitest-environment jsdom
 import { cleanup, render, screen } from '@testing-library/react';
 import '@testing-library/jest-dom/vitest';
-import { afterEach, describe, expect, it } from 'vitest';
+import userEvent from '@testing-library/user-event';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { ErrorState } from '.';
 
@@ -24,5 +25,14 @@ describe('ErrorState', () => {
     render(<ErrorState message="Could not load published content." />);
 
     expect(screen.getByText('Could not load published content.')).toBeInTheDocument();
+  });
+
+  it('renders an action button inside the alert and calls it on click', async () => {
+    const onClick = vi.fn();
+    render(<ErrorState message="Could not load." action={{ label: 'Try again', onClick }} />);
+
+    await userEvent.click(screen.getByRole('button', { name: 'Try again' }));
+
+    expect(onClick).toHaveBeenCalledTimes(1);
   });
 });

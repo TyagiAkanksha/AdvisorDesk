@@ -55,6 +55,15 @@ describe('ContentListScreen', () => {
     }
   });
 
+  // p8 final I-1: theme h5/h6 (16px/14px) sit under body text under the new type scale — the
+  // card title must use a variant that still reads larger than the card body (h4, 18px).
+  it('renders the card title heading at the h4 variant', () => {
+    render(<ContentListScreen items={items} />);
+
+    const heading = screen.getByRole('heading', { level: 2, name: new RegExp(items[0]!.title) });
+    expect(heading).toHaveClass('MuiTypography-h4');
+  });
+
   it('shows a visible, non-empty empty-state message for an empty items list', () => {
     render(<ContentListScreen items={[]} />);
 

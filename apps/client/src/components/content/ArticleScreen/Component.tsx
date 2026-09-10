@@ -1,5 +1,6 @@
 import { Chip, Typography } from '@/components/common';
 import { formatPublishedDate } from '@/lib/formatDate';
+import { stripLeadingHeading } from '@/lib/markdown';
 
 import { Markdown } from '../Markdown';
 import type { ArticleScreenProps } from './interface';
@@ -28,7 +29,7 @@ export default function Component({ article }: ArticleScreenProps) {
           <Chip key={tag} label={tag} size="small" sx={{ mr: 0.5, mb: 2 }} />
         ))}
       </div>
-      <Markdown markdown={article.body_md} />
+      <Markdown markdown={stripLeadingHeading(article.body_md, article.title)} headingOffset={1} />
       <Typography
         variant="body2"
         color="text.secondary"

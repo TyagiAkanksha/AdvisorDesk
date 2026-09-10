@@ -35,4 +35,13 @@ describe('MarkdownPreview', () => {
   it('renders an empty markdown string without throwing', () => {
     expect(() => render(<MarkdownPreview markdown="" />)).not.toThrow();
   });
+
+  // phase-8 task-03: the full tag mapping (pre/code, blockquote, hr, img, table, variant,
+  // headingOffset) lives in the client twin's own test suite; this is a light mapping-drift
+  // smoke check on the admin copy.
+  it('renders fenced code as <pre><code> (the full tag mapping is live in the admin twin)', () => {
+    const { container } = render(<MarkdownPreview markdown={'```\nconst x = 1;\n```'} />);
+
+    expect(container.querySelector('pre code')).toHaveTextContent('const x = 1;');
+  });
 });

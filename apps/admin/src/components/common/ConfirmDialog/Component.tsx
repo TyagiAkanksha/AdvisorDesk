@@ -17,6 +17,7 @@ export default function Component({
   onClose,
   isPending,
   errorMessage,
+  destructive,
 }: ConfirmDialogProps) {
   return (
     <MuiDialog open={open} onClose={onClose}>
@@ -31,7 +32,12 @@ export default function Component({
         <Button onClick={onClose} disabled={isPending}>
           Cancel
         </Button>
-        <Button onClick={onConfirm} disabled={isPending} color="primary" variant="contained">
+        <Button
+          onClick={onConfirm}
+          disabled={isPending}
+          color={destructive ? 'error' : 'primary'}
+          variant="contained"
+        >
           {confirmLabel}
         </Button>
       </DialogActions>

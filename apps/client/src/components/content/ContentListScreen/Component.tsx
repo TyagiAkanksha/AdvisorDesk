@@ -15,7 +15,7 @@ export default function Component({ items }: ContentListScreenProps) {
     <div>
       {items.map((item) => (
         <Card key={item.slug} sx={{ mb: 2 }}>
-          <Typography variant="h6" component="h2" gutterBottom>
+          <Typography variant="h4" component="h2" gutterBottom>
             <Link href={`/content/${item.slug}`}>{item.title}</Link>
           </Typography>
           <div>

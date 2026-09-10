@@ -115,4 +115,132 @@ describe('Markdown', () => {
     expect(screen.getByText(/Safe intro text/)).toBeInTheDocument();
     expect(screen.getByText(/Safe outro text/)).toBeInTheDocument();
   });
+
+  // phase-8 task-03 (DESIGN.md §A2): `variant`/`headingOffset` are new props — RED until the
+  // implementer adds them to `MarkdownProps` and wires up the full tag mapping.
+  it('shifts every heading down one level when headingOffset is 1 (the screen owns the h1)', () => {
+    render(<Markdown markdown={'# Top\n\n## Section'} headingOffset={1} />);
+
+    expect(screen.queryByRole('heading', { level: 1 })).toBeNull();
+    expect(screen.getByRole('heading', { level: 2, name: 'Top' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { level: 3, name: 'Section' })).toBeInTheDocument();
+  });
+
+  it('caps chat-variant headings at the h4 size while keeping their semantic level', () => {
+    render(<Markdown markdown={'# Answer heading'} variant="chat" />);
+
+    const heading = screen.getByRole('heading', { level: 1, name: 'Answer heading' });
+    expect(heading.className).toContain('MuiTypography-h4');
+  });
+
+  it('uses body2 paragraphs in the chat variant and body1 in the article variant', () => {
+    const { unmount } = render(<Markdown markdown={'Plain paragraph.'} variant="chat" />);
+    expect(screen.getByText('Plain paragraph.').className).toContain('MuiTypography-body2');
+    unmount();
+
+    render(<Markdown markdown={'Plain paragraph.'} />);
+    expect(screen.getByText('Plain paragraph.').className).toContain('MuiTypography-body1');
+  });
+
+  it('renders fenced code as <pre><code> and inline code as <code>', () => {
+    const { container } = render(
+      <Markdown markdown={'Use `pnpm test`.\n\n```\nconst x = 1;\n```'} />,
+    );
+
+    const pre = container.querySelector('pre');
+    expect(pre).not.toBeNull();
+    expect(pre?.querySelector('code')).toHaveTextContent('const x = 1;');
+    expect(container.querySelectorAll('code')).toHaveLength(2);
+  });
+
+  it('renders blockquotes, thematic breaks, and images as their semantic elements', () => {
+    const { container } = render(
+      <Markdown markdown={'> Quoted line\n\n---\n\n![A chart](https://example.com/c.png)'} />,
+    );
+
+    expect(container.querySelector('blockquote')).toHaveTextContent('Quoted line');
+    expect(screen.getByRole('separator')).toBeInTheDocument();
+    expect(screen.getByRole('img', { name: 'A chart' })).toHaveAttribute(
+      'src',
+      'https://example.com/c.png',
+    );
+  });
+
+  it('opens external links in a new tab with rel=noopener and keeps internal links in-tab', () => {
+    render(<Markdown markdown={'[out](https://example.com) and [in](/content/slug)'} />);
+
+    const external = screen.getByRole('link', { name: 'out' });
+    expect(external).toHaveAttribute('target', '_blank');
+    expect(external).toHaveAttribute('rel', 'noopener noreferrer');
+    const internal = screen.getByRole('link', { name: 'in' });
+    expect(internal).not.toHaveAttribute('target');
+    expect(internal).toHaveAttribute('href', '/content/slug');
+  });
+
+  // fix round 1 (Important 1): the tag-map object handed to `ReactMarkdown` must be a STABLE
+  // reference across renders of the same (variant, headingOffset) pair, or react-markdown treats
+  // every renderer as a brand-new component type and unmounts/remounts the whole subtree instead
+  // of reconciling it (a real cost for e.g. `ContentEditorScreen` re-rendering `MarkdownPreview`
+  // on every keystroke). A remount would create a NEW DOM node for the same text on `rerender`.
+  it('reconciles the same DOM node across a re-render instead of remounting the subtree', () => {
+    const { rerender } = render(<Markdown markdown={'Para'} />);
+    const first = screen.getByText('Para');
+
+    rerender(<Markdown markdown={'Para'} />);
+
+    expect(screen.getByText('Para')).toBe(first);
+  });
+
+  // fix round 1 (Important 2, controller ruling): `headingOffset` shifts the DOM tag (semantic
+  // outline correction) but visual SIZE follows the SOURCE level, floored at `headingOffset + 1`
+  // so a body heading never grows to the page title's own size.
+  it('sizes a shifted heading by its source level, floored so it never matches the page title size', () => {
+    render(<Markdown markdown={'## Section'} headingOffset={1} />);
+
+    const heading = screen.getByRole('heading', { level: 3, name: 'Section' });
+    expect(heading.className).toContain('MuiTypography-h2');
+  });
+
+  it('floors a top-level shifted heading at the offset size instead of the page title size', () => {
+    render(<Markdown markdown={'# Body top'} headingOffset={1} />);
+
+    const heading = screen.getByRole('heading', { level: 2, name: 'Body top' });
+    expect(heading.className).toContain('MuiTypography-h2');
+  });
+
+  // fix round 1 (Minor 3): the `table` mapping had no test of its own — pin that a GFM table
+  // renders as a real `table` role wrapped in a horizontally-scrollable container.
+  it('wraps a GFM table in a horizontally scrollable container', () => {
+    const { container } = render(
+      <Markdown markdown={'| Fund | Fee |\n| --- | --- |\n| Total Market Index | 0.03% |\n'} />,
+    );
+
+    expect(screen.getByRole('columnheader', { name: 'Fund' })).toBeInTheDocument();
+    expect(screen.getByRole('columnheader', { name: 'Fee' })).toBeInTheDocument();
+    const wrapper = container.querySelector('table')?.parentElement;
+    expect(wrapper).toHaveStyle({ overflowX: 'auto' });
+  });
+
+  // p8 final: code-block and table wrappers are labelled landmarks for screen-reader users
+  // (DESIGN.md §A2 a11y follow-up).
+  it('renders a fenced code block inside a labelled "Code block" region', () => {
+    render(<Markdown markdown={'```\nconst x = 1;\n```'} />);
+
+    const region = screen.getByRole('region', { name: 'Code block' });
+    expect(region.tagName).toBe('PRE');
+    expect(region).toHaveTextContent('const x = 1;');
+  });
+
+  it('renders a GFM table inside a labelled "Table" region', () => {
+    render(<Markdown markdown={tableFixture} />);
+
+    const region = screen.getByRole('region', { name: 'Table' });
+    expect(region.querySelector('table')).not.toBeNull();
+  });
+
+  it('renders images as lazily loaded', () => {
+    render(<Markdown markdown={'![A chart](https://example.com/c.png)'} />);
+
+    expect(screen.getByRole('img', { name: 'A chart' })).toHaveAttribute('loading', 'lazy');
+  });
 });

@@ -48,7 +48,9 @@ export default function Component() {
 
   return (
     <Box>
-      <Typography variant="h5">Connected apps</Typography>
+      <Typography variant="h2" component="h1">
+        Connected apps
+      </Typography>
       <ConnectedAppsTable items={items} onRevoke={requestRevoke} />
       <ConfirmDialog
         open={pendingRevoke !== null}

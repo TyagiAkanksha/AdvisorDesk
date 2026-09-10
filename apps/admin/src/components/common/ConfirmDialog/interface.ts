@@ -14,4 +14,7 @@ export interface ConfirmDialogProps {
   onClose: () => void;
   isPending: boolean;
   errorMessage?: string;
+  /** Destructive confirmations (delete, revoke) render the confirm button in the error colour
+   * (phase-8 task-04, DESIGN.md §2: error colour = destructive; gold is never used for delete). */
+  destructive?: boolean;
 }

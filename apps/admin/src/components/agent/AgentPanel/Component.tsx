@@ -34,7 +34,7 @@ export default function Component() {
 
   return (
     <Box sx={{ display: 'flex', flexDirection: 'column', height: '100%', p: 2 }}>
-      <Typography variant="h6" component="h2" sx={{ mb: 1 }}>
+      <Typography variant="h5" component="h2" sx={{ mb: 1 }}>
         Agent
       </Typography>
       <Box sx={{ flexGrow: 1, overflowY: 'auto' }}>

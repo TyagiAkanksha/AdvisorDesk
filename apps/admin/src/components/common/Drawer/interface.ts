@@ -10,11 +10,16 @@ import type { ReactNode } from 'react';
 export interface DrawerProps {
   children: ReactNode;
   anchor?: 'left' | 'right';
-  variant?: 'permanent' | 'persistent';
+  // 'temporary' added phase-8 task-04: the modal (overlay) variant the nav drawer switches to
+  // below the md breakpoint (DESIGN.md §C1).
+  variant?: 'permanent' | 'persistent' | 'temporary';
   /** Ignored by `variant="permanent"` (MUI: always open). Required to actually toggle a
-   * `variant="persistent"` drawer. */
+   * `variant="persistent"` or `variant="temporary"` drawer. */
   open?: boolean;
   onClose?: () => void;
   // WR-13 (6R task-11): lets a toggle button's `aria-controls` reference this panel's DOM id.
   id?: string;
+  /** Overrides the anchor's default width (240 left / 400 right), e.g. '100vw' on phones
+   * (phase-8 task-04). */
+  width?: number | string;
 }

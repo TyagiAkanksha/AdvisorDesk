@@ -85,4 +85,26 @@ describe('MessageBubble', () => {
 
     expect(screen.queryByRole('status')).not.toBeInTheDocument();
   });
+
+  // phase-8 task-03 (DESIGN.md §A2): assistant answers switch the shared Markdown renderer to
+  // the compact `chat` variant (body2, tighter margins). RED until `MessageBubble` passes
+  // `variant="chat"` to `<Markdown>`.
+  it('renders assistant markdown in the compact chat variant (body2 paragraphs)', () => {
+    const message: ChatMessage = { role: 'assistant', text: 'Short answer.' };
+
+    render(<MessageBubble message={message} />);
+
+    expect(screen.getByText('Short answer.').className).toContain('MuiTypography-body2');
+  });
+
+  // p8 final: a `#` heading in an assistant answer must never emit a page-level `<h1>` — the
+  // screen already owns that. `headingOffset={1}` shifts it down to `<h2>`.
+  it('shifts a markdown heading in an answer down to h2 and emits no page-level h1', () => {
+    const message: ChatMessage = { role: 'assistant', text: '# Heading' };
+
+    render(<MessageBubble message={message} />);
+
+    expect(screen.getByRole('heading', { level: 2, name: 'Heading' })).toBeInTheDocument();
+    expect(screen.queryByRole('heading', { level: 1 })).not.toBeInTheDocument();
+  });
 });

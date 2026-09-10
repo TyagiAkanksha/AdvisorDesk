@@ -12,6 +12,9 @@ describe('root layout fonts', () => {
     expect(LAYOUT).toContain("variable: '--font-heading'");
     expect(LAYOUT).toContain("variable: '--font-body'");
     expect(LAYOUT).toContain('Source_Serif_4(');
+    expect(LAYOUT).toContain("display: 'swap'");
+    expect(LAYOUT).toContain("subsets: ['latin']");
+    expect(LAYOUT).toContain('Inter({');
     expect(LAYOUT).toMatch(
       /<html lang="en" className=\{`\$\{headingFont\.variable\} \$\{bodyFont\.variable\}`\}>/,
     );

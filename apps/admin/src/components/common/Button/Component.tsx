@@ -19,8 +19,11 @@ import type { ButtonProps } from './interface';
 // new root `app/not-found.tsx` (task-07) is a Server Component that renders this `Button` with
 // an internal `href` — exactly the "future server-component call site" the Link comment
 // predicted — and `next build` 500s on it without this directive.
+// p8 final: `//` guard added to match `common/Link`'s `isInternalHref` — a protocol-relative
+// `//host` URL starts with `/` but must render as a plain external anchor, not route through
+// next/link.
 function isInternalHref(href: string): boolean {
-  return href.startsWith('/');
+  return href.startsWith('/') && !href.startsWith('//');
 }
 
 export default function Component({ children, href, ...rest }: ButtonProps) {

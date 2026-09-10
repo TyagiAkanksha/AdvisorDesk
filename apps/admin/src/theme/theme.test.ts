@@ -33,6 +33,10 @@ describe('theme tokens', () => {
     expect(theme.typography.button.textTransform).toBe('none');
   });
 
+  it('sets the shared 8px corner radius', () => {
+    expect(theme.shape.borderRadius).toBe(8);
+  });
+
   it('sets flat, outlined, small, hover-underline component defaults', () => {
     expect(theme.components?.MuiButton?.defaultProps?.disableElevation).toBe(true);
     expect(theme.components?.MuiCard?.defaultProps?.variant).toBe('outlined');

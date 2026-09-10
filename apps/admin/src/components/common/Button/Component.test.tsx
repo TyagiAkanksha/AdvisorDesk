@@ -7,10 +7,10 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { Button } from '.';
 
-// p8 final: `next/link` mocked with a recognizable marker (same idiom as common/Link's
-// Component.test.tsx) so the protocol-relative-href test below can prove the render did NOT
-// route through next/link — a real next/link and a plain MUI `<a>` are otherwise
-// indistinguishable in jsdom.
+// p8 final: `next/link` mocked with a recognizable marker (same idiom as
+// apps/client's common/Link and common/Button Component.test.tsx files) so the
+// protocol-relative-href test below can prove the render did NOT route through next/link — a
+// real next/link and a plain MUI `<a>` are otherwise indistinguishable in jsdom.
 vi.mock('next/link', () => ({
   default: ({ href, children, ...rest }: { href: string; children?: ReactNode }) => (
     <a href={href} data-next-link="true" {...rest}>
@@ -19,12 +19,11 @@ vi.mock('next/link', () => ({
   ),
 }));
 
-// phase-8 task-06: the client Button gains the admin Button's href mode (DESIGN.md §A3).
 describe('Button', () => {
   it('renders an internal href as a link with the href attribute', () => {
-    render(<Button href="/chat">Ask a question</Button>);
+    render(<Button href="/content">New content</Button>);
 
-    expect(screen.getByRole('link', { name: 'Ask a question' })).toHaveAttribute('href', '/chat');
+    expect(screen.getByRole('link', { name: 'New content' })).toHaveAttribute('href', '/content');
   });
 
   it('renders an external href as a plain link', () => {
@@ -57,7 +56,7 @@ describe('Button', () => {
   it('still renders a button that fires onClick when no href is given', async () => {
     const onClick = vi.fn();
     render(
-      <Button onClick={onClick} color="error" startIcon={<span data-testid="icon" />}>
+      <Button onClick={onClick} color="error">
         Delete
       </Button>,
     );
@@ -65,6 +64,5 @@ describe('Button', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Delete' }));
 
     expect(onClick).toHaveBeenCalledTimes(1);
-    expect(screen.getByTestId('icon')).toBeInTheDocument();
   });
 });

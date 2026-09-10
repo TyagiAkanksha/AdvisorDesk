@@ -12,6 +12,8 @@ describe('root layout fonts', () => {
     expect(LAYOUT).toContain("variable: '--font-heading'");
     expect(LAYOUT).toContain("variable: '--font-body'");
     expect(LAYOUT.match(/Inter\(/g)?.length ?? 0).toBeGreaterThanOrEqual(2);
+    expect(LAYOUT).toContain("display: 'swap'");
+    expect(LAYOUT).toContain("subsets: ['latin']");
     expect(LAYOUT).toMatch(
       /<html lang="en" className=\{`\$\{headingFont\.variable\} \$\{bodyFont\.variable\}`\}>/,
     );

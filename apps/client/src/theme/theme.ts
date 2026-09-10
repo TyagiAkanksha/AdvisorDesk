@@ -26,7 +26,8 @@ const baseTheme = createTheme({
   },
   typography: {
     fontFamily: BODY_FONT,
-    // Desktop sizes; responsiveFontSizes below scales h1–h3 down on phones (factor 2).
+    // Desktop sizes; responsiveFontSizes below scales every variant above 1rem (h1–h4) down on
+    // phones (factor 2) — h5/h6 and body are already at or under 1rem, so they hold steady.
     h1: { fontFamily: HEADING_FONT, fontSize: '2.25rem', fontWeight: 600, lineHeight: 1.2 },
     h2: { fontFamily: HEADING_FONT, fontSize: '1.75rem', fontWeight: 600, lineHeight: 1.25 },
     h3: { fontFamily: HEADING_FONT, fontSize: '1.375rem', fontWeight: 600, lineHeight: 1.3 },

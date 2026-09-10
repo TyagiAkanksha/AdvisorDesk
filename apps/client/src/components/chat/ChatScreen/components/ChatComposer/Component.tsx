@@ -1,3 +1,5 @@
+import { useEffect, useRef } from 'react';
+
 import { Button, IconButton, Stack, TextField, Typography } from '@/components/common';
 import {
   CHAT_HELPER_TEXT,
@@ -23,6 +25,26 @@ export default function Component({
   onNewConversation,
   showNewConversation,
 }: ChatComposerProps) {
+  // fix round 1 (M-2): a Stop click or a stream finishing both leave focus nowhere obvious (the
+  // Stop/Send icon button swaps out from under the pointer, or the field was disabled the whole
+  // time) — restore focus to the message field so the user can keep typing without reaching for
+  // the mouse. `wasStreamingRef` remembers the *previous* render's `streaming` so the effect can
+  // detect the true -> false transition instead of firing on every render.
+  const inputRef = useRef<HTMLInputElement | HTMLTextAreaElement>(null);
+  const wasStreamingRef = useRef(streaming);
+
+  useEffect(() => {
+    if (wasStreamingRef.current && !streaming) {
+      inputRef.current?.focus();
+    }
+    wasStreamingRef.current = streaming;
+  }, [streaming]);
+
+  const handleNewConversation = () => {
+    onNewConversation();
+    inputRef.current?.focus();
+  };
+
   return (
     <form
       onSubmit={(event) => {
@@ -43,6 +65,7 @@ export default function Component({
           maxRows={6}
           fullWidth
           disabled={streaming}
+          inputRef={inputRef}
         />
         {streaming ? (
           <IconButton name="Stop" label={STOP_LABEL} onClick={onStop} color="primary" />
@@ -64,7 +87,7 @@ export default function Component({
           {CHAT_HELPER_TEXT}
         </Typography>
         {showNewConversation && (
-          <Button variant="text" size="small" onClick={onNewConversation}>
+          <Button variant="text" size="small" onClick={handleNewConversation}>
             {NEW_CONVERSATION_LABEL}
           </Button>
         )}

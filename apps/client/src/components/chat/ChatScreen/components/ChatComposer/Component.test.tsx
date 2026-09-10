@@ -53,4 +53,25 @@ describe('ChatComposer', () => {
     await userEvent.click(screen.getByRole('button', { name: 'New conversation' }));
     expect(onNewConversation).toHaveBeenCalledTimes(1);
   });
+
+  // fix round 1 (M-2): the Stop/Send icon swaps out from under the pointer once a stream
+  // finishes, and the field was disabled the whole time — refocus it so the user can keep typing
+  // without reaching for the mouse.
+  it('refocuses the message field once streaming ends', () => {
+    const { rerender } = render(<ChatComposer {...base} streaming />);
+
+    rerender(<ChatComposer {...base} streaming={false} />);
+
+    expect(document.activeElement).toBe(screen.getByRole('textbox', { name: 'Message' }));
+  });
+
+  it('refocuses the message field after New conversation is clicked', async () => {
+    const onNewConversation = vi.fn();
+    render(<ChatComposer {...base} showNewConversation onNewConversation={onNewConversation} />);
+
+    await userEvent.click(screen.getByRole('button', { name: 'New conversation' }));
+
+    expect(onNewConversation).toHaveBeenCalledTimes(1);
+    expect(document.activeElement).toBe(screen.getByRole('textbox', { name: 'Message' }));
+  });
 });

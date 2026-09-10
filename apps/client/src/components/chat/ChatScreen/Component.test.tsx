@@ -352,6 +352,38 @@ describe('ChatScreen', () => {
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
+  // fix round 1 (I-2): the composer's Enter/Shift+Enter keyboard rule (`useChatComposer`) was
+  // only unit-tested against a synthetic key object — nothing exercised it through the real
+  // `<textarea>` end to end.
+  it('Enter sends the typed question and clears the field; Shift+Enter inserts a newline instead of sending', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(
+        streamResponse([
+          { event: 'token', data: { text: 'Answer.' } },
+          { event: 'citations', data: { citations: [] } },
+          { event: 'done', data: { session_id: 's-13', message_id: 'm-13' } },
+        ]),
+      ),
+    );
+    const user = userEvent.setup();
+    render(<ChatScreen />);
+    const input = screen.getByRole('textbox', { name: 'Message' });
+
+    await user.type(input, 'Enter question{Enter}');
+
+    expect(await screen.findByRole('article', { name: 'You' })).toHaveTextContent('Enter question');
+    expect(input).toHaveValue('');
+
+    // Let the stream finish (re-enables the field) before typing again.
+    await screen.findByText('Answer.');
+    await user.type(input, 'Line one{Shift>}{Enter}{/Shift}Line two');
+
+    // No second user turn was sent — Shift+Enter inserted a newline into the field instead.
+    expect(screen.getAllByRole('article', { name: 'You' })).toHaveLength(1);
+    expect(input).toHaveValue('Line one\nLine two');
+  });
+
   it('New conversation clears the transcript and shows the welcome state again', async () => {
     vi.stubGlobal(
       'fetch',

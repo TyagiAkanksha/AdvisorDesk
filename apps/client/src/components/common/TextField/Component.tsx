@@ -14,6 +14,7 @@ export default function Component({
   minRows,
   maxRows,
   onKeyDown,
+  inputRef,
 }: TextFieldProps) {
   const handleChange = (event: ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
     onChange(event.target.value);
@@ -38,6 +39,7 @@ export default function Component({
       minRows={minRows}
       maxRows={maxRows}
       onKeyDown={onKeyDown ? handleKeyDown : undefined}
+      inputRef={inputRef}
       size="small"
     />
   );

@@ -26,7 +26,12 @@ export default function Component() {
         <ChatWelcome onAsk={send} />
       ) : (
         messages.map((message, index) => (
-          // Index-as-key is safe here: `messages` is append-only, never reordered or spliced.
+          // fix round 1 (M-3): index-as-key is safe here because every surviving index keeps
+          // identical content across re-renders — `retry` (task 11) slices the array back to
+          // (but not including) the last user message and then re-sends that exact same text,
+          // so indices 0..n-1 are untouched and only new indices are appended; `reset` empties
+          // the array outright, so no stale index survives at all. Neither path reorders or
+          // mutates content in place at an existing index.
           <MessageBubble key={index} message={message} />
         ))
       )}
@@ -35,7 +40,10 @@ export default function Component() {
         <Alert
           severity="error"
           action={
-            <Button size="small" color="inherit" onClick={retry}>
+            // fix round 1 (M-4): disabled while streaming — a retry can only fire once the
+            // failed request has actually finished unwinding (matches `useChatStream.retry`'s
+            // own re-entrancy guard, which is a silent no-op mid-stream).
+            <Button size="small" color="inherit" onClick={retry} disabled={streaming}>
               {RETRY_LABEL}
             </Button>
           }

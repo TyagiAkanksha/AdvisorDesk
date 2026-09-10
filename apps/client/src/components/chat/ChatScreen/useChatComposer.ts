@@ -35,7 +35,12 @@ export function useChatComposer({ disabled, onSend }: UseChatComposerArgs): UseC
   };
 
   const onKeyDown = (event: KeyboardEvent<HTMLInputElement | HTMLTextAreaElement>) => {
-    if (event.key === 'Enter' && !event.shiftKey) {
+    // fix round 1, M-1: while an IME composition is in progress (e.g. confirming a kanji
+    // candidate), the browser's own "confirm" Enter must reach the input un-intercepted — we
+    // neither preventDefault nor submit on it, exactly as if it weren't an Enter press at all.
+    // `nativeEvent` is optional-chained: the authored unit tests' `key()` fixture builds a plain
+    // object with no `nativeEvent` at all (a real DOM KeyboardEvent always has one).
+    if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent?.isComposing) {
       event.preventDefault();
       submit();
     }

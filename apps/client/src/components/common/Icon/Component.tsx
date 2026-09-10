@@ -17,7 +17,9 @@ import type { IconProps } from './interface';
 // Explicit registry, NOT `import * as icons from '@mui/icons-material'` (see interface.ts
 // for why). Add a named import above + an entry here when a screen needs an icon that
 // isn't listed yet — `IconProps['name']` tracks this object automatically via `keyof typeof`.
-// `Info` added task-05 review round 1 (I-1): the refusal bubble's visual marker.
+// `Info` added task-05 review round 1 (I-1) for the refusal bubble's visual marker; phase-8
+// task-12 fix round 1 (M-7) moved that marker onto `common/Alert`'s own built-in severity icon —
+// kept here for the client registry, currently unreferenced.
 // `Send`/`Stop` added phase-8 task-12: the chat composer's submit/abort icon button.
 export const ICONS = {
   Add: AddIcon,

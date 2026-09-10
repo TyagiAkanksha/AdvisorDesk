@@ -8,6 +8,11 @@ import type { CitationListProps } from './interface';
 // arrives already deduped-and-ordered by the server (`app.rag.synthesis.dedupe_citations`);
 // `index` here is purely display numbering, never a re-sort key. Renders nothing for an empty
 // array (the refusal case — `MessageBubble` owns showing that distinctly via its own alert).
+//
+// fix round 1, I-1: the browser's own `<ol>` decimal marker was doubling up with our own
+// `[n]` prefix ("1. [1] Homeowners Liability Basics") — `listStyleType: 'none'` (not the
+// `listStyle` shorthand, which also touches position/image we don't need to reset) suppresses
+// just the marker; `pl: 0` removes the indent that marker used to occupy.
 export default function Component({ citations }: CitationListProps) {
   if (citations.length === 0) {
     return null;
@@ -18,7 +23,7 @@ export default function Component({ citations }: CitationListProps) {
       <Typography variant="overline" component="p">
         {SOURCES_LABEL}
       </Typography>
-      <Box component="ol" sx={{ pl: 2.5, m: 0 }}>
+      <Box component="ol" sx={{ listStyleType: 'none', pl: 0, m: 0 }}>
         {citations.map((citation, index) => (
           <li key={citation.content_id}>
             <Link href={`/content/${citation.slug}`}>

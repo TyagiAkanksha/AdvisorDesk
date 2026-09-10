@@ -26,6 +26,14 @@ describe('CitationList', () => {
     expect(links[1]).toHaveAttribute('href', '/content/traditional-ira-basics');
   });
 
+  // fix round 1 (I-1): the browser's own decimal `<ol>` marker was doubling up with the `[n]`
+  // prefix already in each link's text ("1. [1] Homeowners Liability Basics").
+  it('suppresses the browser default list marker so the [n] prefix is not doubled', () => {
+    render(<CitationList citations={citations} />);
+
+    expect(screen.getByRole('list')).toHaveStyle({ listStyleType: 'none' });
+  });
+
   it('renders nothing for an empty citations array', () => {
     const { container } = render(<CitationList citations={[]} />);
     expect(container).toBeEmptyDOMElement();

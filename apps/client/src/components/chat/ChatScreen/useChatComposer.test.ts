@@ -54,4 +54,22 @@ describe('useChatComposer', () => {
     act(() => result.current.submit());
     expect(onSend).not.toHaveBeenCalled();
   });
+
+  // fix round 1 (M-1): the Enter that confirms an IME composition (e.g. a kanji candidate)
+  // must not also submit the form — it's a "commit this text" keystroke, not "send the message".
+  it('does not send while an IME composition is in progress', () => {
+    const onSend = vi.fn();
+    const { result } = renderHook(() => useChatComposer({ disabled: false, onSend }));
+    act(() => result.current.setDraft('Q'));
+
+    const composingEnter = key({
+      nativeEvent: {
+        isComposing: true,
+      } as unknown as KeyboardEvent<HTMLTextAreaElement>['nativeEvent'],
+    });
+    act(() => result.current.onKeyDown(composingEnter));
+
+    expect(composingEnter.preventDefault).not.toHaveBeenCalled();
+    expect(onSend).not.toHaveBeenCalled();
+  });
 });

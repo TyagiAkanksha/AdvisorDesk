@@ -37,3 +37,8 @@ export const SHOW_ALL_LABEL = 'Show all';
 export function noArticlesTaggedMessage(tag: string): string {
   return `No articles tagged '${tag}'.`;
 }
+
+// phase-8 task-10 (DESIGN.md §B3): article reading layout — related-articles section heading
+// and the chat CTA label.
+export const RELATED_ARTICLES_TITLE = 'Related articles';
+export const ASK_ABOUT_TOPIC_LABEL = 'Ask a question about this topic';

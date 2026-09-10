@@ -1,3 +1,5 @@
+import { cache } from 'react';
+
 import type { PublicContentDetailDto, PublicContentSummaryDto } from '@/types';
 
 // Single source of truth for the apps/api base URL these server-side fetch helpers target.
@@ -36,16 +38,22 @@ export async function getPublishedContent(): Promise<PublicContentSummaryDto[]> 
 
 // PRD §5.3: a deleted item's slug 404s and is never reassigned — the thin `[slug]` page turns a
 // `null` return into Next's `notFound()` (404 page), never an error state.
-export async function getContentBySlug(slug: string): Promise<PublicContentDetailDto | null> {
-  const response = await fetch(
-    `${resolveApiBaseUrl()}/api/v1/public/content/${encodeURIComponent(slug)}`,
-    { cache: 'no-store' },
-  );
-  if (response.status === 404) {
-    return null;
-  }
-  if (!response.ok) {
-    throw new Error(`Failed to fetch content "${slug}": ${response.status}`);
-  }
-  return (await response.json()) as PublicContentDetailDto;
-}
+//
+// phase-8 task-10: wrapped in React's `cache()` — a request-scoped memo — so `generateMetadata`
+// and the page component (both call `getContentBySlug(slug)` for the same request) dedupe to one
+// fetch instead of two.
+export const getContentBySlug = cache(
+  async (slug: string): Promise<PublicContentDetailDto | null> => {
+    const response = await fetch(
+      `${resolveApiBaseUrl()}/api/v1/public/content/${encodeURIComponent(slug)}`,
+      { cache: 'no-store' },
+    );
+    if (response.status === 404) {
+      return null;
+    }
+    if (!response.ok) {
+      throw new Error(`Failed to fetch content "${slug}": ${response.status}`);
+    }
+    return (await response.json()) as PublicContentDetailDto;
+  },
+);

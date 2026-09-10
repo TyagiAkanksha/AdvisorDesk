@@ -39,13 +39,13 @@ const article: PublicContentDetail = {
 
 describe('ArticleScreen', () => {
   it('renders the title as the top-level heading', () => {
-    render(<ArticleScreen article={article} />);
+    render(<ArticleScreen article={article} related={[]} />);
 
     expect(screen.getByRole('heading', { level: 1, name: article.title })).toBeInTheDocument();
   });
 
   it('renders the markdown body through the Markdown component — real structure, not raw text or a mock', () => {
-    render(<ArticleScreen article={article} />);
+    render(<ArticleScreen article={article} related={[]} />);
 
     // `body_md`'s `## Key Considerations` must come out as a genuine heading — proof it went
     // through the shared Markdown renderer (never our own component mocked out, per
@@ -62,7 +62,7 @@ describe('ArticleScreen', () => {
   });
 
   it('renders each tag as a visible chip', () => {
-    render(<ArticleScreen article={article} />);
+    render(<ArticleScreen article={article} related={[]} />);
 
     for (const tag of article.tags) {
       expect(screen.getByText(tag)).toBeInTheDocument();
@@ -70,7 +70,7 @@ describe('ArticleScreen', () => {
   });
 
   it('renders the published date visibly', () => {
-    const { container } = render(<ArticleScreen article={article} />);
+    const { container } = render(<ArticleScreen article={article} related={[]} />);
 
     // Not pinning an exact format — just that the fixture's `published_at` year is visible
     // somewhere on the page (matches the precedent in
@@ -79,7 +79,7 @@ describe('ArticleScreen', () => {
   });
 
   it('renders the §8 disclaimer footer text on every article', () => {
-    render(<ArticleScreen article={article} />);
+    render(<ArticleScreen article={article} related={[]} />);
 
     // Verbatim PRD §8 wording, tolerant of the exact dash glyph: "Sample content for
     // demonstration purposes — not financial advice."
@@ -101,6 +101,7 @@ describe('ArticleScreen', () => {
           published_at: '2026-08-09T00:00:00Z',
           body_md: '# Medicare Basics\n\n## Parts of Medicare\n\nBody.',
         }}
+        related={[]}
       />,
     );
 
@@ -109,5 +110,32 @@ describe('ArticleScreen', () => {
     expect(
       screen.getByRole('heading', { level: 3, name: 'Parts of Medicare' }),
     ).toBeInTheDocument();
+  });
+
+  it('renders the back link, tag links to the filter, the disclaimer as an info alert, and the chat CTA', () => {
+    render(<ArticleScreen article={article} related={[]} />);
+
+    expect(screen.getByRole('link', { name: /Back to articles/ })).toHaveAttribute('href', '/');
+    expect(screen.getByRole('link', { name: article.tags[0]! })).toHaveAttribute(
+      'href',
+      `/?tag=${encodeURIComponent(article.tags[0]!)}`,
+    );
+    expect(screen.getByRole('alert')).toHaveTextContent('not financial advice');
+    expect(screen.getByRole('link', { name: 'Ask a question about this topic' })).toHaveAttribute(
+      'href',
+      '/chat',
+    );
+  });
+
+  it('renders related articles when given and omits the section when empty', () => {
+    const related = [
+      { slug: 'r', title: 'Related One', tags: ['x'], published_at: '2026-01-01T00:00:00Z' },
+    ];
+    const { unmount } = render(<ArticleScreen article={article} related={related} />);
+    expect(screen.getByRole('region', { name: 'Related articles' })).toBeInTheDocument();
+    unmount();
+
+    render(<ArticleScreen article={article} related={[]} />);
+    expect(screen.queryByRole('region', { name: 'Related articles' })).toBeNull();
   });
 });

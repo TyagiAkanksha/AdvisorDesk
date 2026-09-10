@@ -10,3 +10,12 @@ export const NOT_FOUND_MESSAGE = 'The page you’re looking for doesn’t exist 
 export const BACK_TO_ARTICLES_LABEL = 'Back to articles';
 export const PAGE_ERROR_MESSAGE = 'Something went wrong loading this page. Please try again.';
 export const RETRY_LABEL = 'Try again';
+
+// p8 final: a11y region labels for Markdown's code-block and table wrappers (both apps —
+// identical names keep the Markdown twin byte-identical).
+export const MARKDOWN_CODE_BLOCK_LABEL = 'Code block';
+export const MARKDOWN_TABLE_LABEL = 'Table';
+
+// p8 final: `ChatSkeleton`'s `role="status"` label; also adopted by the three existing
+// skeletons (ContentListSkeleton, ArticleSkeleton) in place of their literal.
+export const LOADING_LABEL = 'Loading';

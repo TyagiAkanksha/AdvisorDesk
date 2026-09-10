@@ -96,4 +96,15 @@ describe('MessageBubble', () => {
 
     expect(screen.getByText('Short answer.').className).toContain('MuiTypography-body2');
   });
+
+  // p8 final: a `#` heading in an assistant answer must never emit a page-level `<h1>` — the
+  // screen already owns that. `headingOffset={1}` shifts it down to `<h2>`.
+  it('shifts a markdown heading in an answer down to h2 and emits no page-level h1', () => {
+    const message: ChatMessage = { role: 'assistant', text: '# Heading' };
+
+    render(<MessageBubble message={message} />);
+
+    expect(screen.getByRole('heading', { level: 2, name: 'Heading' })).toBeInTheDocument();
+    expect(screen.queryByRole('heading', { level: 1 })).not.toBeInTheDocument();
+  });
 });

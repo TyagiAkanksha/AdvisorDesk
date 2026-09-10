@@ -4,6 +4,7 @@ import type { Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 
 import { Box, Divider, Link, Typography } from '@/components/common';
+import { MARKDOWN_CODE_BLOCK_LABEL, MARKDOWN_TABLE_LABEL } from '@/lib/copy';
 
 import type { MarkdownProps, MarkdownVariant } from './interface';
 
@@ -150,6 +151,8 @@ function buildComponents(variant: MarkdownVariant, headingOffset: 0 | 1): Compon
       <Box
         component="pre"
         tabIndex={0}
+        role="region"
+        aria-label={MARKDOWN_CODE_BLOCK_LABEL}
         sx={{
           fontFamily: MONOSPACE,
           fontSize: '0.875rem',
@@ -167,7 +170,12 @@ function buildComponents(variant: MarkdownVariant, headingOffset: 0 | 1): Compon
       </Box>
     ),
     table: ({ children }) => (
-      <Box tabIndex={0} sx={{ overflowX: 'auto', my: spacing.blockMy }}>
+      <Box
+        tabIndex={0}
+        role="region"
+        aria-label={MARKDOWN_TABLE_LABEL}
+        sx={{ overflowX: 'auto', my: spacing.blockMy }}
+      >
         <Box
           component="table"
           sx={{
@@ -197,6 +205,7 @@ function buildComponents(variant: MarkdownVariant, headingOffset: 0 | 1): Compon
       <img
         src={typeof src === 'string' ? src : undefined}
         alt={alt ?? ''}
+        loading="lazy"
         style={{ maxWidth: '100%', height: 'auto', borderRadius: 8 }}
       />
     ),

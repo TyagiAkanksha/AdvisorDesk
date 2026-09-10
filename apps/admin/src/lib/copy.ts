@@ -5,3 +5,12 @@ export const NOT_FOUND_TITLE = 'Page not found';
 export const NOT_FOUND_MESSAGE = 'The page you’re looking for doesn’t exist or has been removed.';
 export const BACK_TO_DASHBOARD_LABEL = 'Back to dashboard';
 export const PLACEHOLDER_DASH = '—';
+
+// p8 final: a11y region labels for MarkdownPreview's code-block and table wrappers (both apps —
+// identical names keep the Markdown twin byte-identical).
+export const MARKDOWN_CODE_BLOCK_LABEL = 'Code block';
+export const MARKDOWN_TABLE_LABEL = 'Table';
+
+// p8 final: `PageSkeleton`'s `role="status"` label (mirrors apps/client's ChatSkeleton and
+// existing skeletons).
+export const LOADING_LABEL = 'Loading';

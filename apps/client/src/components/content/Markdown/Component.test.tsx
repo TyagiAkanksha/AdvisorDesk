@@ -220,4 +220,27 @@ describe('Markdown', () => {
     const wrapper = container.querySelector('table')?.parentElement;
     expect(wrapper).toHaveStyle({ overflowX: 'auto' });
   });
+
+  // p8 final: code-block and table wrappers are labelled landmarks for screen-reader users
+  // (DESIGN.md §A2 a11y follow-up).
+  it('renders a fenced code block inside a labelled "Code block" region', () => {
+    render(<Markdown markdown={'```\nconst x = 1;\n```'} />);
+
+    const region = screen.getByRole('region', { name: 'Code block' });
+    expect(region.tagName).toBe('PRE');
+    expect(region).toHaveTextContent('const x = 1;');
+  });
+
+  it('renders a GFM table inside a labelled "Table" region', () => {
+    render(<Markdown markdown={tableFixture} />);
+
+    const region = screen.getByRole('region', { name: 'Table' });
+    expect(region.querySelector('table')).not.toBeNull();
+  });
+
+  it('renders images as lazily loaded', () => {
+    render(<Markdown markdown={'![A chart](https://example.com/c.png)'} />);
+
+    expect(screen.getByRole('img', { name: 'A chart' })).toHaveAttribute('loading', 'lazy');
+  });
 });

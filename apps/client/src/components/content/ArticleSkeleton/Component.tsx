@@ -1,10 +1,11 @@
 import { Box, Skeleton } from '@/components/common';
+import { LOADING_LABEL } from '@/lib/copy';
 
 const LINE_COUNT = 8;
 
 export default function Component() {
   return (
-    <Box role="status" aria-label="Loading">
+    <Box role="status" aria-label={LOADING_LABEL}>
       <Skeleton variant="text" width="70%" height={44} />
       <Skeleton variant="text" width="25%" sx={{ mb: 3 }} />
       {Array.from({ length: LINE_COUNT }, (_, index) => (

@@ -117,14 +117,16 @@ Tests: `src/theme/theme.twin.test.ts` (node env) in each app reads both files vi
 assert MUI default sizes/uppercase text are updated by the implementer (they were pinning
 accidents, not rules).
 
-### A2 Markdown renderer (twin) — `client/src/components/content/Markdown` + `admin/src/components/common/MarkdownPreview`
+### A2 Markdown renderer (twin) — `client/src/components/content/Markdown` + `admin/src/components/content/MarkdownPreview`
 
 Same `Component.tsx` source in both places, twin-guarded like the theme (a test asserts the two
 `Component.tsx` files are byte-identical; each app keeps its own `interface.ts`/`index.ts`).
+(Plan-time correction: the admin twin lives under `content/`, not `common/` — it imports from
+`@/components/common`, so it cannot live inside it.)
 
 ```ts
 export interface MarkdownProps {
-  children: string;                 // markdown source
+  markdown: string;                 // markdown source — the existing frozen prop name, kept
   variant?: 'article' | 'chat';     // default 'article'
   headingOffset?: 0 | 1;            // 1 → '#' renders as h2 (screen owns the h1); default 0
 }
@@ -134,13 +136,15 @@ Mapping (react-markdown `components`): h1–h6 → `Typography` (offset applied,
 at h4-size), p → `Typography body1|body2`, a → `Link` (external href → `target="_blank"
 rel="noopener noreferrer"`), ul/ol/li → themed lists (`pl: 3`, `mb: 1`), blockquote → left
 border + secondary text, `code` inline → monospace with subtle background, `pre` → block,
-monospace, `overflowX: 'auto'`, table/thead/tbody/tr/th/td → MUI `Table` family, hr → `Divider`,
-img → `max-width: 100%`. No `rehype-raw` (HTML stays escaped — unchanged security posture).
+monospace, `overflowX: 'auto'`, table → a semantic `<table>` styled through `Box` (borders,
+padding, header tint; wrapped in an `overflowX: auto` box — keeps the twin's dependencies to
+primitives both apps already share), hr → `Divider`, img → `max-width: 100%`. No `rehype-raw`
+(HTML stays escaped — unchanged security posture).
 
-`lib/markdown.ts` (each app, tested, pure): `stripLeadingHeading(body: string, title: string):
-string` — removes a first line `# <title>` (case/whitespace-insensitive match) plus following
-blank lines; returns `body` unchanged otherwise. Used by client `ArticleScreen` and admin editor
-preview.
+`lib/markdown.ts` (client now; admin in C5 when its preview gains a title header — tested, pure):
+`stripLeadingHeading(body: string, title: string): string` — removes a first line `# <title>`
+(case/whitespace-insensitive match) plus following blank lines; returns `body` unchanged
+otherwise. Used by client `ArticleScreen` (A) and the admin editor preview (C5).
 
 ### A3 Primitives (`src/components/common/`)
 
@@ -150,7 +154,7 @@ and are exported from `common/index.ts`. Wrap MUI; don't restyle it beyond the t
 | App | New | Extend |
 |---|---|---|
 | admin | `Table`, `TableContainer`, `TableHead`, `TableBody`, `TableRow`, `TableCell` (thin wrappers, `TableCell` accepts `align`, `component`, `scope`); `Skeleton`; `Stack`; `Divider`; `Tooltip`; `Alert`; `Paper`; `PageHeader`; `StatCard`; `SnackbarProvider` + `useSnackbar` | `TextField` (+`error`, `helperText`, `multiline`, `minRows`, `maxRows`, `onBlur`); `ConfirmDialog` (+`destructive?: boolean` → confirm button `color="error"`); `Button` (+`href`, `startIcon`, `size`, `color: 'error'`); `NavList` items (+`icon?: IconName`, `selected?: boolean`); `ErrorState` (+`action?: {label, onClick}`); `Drawer` (+`variant: 'permanent' \| 'temporary'`, `open`, `onClose`) |
-| client | `AppBar`, `Toolbar`, `Stack`, `Divider`, `Skeleton`, `Grid`, `Tooltip`, `IconButton` (label required, like admin), `Alert`, `Paper`, `Container` (replaces `PageContainer`'s hard-coded `lg`) | `TextField` (+`multiline`, `minRows`, `maxRows`, `onKeyDown`); `Button` (+`href`, `startIcon`, `variant`, `size`); `ErrorState` (+`action`); `EmptyState` (+`icon?: IconName`, `action?`); `Chip` (+`href` via `component={Link}`, `clickable`) |
+| client | `AppBar`, `Toolbar`, `Stack`, `Divider`, `Skeleton`, `Grid`, `Tooltip`, `IconButton` (label required, like admin), `Alert`, `Paper` | `TextField` (+`multiline`, `minRows`, `maxRows`, `onKeyDown`); `Button` (+`href`, `startIcon`, `color`, `size`, `fullWidth`); `ErrorState` (+`action`); `EmptyState` (+`icon?: IconName`, `action?: {label, href}`); `PageContainer` (+`maxWidth: 'sm' \| 'md' \| 'lg'`, default `lg` — instead of a separate `Container`); `Chip` already passes MUI's generic props through (`<Chip<'a'> component="a" href clickable>`), no change needed |
 
 ```ts
 // admin PageHeader
@@ -170,9 +174,10 @@ export function useSnackbar(): SnackbarApi; // throws outside SnackbarProvider
 `SnackbarProvider` is mounted once in admin `app/providers.tsx`; `AppSnackbar` is removed after
 its last call site migrates (sub-phase C).
 
-Lint gate (both apps, in `package.json` `lint`): a grep script fails if `@mui/` is imported
-outside `src/components/common/**`, `src/theme/theme.ts`, and `src/app/providers.tsx`
-(`next/font` and `next/og` in `layout.tsx`/`icon.tsx` are not MUI imports).
+Lint gate (both apps, inside the existing `pnpm lint`): an ESLint `no-restricted-imports` block
+in `eslint.config.mjs` fails on any `@mui/*` import outside `src/components/common/**`,
+`src/theme/theme.ts`, and `src/app/providers.tsx` (`next/font` and `next/og` in
+`layout.tsx`/`icon.tsx` are not MUI imports). Pinned by an ESLint-API test per app.
 
 ### A4 Route files (both apps)
 
@@ -182,8 +187,9 @@ outside `src/components/common/**`, `src/theme/theme.ts`, and `src/app/providers
   centred block).
 - `app/loading.tsx` at root + per data route (`content/[slug]`, admin `(app)/content`,
   `(app)/content/[id]`): skeletons shaped like the screen they replace.
-- `app/icon.tsx` (client; admin keeps its `favicon.ico`): Next `ImageResponse`, 32×32 navy
-  rounded square with a white serif "A".
+- `app/icon.tsx` (both apps — both `favicon.ico` files turned out to be the untouched
+  create-next-app default, so both are deleted): Next `ImageResponse`, 32×32 navy rounded
+  square with a white serif "A".
 - `metadata.title` per page: client `"<Article title> · AdvisorDesk"`, `"Ask a question ·
   AdvisorDesk"`; admin `"Content · AdvisorDesk Admin"` etc. (`title.template` in layout).
 - Client `error.tsx` passes Next's `reset` into `ErrorState action={{label:'Try again', onClick: reset}}`.

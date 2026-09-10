@@ -71,4 +71,23 @@ describe('SnackbarProvider / useSnackbar', () => {
     await userEvent.click(screen.getByRole('button', { name: 'ok' }));
     expect(screen.getByRole('status')).toHaveTextContent('Saved');
   });
+
+  // fix round 1 (Important, plan-mandated): pins the "new notice remounts the Snackbar" rule
+  // regardless of timing — two notices must never share a key, even when they land in the same
+  // millisecond, or the auto-hide timer would not restart for the second one.
+  it('remounts the Snackbar for each new notice, even in rapid succession', async () => {
+    render(
+      <SnackbarProvider>
+        <Consumer />
+      </SnackbarProvider>,
+    );
+
+    await userEvent.click(screen.getByRole('button', { name: 'ok' }));
+    const firstRoot = screen.getByRole('status').closest('.MuiSnackbar-root');
+
+    await userEvent.click(screen.getByRole('button', { name: 'ok' }));
+    const secondRoot = screen.getByRole('status').closest('.MuiSnackbar-root');
+
+    expect(secondRoot).not.toBe(firstRoot);
+  });
 });

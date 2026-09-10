@@ -1,6 +1,7 @@
-import type { Metadata } from 'next';
 import { Inter } from 'next/font/google';
 import type { ReactNode } from 'react';
+
+import { rootMetadata } from '@/lib/metadata';
 
 import Providers from './providers';
 
@@ -11,10 +12,7 @@ import Providers from './providers';
 const headingFont = Inter({ subsets: ['latin'], display: 'swap', variable: '--font-heading' });
 const bodyFont = Inter({ subsets: ['latin'], display: 'swap', variable: '--font-body' });
 
-export const metadata: Metadata = {
-  title: 'AdvisorDesk Admin',
-  description: 'AdvisorDesk internal admin console.',
-};
+export const metadata = rootMetadata;
 
 export default function RootLayout({ children }: { children: ReactNode }) {
   return (

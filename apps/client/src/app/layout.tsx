@@ -1,6 +1,7 @@
-import type { Metadata } from 'next';
 import { Inter, Source_Serif_4 } from 'next/font/google';
 import type { ReactNode } from 'react';
+
+import { rootMetadata } from '@/lib/metadata';
 
 import Providers from './providers';
 
@@ -15,10 +16,7 @@ const headingFont = Source_Serif_4({
 });
 const bodyFont = Inter({ subsets: ['latin'], display: 'swap', variable: '--font-body' });
 
-export const metadata: Metadata = {
-  title: 'AdvisorDesk',
-  description: 'Ask questions about our published research and insights.',
-};
+export const metadata = rootMetadata;
 
 export default function RootLayout({ children }: { children: ReactNode }) {
   return (

@@ -371,7 +371,9 @@ describe('CitationList', () => {
     render(<MessageBubble message={message} />);
 
     const status = screen.getByRole('status');
-    expect(status.className).toContain('MuiAlert-outlinedWarning');
+    // MUI 9 emits separate `outlined` + `colorWarning` classes (no combined `outlinedWarning`).
+    expect(status.className).toContain('MuiAlert-outlined');
+    expect(status.className).toContain('MuiAlert-colorWarning');
   });
 ```
 
@@ -379,7 +381,8 @@ describe('CitationList', () => {
   these pin updates: the citation case queries `findByRole('link', { name: '[1] Roth IRA Basics' })`
   and `'[2] Traditional IRA Basics'`; the disabled-while-streaming case additionally expects
   `getByRole('button', { name: 'Stop' })` while gated and `getByRole('button', { name: 'Send' })`
-  after release. Append:
+  after release, and its initial `expect(sendButton).toBeEnabled()` on a blank form becomes
+  `toBeDisabled()` (Send is gated on a non-empty draft), enabled after typing. Append:
 
 ```tsx
   it('shows the welcome state with suggested questions, and clicking one sends it', async () => {

@@ -1,4 +1,4 @@
-# Phase 8 — UI Polish — Implementation Plan (sub-phase A: shared foundation)
+# Phase 8 — UI Polish — Implementation Plan (sub-phases A and B)
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development
 > (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use
@@ -82,7 +82,7 @@ Every task's requirements implicitly include this section. Exact values are copi
   = one app.
 - **Branch:** `feat/ui-polish-a`, one PR for sub-phase A. Merge, push, deploy are **owner gates**.
 
-## Tasks
+## Tasks — sub-phase A (shared foundation) — MERGED (PR #28, main e3302e2)
 
 | # | Task | Depends on | Review | Deliverable |
 |---|---|---|---|---|
@@ -115,3 +115,47 @@ sub-phase A): no 96px headings; no heading smaller than its surrounding body tex
 appears once; buttons in sentence case; off-white page background with white cards/paper;
 `/does-not-exist` shows the branded 404 in both apps; browser tab shows the navy "A" icon;
 `loading.tsx` skeletons visible on a throttled reload.
+
+---
+
+## Sub-phase B — client screens (apps/client) — branch `feat/ui-polish-b`
+
+**Goal:** the public site becomes a finished content site on the A foundation: a header/footer
+shell, a filterable article grid, an article reading layout with related articles, and a chat
+surface with a welcome state, titled sources, and a proper composer (DESIGN.md §4).
+
+**Additional constraints for B** (on top of Global Constraints above):
+- **Client islands only where the browser is needed:** `SiteNav` (`usePathname`),
+  `ArticleCard`/`TagFilter` (pass `common/Link` as `component` — a function cannot cross the
+  RSC boundary), `ChatScreen` and its leaves. Everything else stays a Server Component.
+- **Screenshot method:** the sandbox cannot resize Chrome windows — serve a local page with
+  `<iframe width="1440" height="900">` / `<iframe width="390" height="844">` pointing at the dev
+  server and capture that (headless Chrome `--screenshot` works; `--window-size` is clamped to
+  ~500px, so never use it for the 390 view).
+- **No real chat requests from screenshots** — render bubble states through a throwaway route
+  that is deleted before commit. `API_URL=https://api.advisordesk.tyagiakanksha.com` for the dev
+  server is fine (public read-only GETs).
+- **Copy:** every new user-facing string in `src/lib/copy.ts` (constants named in each brief).
+- **Existing pins:** a task that changes a pinned behaviour rewrites the pin in its RED step
+  and says so; a task never silently deletes a pin.
+
+| # | Task | Depends on | Review | Deliverable |
+|---|---|---|---|---|
+| 08 | [Client shell: SiteHeader, SiteNav, SiteFooter](task-08-client-shell.md) | 07 | Sonnet | header/nav/footer in the root layout, `DISCLAIMER` in copy, nav out of `page.tsx` |
+| 09 | [Home: header block, URL tag filter, article grid](task-09-client-home.md) | 08 | Sonnet | `filterByTag`/`uniqueTags`, `ArticleCard`, `TagFilter`, `ContentListScreen` rewrite, `?tag=` RSC page, two empty states |
+| 10 | [Article: reading layout, related, CTA](task-10-client-article.md) | 09 | Sonnet | `relatedArticles`, `cache()`d fetch, `RelatedArticles`, `md` column, disclaimer alert |
+| 11 | [`useChatStream` stop/reset/retry](task-11-chat-stream-controls.md) | 08 | Sonnet | three hook controls with stream-fixture tests |
+| 12 | [Chat screen: welcome, bubbles, sources, composer](task-12-chat-screen.md) ★ | 11 | Opus | `useChatComposer`, `ChatWelcome`, `ThinkingIndicator`, `ChatComposer`, Sources list, refusal/error alerts, `CircularProgress` primitive |
+
+**Execution order:** 08 → 09 → 10 → 11 → 12 (11 only needs 08 and could run before 10; keep
+one writer in the tree at a time). Sub-phase B ships when 12 is green, the whole-branch Opus
+review passes, and the owner has done the visual checkpoint.
+
+### Visual checkpoint (⚠️ owner, after 12)
+
+Client only, 1440 and 390: header with wordmark and the active link highlighted on every
+route; footer disclaimer; home = h1 + description + one gold CTA, tag chips filter via the URL,
+3/1-column grid with dates; article = `md` column, back link, tag links, single h1, info-alert
+disclaimer, related cards, chat CTA; chat = welcome with four suggested questions, navy/outlined
+bubbles ≤ 640px, Thinking… row, titled Sources list, warning refusal, composer with Send→Stop
+swap, New conversation, helper line; no horizontal scroll at 390 anywhere.

@@ -271,6 +271,11 @@ layout work.
 - Error: `Alert severity="error"` with the envelope `message` + `Retry` (re-sends the last
   user message).
 
+**Plan-time corrections (task 12):** the composer keeps the visible label "Message" and drops
+the placeholder (an MUI floating label plus a placeholder is redundant and the placeholder only
+shows while focused); the column uses `minHeight: 60vh` with the composer `position: sticky;
+bottom: 0` instead of a `calc(100vh - header - footer)` height — no dependency on shell heights.
+
 ## 5. Sub-phase C — admin (`apps/admin`) + one API change
 
 ### C0 API — `apps/api/app/routes/auth_routes.py` (callback)

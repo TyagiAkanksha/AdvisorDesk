@@ -83,6 +83,11 @@ describe('ConnectedAppsScreen', () => {
 
     renderScreen();
 
+    // p8 final I-1: the page title is the single h1 for this screen.
+    expect(
+      await screen.findByRole('heading', { level: 1, name: 'Connected apps' }),
+    ).toBeInTheDocument();
+
     // Table columns (header text exact, brief's Screen behaviour section).
     expect(await screen.findByText('App')).toBeInTheDocument();
     expect(screen.getByText('Approved')).toBeInTheDocument();

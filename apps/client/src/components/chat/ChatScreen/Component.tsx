@@ -44,7 +44,7 @@ export default function Component() {
         {messages.length === 0 && (
           <Box role="status" sx={{ textAlign: 'center', color: 'text.secondary', py: 6 }}>
             <Icon name="Chat" size="large" />
-            <Typography variant="h6" component="p" sx={{ mt: 1 }}>
+            <Typography variant="h4" component="p" sx={{ mt: 1 }}>
               Ask about our published guidance
             </Typography>
             <Typography variant="body2" component="p" sx={{ mt: 0.5 }}>

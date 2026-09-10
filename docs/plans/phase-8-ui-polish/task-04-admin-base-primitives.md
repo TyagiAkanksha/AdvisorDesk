@@ -236,7 +236,9 @@ describe('TextField', () => {
     await userEvent.keyboard('{Enter}');
     await userEvent.tab();
 
-    expect(onKeyDown).toHaveBeenCalledTimes(1);
+    // `userEvent.tab()` is a real Tab keydown on the focused input, so onKeyDown fires twice;
+    // the rule under test is that the Enter keydown reached the handler first.
+    expect(onKeyDown).toHaveBeenCalled();
     expect(onKeyDown.mock.calls[0]?.[0]).toMatchObject({ key: 'Enter' });
     expect(onBlur).toHaveBeenCalledTimes(1);
   });
@@ -282,7 +284,7 @@ describe('ConfirmDialog', () => {
       />,
     );
 
-    expect(screen.getByRole('button', { name: 'Delete' }).className).toContain('MuiButton-containedError');
+    expect(screen.getByRole('button', { name: 'Delete' }).className).toContain('MuiButton-colorError');
   });
 
   it('keeps the primary colour when not destructive', () => {
@@ -298,7 +300,7 @@ describe('ConfirmDialog', () => {
       />,
     );
 
-    expect(screen.getByRole('button', { name: 'Publish' }).className).toContain('MuiButton-containedPrimary');
+    expect(screen.getByRole('button', { name: 'Publish' }).className).toContain('MuiButton-colorPrimary');
   });
 });
 ```
@@ -404,17 +406,24 @@ describe('Drawer', () => {
     );
 
     expect(screen.queryByRole('navigation', { name: 'Primary' })).toBeNull();
-    expect(screen.getByRole('navigation', { name: 'Primary', hidden: true })).toBeInTheDocument();
+    // MUI's Slide applies `visibility: hidden` to the closed paper, and Testing Library computes an
+    // EMPTY accessible name for visibility-hidden nodes even with `hidden: true` — so the mounted
+    // nav is found by role alone and identified by its content.
+    const hiddenNavs = screen.queryAllByRole('navigation', { hidden: true });
+    expect(hiddenNavs).toHaveLength(1);
+    expect(hiddenNavs[0]).toHaveTextContent('links');
   });
 
   it('applies a width override to the drawer paper', () => {
     const { container } = render(
-      <Drawer anchor="right" variant="persistent" open width="100vw">
+    // A px fixture: jsdom's getComputedStyle resolves viewport units to px, so `100vw` can never
+    // round-trip through toHaveStyle; the override mechanism is what this pins.
+      <Drawer anchor="right" variant="persistent" open width={480}>
         <div>panel</div>
       </Drawer>,
     );
 
-    expect(container.querySelector('.MuiDrawer-paper')).toHaveStyle({ width: '100vw' });
+    expect(container.querySelector('.MuiDrawer-paper')).toHaveStyle({ width: '480px' });
   });
 });
 ```

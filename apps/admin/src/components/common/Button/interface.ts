@@ -10,11 +10,15 @@ export interface ButtonProps {
   href?: string;
   onClick?: MouseEventHandler<HTMLElement>;
   variant?: 'text' | 'outlined' | 'contained';
-  color?: 'primary' | 'secondary' | 'inherit';
+  // 'error' added phase-8 task-04 (DESIGN.md §2: error colour = destructive) so ConfirmDialog
+  // can render a destructive confirm button through this same primitive.
+  color?: 'primary' | 'secondary' | 'inherit' | 'error';
   size?: 'small' | 'medium' | 'large';
   disabled?: boolean;
   fullWidth?: boolean;
   type?: 'button' | 'submit' | 'reset';
+  // phase-8 task-04: an optional leading icon (e.g. ErrorState's "Retry" action).
+  startIcon?: ReactNode;
   // WR-13 (6R task-11): aria-* passthrough so disclosure buttons (menu/panel triggers) can
   // expose their expanded/popup state — this interface was closed before, blocking the fix.
   'aria-expanded'?: boolean;

@@ -7,11 +7,18 @@ import Link from 'next/link';
 import { Icon } from '../Icon';
 import type { NavListProps } from './interface';
 
-export default function Component({ items }: NavListProps) {
+export default function Component({ items, onNavigate }: NavListProps) {
   return (
     <List>
       {items.map((item) => (
-        <ListItemButton key={item.href} component={Link} href={item.href}>
+        <ListItemButton
+          key={item.href}
+          component={Link}
+          href={item.href}
+          selected={item.selected}
+          onClick={onNavigate}
+          aria-current={item.selected ? 'page' : undefined}
+        >
           {item.icon ? (
             <ListItemIcon>
               <Icon name={item.icon} />

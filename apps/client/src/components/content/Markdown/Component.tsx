@@ -23,7 +23,9 @@ import type { MarkdownProps, MarkdownVariant } from './interface';
 // `variant`: 'article' = reading sizes and margins; 'chat' = body2, tighter margins, headings
 // capped at the h4 size — an assistant answer is a bubble, not a page.
 // `headingOffset`: 1 = a `#` in the source renders as <h2> (the screen already owns the h1);
-// deeper headings shift with it, so the document outline stays correct.
+// deeper headings shift with it, so the document outline stays correct. The offset is a semantic
+// (DOM tag) correction only — visual SIZE still follows the SOURCE level, floored at
+// `headingOffset + 1` so a body `#` never grows to the page title's own size (fix round 1).
 type HeadingLevel = 1 | 2 | 3 | 4 | 5 | 6;
 type HeadingVariant = `h${HeadingLevel}`;
 
@@ -55,7 +57,10 @@ function buildComponents(variant: MarkdownVariant, headingOffset: 0 | 1): Compon
 
   const heading = (level: HeadingLevel) => {
     const domLevel = clampLevel(level + headingOffset);
-    const sizeLevel = variant === 'chat' ? clampLevel(Math.max(domLevel, 4)) : domLevel;
+    const sizeLevel =
+      variant === 'chat'
+        ? clampLevel(Math.max(domLevel, 4))
+        : clampLevel(Math.max(level, headingOffset + 1));
     const typographyVariant: HeadingVariant = `h${sizeLevel}`;
     return function Heading({ children }: { children?: ReactNode }) {
       return (
@@ -126,9 +131,10 @@ function buildComponents(variant: MarkdownVariant, headingOffset: 0 | 1): Compon
         {children}
       </Box>
     ),
-    code: ({ children }) => (
+    code: ({ className, children }) => (
       <Box
         component="code"
+        className={className}
         sx={{
           fontFamily: MONOSPACE,
           fontSize: '0.875em',
@@ -143,6 +149,7 @@ function buildComponents(variant: MarkdownVariant, headingOffset: 0 | 1): Compon
     pre: ({ children }) => (
       <Box
         component="pre"
+        tabIndex={0}
         sx={{
           fontFamily: MONOSPACE,
           fontSize: '0.875rem',
@@ -160,7 +167,7 @@ function buildComponents(variant: MarkdownVariant, headingOffset: 0 | 1): Compon
       </Box>
     ),
     table: ({ children }) => (
-      <Box sx={{ overflowX: 'auto', my: spacing.blockMy }}>
+      <Box tabIndex={0} sx={{ overflowX: 'auto', my: spacing.blockMy }}>
         <Box
           component="table"
           sx={{
@@ -186,6 +193,7 @@ function buildComponents(variant: MarkdownVariant, headingOffset: 0 | 1): Compon
     // A plain <img> on purpose: `common/Box` is typed as a <div> and has no `src`/`alt`; a
     // native element with one inline style is the smaller change than a new primitive.
     img: ({ src, alt }) => (
+      // eslint-disable-next-line @next/next/no-img-element
       <img
         src={typeof src === 'string' ? src : undefined}
         alt={alt ?? ''}
@@ -195,13 +203,32 @@ function buildComponents(variant: MarkdownVariant, headingOffset: 0 | 1): Compon
   };
 }
 
+// fix round 1 (Important 1): `buildComponents` was called inline in the JSX below, so every
+// render manufactured a brand-new `Components` object — react-markdown/`toJsxRuntime` treats a
+// new component identity as a new element type, so the ENTIRE rendered subtree unmounted and
+// remounted on every re-render of whatever parent holds a `<Markdown>` (e.g. `ContentEditorScreen`
+// re-rendering `<MarkdownPreview>` on every keystroke). There are only four (variant,
+// headingOffset) combinations, so a module-level cache keyed on them is enough — no hook, so this
+// stays usable from a server component.
+const COMPONENT_CACHE = new Map<string, Components>();
+
+function componentsFor(variant: MarkdownVariant, headingOffset: 0 | 1): Components {
+  const key = `${variant}:${headingOffset}`;
+  let cached = COMPONENT_CACHE.get(key);
+  if (!cached) {
+    cached = buildComponents(variant, headingOffset);
+    COMPONENT_CACHE.set(key, cached);
+  }
+  return cached;
+}
+
 export default function Component({
   markdown,
   variant = 'article',
   headingOffset = 0,
 }: MarkdownProps) {
   return (
-    <ReactMarkdown remarkPlugins={[remarkGfm]} components={buildComponents(variant, headingOffset)}>
+    <ReactMarkdown remarkPlugins={[remarkGfm]} components={componentsFor(variant, headingOffset)}>
       {markdown}
     </ReactMarkdown>
   );

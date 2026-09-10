@@ -176,4 +176,48 @@ describe('Markdown', () => {
     expect(internal).not.toHaveAttribute('target');
     expect(internal).toHaveAttribute('href', '/content/slug');
   });
+
+  // fix round 1 (Important 1): the tag-map object handed to `ReactMarkdown` must be a STABLE
+  // reference across renders of the same (variant, headingOffset) pair, or react-markdown treats
+  // every renderer as a brand-new component type and unmounts/remounts the whole subtree instead
+  // of reconciling it (a real cost for e.g. `ContentEditorScreen` re-rendering `MarkdownPreview`
+  // on every keystroke). A remount would create a NEW DOM node for the same text on `rerender`.
+  it('reconciles the same DOM node across a re-render instead of remounting the subtree', () => {
+    const { rerender } = render(<Markdown markdown={'Para'} />);
+    const first = screen.getByText('Para');
+
+    rerender(<Markdown markdown={'Para'} />);
+
+    expect(screen.getByText('Para')).toBe(first);
+  });
+
+  // fix round 1 (Important 2, controller ruling): `headingOffset` shifts the DOM tag (semantic
+  // outline correction) but visual SIZE follows the SOURCE level, floored at `headingOffset + 1`
+  // so a body heading never grows to the page title's own size.
+  it('sizes a shifted heading by its source level, floored so it never matches the page title size', () => {
+    render(<Markdown markdown={'## Section'} headingOffset={1} />);
+
+    const heading = screen.getByRole('heading', { level: 3, name: 'Section' });
+    expect(heading.className).toContain('MuiTypography-h2');
+  });
+
+  it('floors a top-level shifted heading at the offset size instead of the page title size', () => {
+    render(<Markdown markdown={'# Body top'} headingOffset={1} />);
+
+    const heading = screen.getByRole('heading', { level: 2, name: 'Body top' });
+    expect(heading.className).toContain('MuiTypography-h2');
+  });
+
+  // fix round 1 (Minor 3): the `table` mapping had no test of its own — pin that a GFM table
+  // renders as a real `table` role wrapped in a horizontally-scrollable container.
+  it('wraps a GFM table in a horizontally scrollable container', () => {
+    const { container } = render(
+      <Markdown markdown={'| Fund | Fee |\n| --- | --- |\n| Total Market Index | 0.03% |\n'} />,
+    );
+
+    expect(screen.getByRole('columnheader', { name: 'Fund' })).toBeInTheDocument();
+    expect(screen.getByRole('columnheader', { name: 'Fee' })).toBeInTheDocument();
+    const wrapper = container.querySelector('table')?.parentElement;
+    expect(wrapper).toHaveStyle({ overflowX: 'auto' });
+  });
 });

@@ -15,7 +15,7 @@ Close the FINAL(C) RIDE item "testing-import lint guard". `apps/admin/src/testin
 test seams (`nextNavigation.ts`, `matchMedia.ts`) that mock framework modules; nothing in
 production code may import them, but today only convention says so. Add a `no-restricted-
 imports` pattern for `@/testing`, `@/testing/*`, `@/testing/**` that applies to every
-`src/**` file **except** `*.test.{ts,tsx}` files and `src/testing/**` itself, and pin it in the
+`src/**` file **except** `*.test.{ts,tsx}` files, `src/testing/**` itself and any colocated `**/testing/**` support folder, and pin it in the
 existing `eslint.config.test.ts` next to the MUI-boundary pins.
 
 **Flat-config gotcha that shapes the design:** rule options are *replaced*, not merged, by a
@@ -48,7 +48,9 @@ Admin only — `apps/client` has no `src/testing/` (INDEX plan-time ruling).
 // (keep the `argsIgnorePattern` block and everything else as is)
 
 const MUI_EXEMPT = ['src/components/common/**', 'src/theme/theme.ts', 'src/app/providers.tsx'];
-const TEST_FILES = ['src/**/*.test.{ts,tsx}', 'src/testing/**'];
+// Test files, the app-level seams, and any colocated `testing/` folder (test-only support code
+// such as task 07's `ContentEditorScreen/testing/renderEditor.tsx`).
+const TEST_FILES = ['src/**/*.test.{ts,tsx}', 'src/testing/**', 'src/**/testing/**'];
 
 // phase-8 task-02, docs/FRONTEND-CONVENTIONS.md §4: `src/components/common/` is the only place
 // that imports MUI, plus the theme file and the Providers client boundary.
@@ -68,7 +70,7 @@ const TESTING_PATTERN = {
 //   production code outside common/theme/providers → MUI + testing patterns
 //   test files outside common                       → MUI pattern only
 //   common/theme/providers (non-test)               → testing pattern only
-//   test files inside common, and src/testing/**    → no restriction
+//   test files inside common, src/testing/**, **/testing/** → no restriction
 const restrictImports = (...patterns) => ({
   'no-restricted-imports': ['error', { patterns }],
 });
@@ -134,6 +136,10 @@ const restrictImports = (...patterns) => ({
       expect(await ruleIdsForText(TESTING_IMPORT, 'src/testing/other.test.tsx')).not.toContain(
         'no-restricted-imports',
       );
+      // Colocated test-support folders (e.g. ContentEditorScreen/testing/renderEditor.tsx).
+      expect(
+        await ruleIdsForText(TESTING_IMPORT, 'src/components/content/Fake/testing/renderFake.tsx'),
+      ).not.toContain('no-restricted-imports');
     }, 20000);
 
     // The composition must not drop the MUI boundary for any file class it re-configures.

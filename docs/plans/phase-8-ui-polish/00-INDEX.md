@@ -1,4 +1,4 @@
-# Phase 8 — UI Polish — Implementation Plan (sub-phases A, B and C)
+# Phase 8 — UI Polish — Implementation Plan (sub-phases A, B and C — all merged)
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development
 > (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use
@@ -165,7 +165,7 @@ swap, New conversation, helper line; no horizontal scroll at 390 anywhere.
 
 ---
 
-## Sub-phase C — admin screens + API redirect (apps/admin, apps/api) — branch `feat/ui-polish-c`
+## Sub-phase C — admin screens + API redirect (apps/admin, apps/api) — MERGED (PR #31, main 9a1e74b; live)
 
 **Goal:** the admin console becomes a finished, responsive internal app on the A foundation: a
 sign-in card that explains a failed login (backed by a 5-line API change), a responsive shell

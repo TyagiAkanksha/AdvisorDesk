@@ -1,3 +1,11 @@
+'use client';
+
+// Required: `common/index.ts` re-exports this hook, and that barrel is imported by Server
+// Components (`app/(app)/*/page.tsx`, `app/not-found.tsx`, `app/signin/page.tsx`); without this
+// directive, Turbopack-dev evaluates MUI's client-only `useMediaQuery` module in the SERVER
+// graph, which throws "Attempted to call unstable_createUseMediaQuery() from the server" the
+// moment any page reaches the barrel (phase-8 task-15 pre-review fix — a defect from task-14,
+// first tripped once task-15 actually wired this hook into a real page).
 import type { Breakpoint } from '@mui/material/styles';
 import { useTheme } from '@mui/material/styles';
 import useMediaQuery from '@mui/material/useMediaQuery';

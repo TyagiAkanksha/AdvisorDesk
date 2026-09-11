@@ -35,13 +35,17 @@ services:
       RATE_LIMIT_PER_DAY: "50"
       SESSION_CREATE_PER_DAY: "20"
       # api is never published to the host — only Caddy, on the compose bridge
-      # network (advisordesk_default, 172.18.0.0/16 — `docker network inspect`),
-      # can reach uvicorn. Caddy already overwrites X-Forwarded-For with the real
-      # client IP (see Caddyfile) before proxying, so this scoped allowlist is
-      # defence in depth rather than the only thing preventing XFF spoofing — the
-      # spoof test (VERIFY.md §2b, recorded 2026-09-11) confirmed Caddy sanitises
+      # network, can reach uvicorn. The bridge subnet is NOT pinned (no `networks:`
+      # ipam block; Docker hands out 172.17–172.31.x.0/16 by creation order — it
+      # was 172.18.0.0/16 on 2026-09-11), so this trusts the whole RFC 1918 block
+      # Docker draws from rather than one /16 that could silently change on a
+      # network recreate — a wrong value here fails SILENTLY: uvicorn stops
+      # trusting Caddy and every visitor shares one rate-limit bucket (VERIFY.md
+      # §2). Caddy already overwrites X-Forwarded-For with the real client IP
+      # (see Caddyfile) before proxying, so this is defence in depth — the spoof
+      # test (VERIFY.md §2b, recorded 2026-09-11) confirmed Caddy sanitises
       # untrusted XFF even while this was still "*".
-      FORWARDED_ALLOW_IPS: "172.18.0.0/16"
+      FORWARDED_ALLOW_IPS: "172.16.0.0/12"
     expose:
       - "8000"
     logging: *default-logging

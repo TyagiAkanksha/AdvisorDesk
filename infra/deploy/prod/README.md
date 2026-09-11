@@ -34,6 +34,14 @@ from here automatically — nothing reads this directory at deploy time.
      NEW image is live against the OLD schema and 500s on every route that touches the missing
      tables/columns — including, for this specific migration, the existing CLI-minted MCP
      bearer-token path (see the "MCP OAuth Connect" section below).
+   - **The order flips for a DESTRUCTIVE migration** (one that drops or renames a column/table —
+     first instance: `0008_drop_oauth_consents_revoked_at`, 2026-09-11). Migrating first would
+     leave the OLD image live against a schema missing a column it still `SELECT`s/`INSERT`s
+     (`UndefinedColumn` 500s until `up -d`). The new image must be forward-compatible with the
+     old schema (it simply ignores the extra column), so: `docker compose pull api && docker
+     compose up -d` FIRST, confirm healthy, THEN `docker compose run --rm api uv run alembic
+     upgrade head`. Additive migrations keep the migrate-first order above. A migration that is
+     both (adds AND drops) must be split into two releases.
 3. Re-run the relevant checks in `../VERIFY.md` against the live deployment. For any release
    that touches the api image, also record `docker compose exec -T api uv run alembic current`
    before and after — the 2026-09-08 mcp-oauth deploy found prod still at `0004` (migrations
@@ -80,12 +88,15 @@ committed copy is updated in the same sitting:
   `docker-compose.yml`. Check `docker-compose.yml` directly for current status — this is being
   worked concurrently with this doc pass; the fix isn't considered done until every service (not
   just an unused anchor) actually references the logging config on the box.
-- **`FORWARDED_ALLOW_IPS=*` → docker bridge subnet** (WR-03 residual) — defense-in-depth so
+- **`FORWARDED_ALLOW_IPS=*` → docker bridge range** (WR-03 residual) — defense-in-depth so
   uvicorn's own trusted-proxy walk still means something even if the Caddy `header_up` line is
-  ever dropped. Not yet applied — `docker-compose.yml`'s `api` service still sets
-  `FORWARDED_ALLOW_IPS: "*"`. This changes production request-trust behavior, so it **must be
-  verified against a live spoof test (`../VERIFY.md` check 2b) at apply time**, before it's
-  considered done.
+  ever dropped. **Applied 2026-09-11 (desktop closeout):** `docker-compose.yml`'s `api` service
+  now sets `FORWARDED_ALLOW_IPS: "172.16.0.0/12"` — the whole RFC 1918 block Docker draws
+  bridge subnets from, because the compose network's subnet is not pinned (it was
+  `172.18.0.0/16` that day) and a stale /16 would fail silently (every visitor in one
+  rate-limit bucket). Verified at apply time by `../VERIFY.md` check 2b (spoof, recorded) and
+  the single-IP form of check 2 (the api access log shows the real client IP, not Caddy's
+  bridge address, after the change — recorded there).
 
 ## MCP OAuth Connect (mcp-oauth)
 

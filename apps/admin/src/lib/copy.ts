@@ -26,3 +26,11 @@ export const MAIN_NAV_LABEL = 'Main';
 export const OPEN_NAVIGATION_LABEL = 'Open navigation';
 export const AGENT_BUTTON_LABEL = 'Agent';
 export const SIGN_OUT_LABEL = 'Sign out';
+
+// phase-8 task-16 (DESIGN.md §C2): sign-in card copy, incl. the two `?error=` reasons task 13's
+// API redirect can carry (see src/lib/signInError.ts).
+export const SIGN_IN_SUBTITLE = 'Sign in to manage AdvisorDesk content';
+export const SIGN_IN_BUTTON_LABEL = 'Sign in with Google';
+export const SIGN_IN_FINE_PRINT = 'Access is limited to allowlisted admin accounts.';
+export const SIGN_IN_ERROR_FORBIDDEN = "This Google account isn't on the admin allowlist.";
+export const SIGN_IN_ERROR_STATE = 'Sign-in expired or was tampered with. Please try again.';

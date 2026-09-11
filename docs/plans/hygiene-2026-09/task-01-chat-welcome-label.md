@@ -2,7 +2,7 @@
 id: hy-t01
 phase: hygiene-2026-09
 depends_on: []
-status: todo
+status: done
 spec: docs/plans/hygiene-2026-09/00-INDEX.md
 review: sonnet
 ---

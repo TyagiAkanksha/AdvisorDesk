@@ -1,4 +1,4 @@
-# Hygiene batch 2026-09 — the phase-8 "ride" list — Implementation Plan
+# Hygiene batch 2026-09 — the phase-8 "ride" list — Implementation Plan (ALL TASKS DONE — final review clean)
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development
 > (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use
@@ -89,10 +89,21 @@ the admin tasks so the shared-harness work in 07 sees the final `EmptyState`).
 
 ## Whole-branch final review (after 09)
 
-- [ ] Opus reviewer on the full `main..chore/hygiene-ride` diff; both frontend gate sets, the
-      API suite, `next build` for both apps, twin guards (theme, Markdown, `href.ts`), MUI
-      boundary grep, `openapi.json` byte-identical (task 08 touches tests only).
-- [ ] One fix wave, one scoped re-review.
+- [x] Opus reviewer on the full `main..chore/hygiene-ride` diff — "Ready with one fix wave"
+      (0 Critical, 2 Important — both in the t09 lint composition — 3 Minor); gates, builds,
+      twins, boundary, openapi, lockfile all independently verified; full API suite with the DB
+      747 passed / 1 skipped.
+- [x] One fix wave (`e63a3b8`, 15 of 16 items; B7 "gate the Agent button on `me`" rides — three
+      pre-existing shell tests query it pre-session) + one scoped Opus re-review: CLEAR TO MERGE.
 - [ ] PR → merge → `push_ecr.sh` all three images → SSM rollout → live checks (healthz, public
       content, one grounded `/api/v1/public/chat` stream, admin `/signin?error=state`) →
       compose bump PR.
+
+## Ride list after this batch (ledger `.superpowers/sdd/hygiene-2026-09/progress.md`)
+
+- Agent button live pre-auth (gate on `me`; needs the three AppShell tests to await the session).
+- t05 M4: mobile cold load prerenders the 240 px permanent drawer until hydration — owner eyeball
+  on a phone; MUI `ssrMatchMedia` if it bothers.
+- t03 M1: `getAllByRole('button', { name: 'Clear filters' })[1]` is render-order coupled.
+- Lint guard latents: a future `common/**/testing/**` file cannot import `@/testing/*`; the
+  `**/testing/**` glob would also catch npm paths like `rxjs/testing`.

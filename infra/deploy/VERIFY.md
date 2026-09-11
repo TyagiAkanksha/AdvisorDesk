@@ -82,6 +82,16 @@ your IP's `SESSION_CREATE_PER_DAY` (default 20) budget** — see "Before you sta
 
 ## 2. Distinct-IP bucket check (proves `FORWARDED_ALLOW_IPS` is actually working)
 
+> **Recorded 2026-09-11 (single-IP form, after `FORWARDED_ALLOW_IPS` went from `*` to
+> `172.16.0.0/12` and the api was recreated at `c3fca19`):** the api access log shows the REAL
+> client IP for requests arriving through Caddy — `INFO: 208.104.31.154:0 - "GET
+> /api/v1/healthz HTTP/1.1" 200 OK` while Caddy's container address was `172.18.0.5` and the
+> container env read `FORWARDED_ALLOW_IPS=172.16.0.0/12` (`docker compose exec api`). That is
+> exactly the property this section tests (uvicorn trusts Caddy's `X-Forwarded-For`, so the rate
+> limiter keys on the visitor, not on Caddy). The two-device loop below remains unrun — it needs a
+> second real IP (a phone on cellular) and burns per-day chat budget; run it when convenient.
+
+
 The check above only proves rate limiting exists — it doesn't prove it's keying on the *real*
 client IP rather than the reverse proxy's single address (which would rate-limit every visitor
 as one). Run the SAME loop from **two genuinely distinct real client IPs** — e.g. your laptop on

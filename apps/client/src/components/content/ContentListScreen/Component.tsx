@@ -24,10 +24,16 @@ export default function Component({ items, tags, selectedTag }: ContentListScree
           `direction`/`spacing`/`divider`/`useFlexGap`/`sx` — verified against
           node_modules/@mui/material/Stack/Stack.d.ts); the brief's `justifyContent`/`alignItems`
           props go through `sx` instead, same rendered flexbox layout. */}
+      {/* p8 final (M-4): stretched alignItems made the gold CTA button full-bleed on phones
+          (column layout) — pin the xs value to flex-start so it hugs its own width there too. */}
       <Stack
         direction={{ xs: 'column', sm: 'row' }}
         spacing={2}
-        sx={{ mb: 3, justifyContent: 'space-between', alignItems: { sm: 'center' } }}
+        sx={{
+          mb: 3,
+          justifyContent: 'space-between',
+          alignItems: { xs: 'flex-start', sm: 'center' },
+        }}
       >
         <div>
           <Typography variant="h1">{HOME_TITLE}</Typography>

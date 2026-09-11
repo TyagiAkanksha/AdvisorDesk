@@ -9,7 +9,9 @@ export default function Component() {
       component="footer"
       sx={{ borderTop: 1, borderColor: 'divider', mt: 6, py: 3, bgcolor: 'background.paper' }}
     >
-      <Box sx={{ maxWidth: 'lg', mx: 'auto', px: 3 }}>
+      {/* p8 final (M-3): matches Container's responsive gutters (16px on phones, 24px at sm+)
+          instead of a flat 24px that felt tight against the viewport edge on small screens. */}
+      <Box sx={{ maxWidth: 'lg', mx: 'auto', px: { xs: 2, sm: 3 } }}>
         <Typography variant="body2" color="text.secondary" component="p">
           {DISCLAIMER}
         </Typography>

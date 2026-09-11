@@ -1,66 +1,74 @@
-import Link from 'next/link';
-
-import { Box, IconButton, StatusChip } from '@/components/common';
+import {
+  Chip,
+  IconButton,
+  Link,
+  Paper,
+  Stack,
+  StatusChip,
+  Table,
+  TableBody,
+  TableCell,
+  TableContainer,
+  TableHead,
+  TableRow,
+} from '@/components/common';
+import { formatDate } from '@/lib/format';
+import { CONTENT_TABLE_LABEL, DELETE_LABEL, EDIT_LABEL } from '@/lib/copy';
 
 import type { ContentTableProps } from './interface';
 
-function formatUpdatedAt(value: string): string {
-  return new Date(value).toLocaleDateString('en-US', {
-    year: 'numeric',
-    month: 'short',
-    day: 'numeric',
-  });
-}
-
+// phase-8 task-18 (DESIGN.md §2, §5 C4): a real MUI table — outlined container that scrolls
+// horizontally on phones instead of squeezing columns unreadably narrow.
 export default function Component({ items, onDeleteClick }: ContentTableProps) {
   return (
-    <Box component="table" sx={{ width: '100%', borderCollapse: 'collapse' }}>
-      <Box component="thead">
-        <Box component="tr">
-          <Box component="th" sx={{ textAlign: 'left', p: 1 }}>
-            Title
-          </Box>
-          <Box component="th" sx={{ textAlign: 'left', p: 1 }}>
-            Status
-          </Box>
-          <Box component="th" sx={{ textAlign: 'left', p: 1 }}>
-            Tags
-          </Box>
-          <Box component="th" sx={{ textAlign: 'left', p: 1 }}>
-            Updated
-          </Box>
-          <Box component="th" sx={{ p: 1 }} />
-        </Box>
-      </Box>
-      <Box component="tbody">
-        {items.map((item) => (
-          <Box component="tr" key={item.id} sx={{ borderTop: '1px solid', borderColor: 'divider' }}>
-            <Box component="td" sx={{ p: 1 }}>
-              <Link href={`/content/${item.id}`}>{item.title}</Link>
-            </Box>
-            <Box component="td" sx={{ p: 1 }}>
-              <StatusChip status={item.status} />
-            </Box>
-            <Box component="td" sx={{ p: 1 }}>
-              {item.tags.map((itemTag) => (
-                <Box component="span" key={itemTag} sx={{ mr: 0.5 }}>
-                  {itemTag}
-                </Box>
-              ))}
-            </Box>
-            <Box component="td" sx={{ p: 1 }}>
-              {formatUpdatedAt(item.updated_at)}
-            </Box>
-            <Box component="td" sx={{ p: 1 }}>
-              <IconButton
-                name="Delete"
-                label={`Delete ${item.title}`}
-                onClick={() => onDeleteClick(item)}
-              />
-            </Box>
-          </Box>
-        ))}
-      </Box>
-    </Box>
+    <TableContainer<typeof Paper> component={Paper} variant="outlined" sx={{ overflowX: 'auto' }}>
+      <Table aria-label={CONTENT_TABLE_LABEL}>
+        <TableHead>
+          <TableRow>
+            <TableCell>Title</TableCell>
+            <TableCell>Status</TableCell>
+            <TableCell>Tags</TableCell>
+            <TableCell>Updated</TableCell>
+            <TableCell align="right">Actions</TableCell>
+          </TableRow>
+        </TableHead>
+        <TableBody>
+          {items.map((item) => (
+            <TableRow hover key={item.id}>
+              <TableCell>
+                <Link href={`/content/${item.id}`}>{item.title}</Link>
+              </TableCell>
+              <TableCell>
+                <StatusChip status={item.status} />
+              </TableCell>
+              <TableCell>
+                <Stack direction="row" spacing={0.5} sx={{ flexWrap: 'wrap' }}>
+                  {item.tags.map((itemTag) => (
+                    <Chip key={itemTag} size="small" variant="outlined" label={itemTag} />
+                  ))}
+                </Stack>
+              </TableCell>
+              <TableCell>{formatDate(item.updated_at)}</TableCell>
+              <TableCell align="right">
+                <IconButton
+                  name="Edit"
+                  label={`Edit ${item.title}`}
+                  href={`/content/${item.id}`}
+                  size="small"
+                  tooltip={EDIT_LABEL}
+                />
+                <IconButton
+                  name="Delete"
+                  label={`Delete ${item.title}`}
+                  onClick={() => onDeleteClick(item)}
+                  size="small"
+                  tooltip={DELETE_LABEL}
+                />
+              </TableCell>
+            </TableRow>
+          ))}
+        </TableBody>
+      </Table>
+    </TableContainer>
   );
 }

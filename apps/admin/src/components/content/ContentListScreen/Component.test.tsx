@@ -2,12 +2,16 @@
 import { render, screen, waitFor, within } from '@testing-library/react';
 import '@testing-library/jest-dom/vitest';
 import userEvent from '@testing-library/user-event';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import Providers from '@/app/providers';
+import { formatDate } from '@/lib/format';
+import { navigation } from '@/testing/nextNavigation';
 import type { ContentDto, ContentListDto } from '@/types/api/content';
 
 import { ContentListScreen } from '.';
+
+vi.mock('next/navigation', () => import('@/testing/nextNavigation'));
 
 // task-05 / PRD §2.2, §5.2: the content-list screen renders rows (title/status/tags/updated),
 // empty/error states, a delete flow gated by a permanence-worded ConfirmDialog, and filter/search
@@ -92,6 +96,9 @@ function mockFetch(listHandler: (url: URL) => Response) {
       if (pathname.startsWith('/api/v1/content/') && method === 'DELETE') {
         return new Response(null, { status: 204 });
       }
+      if (pathname === '/api/v1/tags' && method === 'GET') {
+        return jsonResponse([]);
+      }
       return jsonResponse({ error: { code: 'not_found', message: 'unmocked route' } }, 404);
     },
   );
@@ -108,6 +115,10 @@ function renderScreen() {
 }
 
 describe('ContentListScreen', () => {
+  beforeEach(() => {
+    navigation.reset('/content');
+  });
+
   afterEach(() => {
     vi.restoreAllMocks();
   });
@@ -142,7 +153,12 @@ describe('ContentListScreen', () => {
 
     renderScreen();
 
-    const status = await screen.findByRole('status');
+    // The loading skeleton is also `role="status"` — wait for the loaded state's own text.
+    const status = await waitFor(() => {
+      const element = screen.getByRole('status');
+      expect(element).toHaveTextContent('No content yet');
+      return element;
+    });
     expect(status.textContent?.trim().length).toBeGreaterThan(0);
     expect(screen.queryByText(itemA.title)).not.toBeInTheDocument();
   });
@@ -244,5 +260,125 @@ describe('ContentListScreen', () => {
       },
       { timeout: 2000 },
     );
+  });
+
+  it('renders the page header with the New content action', async () => {
+    mockFetch(() => jsonResponse(twoItemFixture));
+
+    renderScreen();
+
+    expect(await screen.findByRole('heading', { level: 1, name: 'Content' })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'New content' })).toHaveAttribute(
+      'href',
+      '/content/new',
+    );
+  });
+
+  it('initialises the filters from the URL and requests with them', async () => {
+    // (page parsing is pinned at hook level — a page=2 here would be clamped by the 2-item fixture)
+    navigation.reset('/content?status=published&tag=retirement&q=estate');
+    const fetchMock = mockFetch(() => jsonResponse(twoItemFixture));
+
+    renderScreen();
+
+    await waitFor(() => {
+      const listCall = fetchMock.mock.calls.find(
+        ([input, init]) =>
+          pathnameOf(input) === '/api/v1/content' && requestMethod(input, init) === 'GET',
+      );
+      expect(listCall).toBeDefined();
+      const url = new URL(requestUrl(listCall![0]));
+      expect(url.searchParams.get('status')).toBe('published');
+      expect(url.searchParams.get('tag')).toBe('retirement');
+      expect(url.searchParams.get('q')).toBe('estate');
+      expect(url.searchParams.get('page')).toBe('1');
+    });
+    expect(screen.getByRole('combobox', { name: /status/i })).toHaveTextContent('Published');
+    expect(screen.getByLabelText(/search/i)).toHaveValue('estate');
+  });
+
+  it('shows Clear filters only when a filter is set, and clearing rewrites the URL to /content', async () => {
+    navigation.reset('/content?status=draft');
+    mockFetch(() => jsonResponse(twoItemFixture));
+    const user = userEvent.setup();
+
+    renderScreen();
+
+    await user.click(await screen.findByRole('button', { name: 'Clear filters' }));
+
+    expect(navigation.replace).toHaveBeenLastCalledWith('/content', { scroll: false });
+    await waitFor(() =>
+      expect(screen.queryByRole('button', { name: 'Clear filters' })).not.toBeInTheDocument(),
+    );
+  });
+
+  it('renders the "no content yet" empty state with a create link when there is nothing at all', async () => {
+    mockFetch(() => jsonResponse(emptyFixture));
+
+    renderScreen();
+
+    // The loading skeleton is also `role="status"` — `findByRole('status')` would resolve on it
+    // and hand back a node React later unmounts; wait for the loaded state's own text instead.
+    const status = await waitFor(() => {
+      const element = screen.getByRole('status');
+      expect(element).toHaveTextContent('No content yet');
+      return element;
+    });
+    expect(within(status).getByRole('link', { name: 'Create your first article' })).toHaveAttribute(
+      'href',
+      '/content/new',
+    );
+  });
+
+  it('renders the "no match" empty state with a Clear filters button when filters exclude everything', async () => {
+    navigation.reset('/content?q=zzz');
+    mockFetch(() => jsonResponse(emptyFixture));
+    const user = userEvent.setup();
+
+    renderScreen();
+
+    const status = await waitFor(() => {
+      const element = screen.getByRole('status');
+      expect(element).toHaveTextContent('No content matches these filters');
+      return element;
+    });
+    await user.click(within(status).getByRole('button', { name: 'Clear filters' }));
+    expect(navigation.replace).toHaveBeenLastCalledWith('/content', { scroll: false });
+  });
+
+  it('shows five skeleton rows (labelled Loading) instead of a spinner while the first page loads', () => {
+    global.fetch = vi.fn(() => new Promise<Response>(() => {}));
+
+    renderScreen();
+
+    const status = screen.getByRole('status', { name: 'Loading' });
+    expect(within(status).getAllByRole('row')).toHaveLength(6); // header + 5
+    expect(screen.queryByRole('progressbar')).not.toBeInTheDocument();
+  });
+
+  it('each row has an Edit link to the editor and a Delete button, both with tooltips', async () => {
+    mockFetch(() => jsonResponse(twoItemFixture));
+    const user = userEvent.setup();
+
+    renderScreen();
+
+    const rowA = await screen.findByRole('row', { name: new RegExp(itemA.title) });
+    expect(within(rowA).getByRole('link', { name: `Edit ${itemA.title}` })).toHaveAttribute(
+      'href',
+      `/content/${itemA.id}`,
+    );
+    await user.hover(within(rowA).getByRole('button', { name: `Delete ${itemA.title}` }));
+    expect(await screen.findByRole('tooltip')).toHaveTextContent('Delete');
+  });
+
+  it('renders tags as outlined chips and the updated date through lib/format', async () => {
+    mockFetch(() => jsonResponse(twoItemFixture));
+
+    renderScreen();
+
+    const rowB = await screen.findByRole('row', { name: new RegExp(itemB.title) });
+    const chip = within(rowB).getByText('estate-planning').closest('.MuiChip-root');
+    expect(chip).toHaveClass('MuiChip-outlined');
+    expect(within(rowB).getByText(formatDate(itemB.updated_at))).toBeInTheDocument();
   });
 });

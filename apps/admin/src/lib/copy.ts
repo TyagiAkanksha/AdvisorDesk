@@ -45,3 +45,21 @@ export const DASHBOARD_LOAD_ERROR = "Couldn't load the dashboard stats.";
 export const DASHBOARD_REFRESH_ERROR =
   "Couldn't refresh the dashboard — showing the last loaded data.";
 export const RECENT_CONTENT_LOAD_ERROR = "Couldn't load recent content.";
+
+// phase-8 task-18 (DESIGN.md §2, §5 C4): content-list screen copy — URL-synced filters, empty
+// states, delete feedback. `CONTENT_TITLE` (task-15) is reused as this screen's PageHeader title.
+export const NEW_CONTENT_LABEL = 'New content';
+export const CLEAR_FILTERS_LABEL = 'Clear filters';
+export const CONTENT_TABLE_LABEL = 'Content';
+export const NO_CONTENT_TITLE = 'No content yet';
+export const NO_CONTENT_DESCRIPTION = 'Articles you create will show up here.';
+export const CREATE_FIRST_ARTICLE_LABEL = 'Create your first article';
+export const NO_MATCH_TITLE = 'No content matches these filters';
+export const NO_MATCH_DESCRIPTION = 'Try a different status, tag or search term.';
+export const CONTENT_LOAD_ERROR = "Couldn't load content.";
+export const CONTENT_REFRESH_ERROR = "Couldn't refresh this list — showing the last loaded page.";
+export const CONTENT_DELETED_MESSAGE = 'Deleted';
+export const DELETE_ERROR_FALLBACK = "Couldn't delete this item. Please try again.";
+// tooltip here; the editor's phone toggle + Delete button reuse these (task 20)
+export const EDIT_LABEL = 'Edit';
+export const DELETE_LABEL = 'Delete';

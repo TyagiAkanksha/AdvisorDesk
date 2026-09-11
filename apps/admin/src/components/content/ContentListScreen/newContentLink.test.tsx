@@ -1,12 +1,15 @@
 // @vitest-environment jsdom
 import { render, screen } from '@testing-library/react';
 import '@testing-library/jest-dom/vitest';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import Providers from '@/app/providers';
+import { navigation } from '@/testing/nextNavigation';
 import type { ContentListDto } from '@/types/api/content';
 
 import { ContentListScreen } from '.';
+
+vi.mock('next/navigation', () => import('@/testing/nextNavigation'));
 
 // fix round 1, F1 (Critical): /content/new was unreachable — nothing in the admin UI linked to
 // it. `ContentListScreen`'s header now renders a "New content" link (common/Button with `href`,
@@ -66,6 +69,10 @@ function renderScreen() {
 }
 
 describe('ContentListScreen new-content entry point', () => {
+  beforeEach(() => {
+    navigation.reset('/content');
+  });
+
   afterEach(() => {
     vi.restoreAllMocks();
   });

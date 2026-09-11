@@ -1,23 +1,27 @@
-import { useEffect, useState } from 'react';
+import { usePathname, useRouter, useSearchParams } from 'next/navigation';
+import { useEffect, useRef, useState } from 'react';
 
+import { useSnackbar } from '@/components/common';
 import { useDeleteContentMutation, useListContentQuery } from '@/lib/api/contentApi';
+import {
+  DEFAULT_CONTENT_LIST_PARAMS,
+  buildContentListSearch,
+  hasActiveFilters,
+  parseContentListParams,
+} from '@/lib/contentListParams';
+import { CONTENT_DELETED_MESSAGE, CONTENT_REFRESH_ERROR, DELETE_ERROR_FALLBACK } from '@/lib/copy';
 import { extractErrorMessage } from '@/lib/errorMessage';
 import type { ContentDto, ContentStatus } from '@/types/api/content';
+import type { ContentListParams } from '@/lib/contentListParams';
 
 // task-05 Interfaces: `useContentList` owns filters/pagination/debounce state so
-// ContentListScreen stays dumb (docs/FRONTEND-CONVENTIONS.md §3). 300ms is the debounce
-// window for the search field — long enough to skip a request per keystroke, short enough to
-// feel responsive (test-author report's resolved ambiguity #6: no fixed value was pinned by a
-// test, so this constant is the implementer's documented choice).
+// ContentListScreen stays dumb (docs/FRONTEND-CONVENTIONS.md §3). phase-8 task-18 (DESIGN.md §2,
+// §5 C4): the URL is now the single source of truth for status/tag/page/q — the dashboard's stat
+// cards and tag links deep-link into `/content?...` and the browser back button restores the
+// screen — the search FIELD alone keeps a local echo so typing feels instant while the URL write
+// is debounced.
 const SEARCH_DEBOUNCE_MS = 300;
 const PAGE_SIZE = 20;
-// fix round 1, F2: friendly fallback when a DELETE failure carries no §9 envelope message
-// (e.g. a network error rather than a server-produced error response).
-const DELETE_ERROR_FALLBACK = "Couldn't delete this item. Please try again.";
-// Final review, finding F8/C-4: shown when a background refetch (e.g. another screen's mutation
-// invalidating the `'Content'` tag while this list is still mounted) fails while a previously
-// loaded page is still cached — non-destructive, unlike the full-screen ErrorState.
-const REFRESH_ERROR_FALLBACK = "Couldn't refresh this list — showing the last loaded page.";
 
 export interface UseContentListResult {
   items: ContentDto[];
@@ -34,8 +38,11 @@ export interface UseContentListResult {
   setStatus: (status: ContentStatus | '') => void;
   tag: string;
   setTag: (tag: string) => void;
+  /** Live field value — instant while typing; the URL write is debounced. */
   q: string;
   setQ: (q: string) => void;
+  hasFilters: boolean;
+  clearFilters: () => void;
   setPage: (page: number) => void;
   deleteContent: (id: string) => Promise<void>;
   isDeleting: boolean;
@@ -43,58 +50,92 @@ export interface UseContentListResult {
   deleteError: string | null;
   /** Clears `deleteError` — called on dialog close and at the start of every retry. */
   clearDeleteError: () => void;
-  /** §9-friendly message for a background list-refetch failure with a page still cached. */
-  refreshErrorMessage: string | null;
-  /** Dismisses the current `refreshErrorMessage` — a later, distinct failure gets its own. */
-  dismissRefreshError: () => void;
 }
 
 export function useContentList(): UseContentListResult {
-  const [status, setStatus] = useState<ContentStatus | ''>('');
-  const [tag, setTag] = useState('');
-  const [q, setQ] = useState('');
-  const [debouncedQ, setDebouncedQ] = useState('');
-  const [page, setPage] = useState(1);
+  const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
+  const params = parseContentListParams(searchParams);
 
-  // Debounce `q` -> `debouncedQ`; every other filter re-queries immediately.
+  const write = (next: ContentListParams) => {
+    router.replace(`${pathname}${buildContentListSearch(next)}`, { scroll: false });
+  };
+
+  // Search field: an instant local echo of `params.q`, written back to the URL 300ms after the
+  // last keystroke. `lastWrittenQ` distinguishes "the URL changed because WE just wrote it"
+  // (already in sync, no echo needed) from "the URL changed externally" (back button — sync the
+  // field to match).
+  const [qInput, setQInput] = useState(params.q);
+  const lastWrittenQ = useRef(params.q);
   useEffect(() => {
-    const timer = setTimeout(() => setDebouncedQ(q), SEARCH_DEBOUNCE_MS);
+    if (params.q !== lastWrittenQ.current) {
+      lastWrittenQ.current = params.q;
+      setQInput(params.q);
+    }
+  }, [params.q]);
+  useEffect(() => {
+    if (qInput === params.q) {
+      return;
+    }
+    const timer = setTimeout(() => {
+      lastWrittenQ.current = qInput;
+      write({ ...params, q: qInput, page: 1 });
+    }, SEARCH_DEBOUNCE_MS);
     return () => clearTimeout(timer);
-  }, [q]);
+    // `params`/`write` are intentionally captured from the render that scheduled this timer
+    // (brief's exact debounce/sync notes).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [qInput, params.q]);
 
   const { data, isLoading, isError } = useListContentQuery({
-    status: status || undefined,
-    tag: tag || undefined,
-    q: debouncedQ || undefined,
-    page,
+    status: params.status || undefined,
+    tag: params.tag || undefined,
+    q: params.q || undefined,
+    page: params.page,
     page_size: PAGE_SIZE,
   });
   const hasData = data !== undefined;
 
-  // Final review, finding F8/C-4: same idiom as useContentEditor's `refreshErrorDismissed`
-  // (task-06 fix round 2, N2) — reset the dismissal once `isError` clears, so a LATER, distinct
-  // background-refetch failure gets its own alert rather than staying silenced by an earlier
-  // dismissal.
-  const [refreshErrorDismissed, setRefreshErrorDismissed] = useState(false);
-  if (!isError && refreshErrorDismissed) {
-    setRefreshErrorDismissed(false);
-  }
-  const backgroundRefetchFailed = hasData && isError && !refreshErrorDismissed;
+  // WR-60: a stranded page (e.g. the last row on a page was deleted, or a deep link named a page
+  // past the end) clamps back to the last valid page once `total` is known.
+  useEffect(() => {
+    if (!data) {
+      return;
+    }
+    const lastPage = Math.max(1, Math.ceil(data.total / PAGE_SIZE));
+    if (params.page > lastPage) {
+      write({ ...params, page: lastPage });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- fires only off `data`/`params.page`.
+  }, [data, params.page]);
+
+  // Final review, finding F8/C-4: a background refetch (e.g. another screen's mutation
+  // invalidating the `'Content'` tag while this list is still mounted) failing must not blank the
+  // whole list back to `ErrorState` — the last successfully loaded page stays visible, with the
+  // failure surfaced through the global snackbar instead. Fired once per failure episode (rising
+  // edge of `hasData && isError`), same idiom as `useDashboard`'s background-refresh notice.
+  const { error: notifyError, success: notifySuccess } = useSnackbar();
+  const isBackgroundRefreshFailing = hasData && isError;
+  const wasBackgroundRefreshFailing = useRef(false);
+  useEffect(() => {
+    if (isBackgroundRefreshFailing && !wasBackgroundRefreshFailing.current) {
+      notifyError(CONTENT_REFRESH_ERROR);
+    }
+    wasBackgroundRefreshFailing.current = isBackgroundRefreshFailing;
+  }, [isBackgroundRefreshFailing, notifyError]);
 
   const [triggerDelete, { isLoading: isDeleting }] = useDeleteContentMutation();
   const [deleteError, setDeleteError] = useState<string | null>(null);
 
-  const setStatusAndResetPage = (next: ContentStatus | '') => {
-    setStatus(next);
-    setPage(1);
-  };
-  const setTagAndResetPage = (next: string) => {
-    setTag(next);
-    setPage(1);
-  };
-  const setQAndResetPage = (next: string) => {
-    setQ(next);
-    setPage(1);
+  const setStatus = (next: ContentStatus | '') => write({ ...params, status: next, page: 1 });
+  const setTag = (next: string) => write({ ...params, tag: next, page: 1 });
+  const setQ = (next: string) => setQInput(next);
+  const setPage = (next: number) => write({ ...params, page: next });
+  const clearFilters = () => {
+    lastWrittenQ.current = '';
+    setQInput('');
+    write(DEFAULT_CONTENT_LIST_PARAMS);
   };
 
   // fix round 1, F2: a DELETE failure used to disappear into ContentListScreen's bare
@@ -107,6 +148,7 @@ export function useContentList(): UseContentListResult {
     setDeleteError(null);
     try {
       await triggerDelete(id).unwrap();
+      notifySuccess(CONTENT_DELETED_MESSAGE);
     } catch (error) {
       setDeleteError(extractErrorMessage(error, DELETE_ERROR_FALLBACK));
       throw error;
@@ -114,28 +156,27 @@ export function useContentList(): UseContentListResult {
   };
 
   const clearDeleteError = () => setDeleteError(null);
-  const dismissRefreshError = () => setRefreshErrorDismissed(true);
 
   return {
     items: data?.items ?? [],
     total: data?.total ?? 0,
-    page,
+    page: params.page,
     pageSize: PAGE_SIZE,
     isLoading,
     isError,
     hasData,
-    status,
-    setStatus: setStatusAndResetPage,
-    tag,
-    setTag: setTagAndResetPage,
-    q,
-    setQ: setQAndResetPage,
+    status: params.status,
+    setStatus,
+    tag: params.tag,
+    setTag,
+    q: qInput,
+    setQ,
+    hasFilters: hasActiveFilters(params),
+    clearFilters,
     setPage,
     deleteContent,
     isDeleting,
     deleteError,
     clearDeleteError,
-    refreshErrorMessage: backgroundRefetchFailed ? REFRESH_ERROR_FALLBACK : null,
-    dismissRefreshError,
   };
 }

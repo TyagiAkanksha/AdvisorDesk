@@ -26,7 +26,11 @@ function resolveApiBaseUrl(): string {
 
 // PRD §5.3: published-and-non-deleted content, newest-published first, tags included. Bare
 // list, no pagination envelope (matches `GET /public/content`'s response shape).
-export async function getPublishedContent(): Promise<PublicContentSummaryDto[]> {
+//
+// p8 t24: wrapped in React's `cache()` — a request-scoped memo, same pattern as
+// `getContentBySlug` below — so the article page's `Promise.all([getContentBySlug(slug),
+// getPublishedContentOrEmpty()])` and any other same-request caller dedupe to one fetch.
+export const getPublishedContent = cache(async (): Promise<PublicContentSummaryDto[]> => {
   const response = await fetch(`${resolveApiBaseUrl()}/api/v1/public/content`, {
     cache: 'no-store',
   });
@@ -34,6 +38,19 @@ export async function getPublishedContent(): Promise<PublicContentSummaryDto[]> 
     throw new Error(`Failed to fetch published content: ${response.status}`);
   }
   return (await response.json()) as PublicContentSummaryDto[];
+});
+
+/**
+ * p8 t24 (DESIGN.md §B3 carry-in): the related-articles list must never take an article page
+ * down — a failed or throwing fetch degrades to an empty list (no related section) rather than
+ * surfacing an error page for content that otherwise loaded fine.
+ */
+export async function getPublishedContentOrEmpty(): Promise<PublicContentSummaryDto[]> {
+  try {
+    return await getPublishedContent();
+  } catch {
+    return [];
+  }
 }
 
 // PRD §5.3: a deleted item's slug 404s and is never reassigned — the thin `[slug]` page turns a

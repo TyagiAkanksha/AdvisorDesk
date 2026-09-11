@@ -284,7 +284,7 @@ describe('ChatScreen', () => {
 
   // phase-8 task-12 (DESIGN.md §B4) — new cases appended per the task brief.
 
-  it('shows the welcome state with suggested questions, and clicking one sends it', async () => {
+  it('keeps the page h1 once a conversation starts', async () => {
     vi.stubGlobal(
       'fetch',
       vi.fn().mockResolvedValue(
@@ -304,7 +304,7 @@ describe('ChatScreen', () => {
     expect(await screen.findByRole('article', { name: 'You' })).toHaveTextContent(
       'Do I need umbrella insurance?',
     );
-    expect(screen.queryByRole('heading', { level: 1 })).toBeNull();
+    expect(screen.getByRole('heading', { level: 1, name: 'Ask a question' })).toBeInTheDocument();
   });
 
   it('shows Thinking… after sending until the first token arrives', async () => {

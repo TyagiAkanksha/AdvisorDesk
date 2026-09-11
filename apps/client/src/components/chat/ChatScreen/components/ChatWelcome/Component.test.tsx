@@ -7,11 +7,14 @@ import { describe, expect, it, vi } from 'vitest';
 import { ChatWelcome } from '.';
 
 describe('ChatWelcome', () => {
-  it('renders the h1, the description, and four suggested-question buttons that send on click', async () => {
+  // p8 t24 (DESIGN.md §B4 carry-in): the page h1 now lives in `ChatScreen` (persists across a
+  // conversation) — the welcome region itself renders no heading of its own.
+  it('renders a labelled region with no heading, the description, and four suggested-question buttons that send on click', async () => {
     const onAsk = vi.fn();
     render(<ChatWelcome onAsk={onAsk} />);
 
-    expect(screen.getByRole('heading', { level: 1, name: 'Ask a question' })).toBeInTheDocument();
+    expect(screen.getByRole('region', { name: 'Ask a question' })).toBeInTheDocument();
+    expect(screen.queryByRole('heading')).not.toBeInTheDocument();
     expect(screen.getByText(/cite their sources/)).toBeInTheDocument();
     const buttons = screen.getAllByRole('button');
     expect(buttons).toHaveLength(4);

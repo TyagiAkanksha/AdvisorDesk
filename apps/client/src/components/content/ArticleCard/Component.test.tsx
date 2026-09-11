@@ -32,4 +32,10 @@ describe('ArticleCard', () => {
       '/?tag=tax-planning',
     );
   });
+
+  it('renders the title as an h3 when titleAs="h3"', () => {
+    render(<ArticleCard item={item} titleAs="h3" />);
+    expect(screen.getByRole('heading', { level: 3, name: item.title })).toBeInTheDocument();
+    expect(screen.queryByRole('heading', { level: 2 })).not.toBeInTheDocument();
+  });
 });

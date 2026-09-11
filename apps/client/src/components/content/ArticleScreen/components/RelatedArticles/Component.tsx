@@ -25,7 +25,7 @@ export default function Component({ items }: RelatedArticlesProps) {
       </Grid>
       {items.map((item) => (
         <Grid key={item.slug} size={{ xs: 12, sm: 4 }}>
-          <ArticleCard item={item} />
+          <ArticleCard item={item} titleAs="h3" />
         </Grid>
       ))}
     </Grid>

@@ -3,7 +3,7 @@ import { notFound } from 'next/navigation';
 
 import { PageContainer } from '@/components/common';
 import { ArticleScreen } from '@/components/content/ArticleScreen';
-import { getContentBySlug, getPublishedContent } from '@/lib/publicApi';
+import { getContentBySlug, getPublishedContentOrEmpty } from '@/lib/publicApi';
 import { relatedArticles } from '@/lib/related';
 
 interface PageProps {
@@ -27,9 +27,12 @@ export async function generateMetadata({ params }: PageProps): Promise<Metadata>
 // phase-8 task-10 (DESIGN.md §B3): `md`-width reading column plus up to three related articles
 // computed from the full published list (`relatedArticles` — src/lib/related.ts). Thin: fetching
 // and 404 handling only, no layout/markup of its own.
+//
+// p8 t24: the related list uses `getPublishedContentOrEmpty` — a failed list fetch degrades to
+// no related section instead of taking the whole article page down with it.
 export default async function Page({ params }: PageProps) {
   const { slug } = await params;
-  const [article, all] = await Promise.all([getContentBySlug(slug), getPublishedContent()]);
+  const [article, all] = await Promise.all([getContentBySlug(slug), getPublishedContentOrEmpty()]);
 
   if (!article) {
     notFound();

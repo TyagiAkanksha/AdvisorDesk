@@ -8,6 +8,9 @@ export const GENERIC_ERROR_MESSAGE = 'Something went wrong. Please try again.';
 export const NOT_FOUND_TITLE = 'Page not found';
 export const NOT_FOUND_MESSAGE = 'The page you’re looking for doesn’t exist or has been removed.';
 export const BACK_TO_ARTICLES_LABEL = 'Back to articles';
+// p8 t24: the article page's back link — the glyph lives in copy, not inline JSX, so the
+// rendered accessible name is one literal constant, not an arrow-plus-space-plus-label assembly.
+export const BACK_TO_ARTICLES_LINK_TEXT = '← Back to articles';
 export const PAGE_ERROR_MESSAGE = 'Something went wrong loading this page. Please try again.';
 export const RETRY_LABEL = 'Try again';
 

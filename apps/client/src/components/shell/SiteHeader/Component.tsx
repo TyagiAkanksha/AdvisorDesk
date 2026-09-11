@@ -5,6 +5,9 @@ import { SiteNav } from '../SiteNav';
 
 // phase-8 task-08 (DESIGN.md §B1): a conventional content-site header — white, bottom border,
 // no shadow; wordmark left, two links right. Server Component; `SiteNav` is the client leaf.
+//
+// p8 t24: `flexWrap: 'wrap'` (+ row/column gaps) lets the wordmark and nav stack instead of
+// colliding under ~330px, rather than clipping or overlapping on very narrow screens.
 export default function Component() {
   return (
     <AppBar
@@ -13,7 +16,17 @@ export default function Component() {
       elevation={0}
       sx={{ bgcolor: 'background.paper', borderBottom: 1, borderColor: 'divider' }}
     >
-      <Toolbar sx={{ maxWidth: 'lg', width: '100%', mx: 'auto', justifyContent: 'space-between' }}>
+      <Toolbar
+        sx={{
+          maxWidth: 'lg',
+          width: '100%',
+          mx: 'auto',
+          justifyContent: 'space-between',
+          flexWrap: 'wrap',
+          rowGap: 1,
+          columnGap: 2,
+        }}
+      >
         <Typography
           variant="h5"
           component="span"

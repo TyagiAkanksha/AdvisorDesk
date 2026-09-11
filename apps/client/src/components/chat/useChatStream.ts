@@ -453,19 +453,40 @@ export function useChatStream(): UseChatStreamResult {
             return;
           }
 
+          // p8 t24 (carry-in): a frame that finishes arriving AFTER `stop()`/`reset()` already
+          // called `controller.abort()` must not still mutate state — a chunk already in flight
+          // at the moment of `abort()` can still resolve afterwards, and `reset()`'s "leaves no
+          // messages behind" contract has to hold against exactly that race: `reset()` already
+          // cleared `messages`, and applying a late token/citations/done on top would resurrect a
+          // turn the user just discarded. Mirrors `apps/admin`'s `useAgentStream.ts`'s
+          // `applyIfNotAborted`.
+          const applyIfNotAborted = (apply: () => void) => {
+            if (!controller.signal.aborted) {
+              apply();
+            }
+          };
+
           await parseSseStream(body.getReader(), {
             onToken: (chunk) => {
-              setMessages((prev) => appendAssistantToken(prev, chunk, !firstTokenSeen));
-              firstTokenSeen = true;
+              applyIfNotAborted(() => {
+                setMessages((prev) => appendAssistantToken(prev, chunk, !firstTokenSeen));
+                firstTokenSeen = true;
+              });
             },
             onCitations: (citations) => {
-              setMessages((prev) => attachCitations(prev, citations));
+              applyIfNotAborted(() => {
+                setMessages((prev) => attachCitations(prev, citations));
+              });
             },
             onDone: ({ session_id }) => {
-              persistSessionId(session_id);
+              applyIfNotAborted(() => {
+                persistSessionId(session_id);
+              });
             },
             onError: ({ message }) => {
-              setError(message);
+              applyIfNotAborted(() => {
+                setError(message);
+              });
             },
           });
         } catch {

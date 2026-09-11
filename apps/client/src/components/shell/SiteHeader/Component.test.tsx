@@ -15,4 +15,10 @@ describe('SiteHeader', () => {
     expect(screen.getByRole('link', { name: 'AdvisorDesk home' })).toHaveAttribute('href', '/');
     expect(screen.getByRole('navigation', { name: 'Primary' })).toBeInTheDocument();
   });
+
+  it('lets the wordmark and nav wrap instead of colliding on very narrow screens', () => {
+    render(<SiteHeader />);
+    const toolbar = screen.getByRole('banner').querySelector('.MuiToolbar-root');
+    expect(toolbar).toHaveStyle({ flexWrap: 'wrap' });
+  });
 });

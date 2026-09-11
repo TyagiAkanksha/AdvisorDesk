@@ -224,6 +224,7 @@ prod `a81f4da`).
 | 21 | [Connected apps: header, focused table, destructive revoke, refresh feedback](task-21-connected-apps.md) | 18 | Sonnet | Client/Connected/Last used/Revoke table, `ConnectedAppsSkeleton`, "Access revoked", F-5 closed |
 | 22 | [`useAgentStream` stop/reset, text offsets, `turnSegments`](task-22-agent-stream-controls.md) | 14 | Sonnet | `stop`/`reset`, `ToolEvent.textOffset`, `lib/agentTurnSegments` |
 | 23 | [Agent panel: header, suggestions, markdown turns, collapsible tool cards, Stop](task-23-agent-panel.md) ★ | 22, 15 | Opus | `useAgentComposer`, `AgentComposer`, `WorkingIndicator`, collapsible `ToolCallCard`, interleaved `AgentMessage`, `onClose` |
+| 24 | [Client carry-ins from the B final review](task-24-client-b-carry-ins.md) ★ | 23 | Opus | own PR after C: disclaimer `role="note"`, page h1 during chat, Sources `region`, shared `TagChips`, `titleAs`, typed `onKeyDown` (both apps), icon prune, safe related list, `?tag=` string[], header wrap, `theme.test` twin guard, hook guard tests |
 
 **Execution order:** 13 → 14 → 15 → 16 → 17 → 18 → 19 → 20 → 21 → 22 → 23 (13 is independent
 and could run last; keeping it first lets 16 verify end-to-end against the local API). One

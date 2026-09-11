@@ -13,13 +13,17 @@ import type { CitationListProps } from './interface';
 // `[n]` prefix ("1. [1] Homeowners Liability Basics") — `listStyleType: 'none'` (not the
 // `listStyle` shorthand, which also touches position/image we don't need to reset) suppresses
 // just the marker; `pl: 0` removes the indent that marker used to occupy.
+//
+// p8 t24 (DESIGN.md §B4 carry-in): a `<section>` (ARIA `region`), not a `<nav>` — `nav` is for
+// site navigation; one message's citation list is content, so it is a named region (one per
+// answer, which is fine for a region).
 export default function Component({ citations }: CitationListProps) {
   if (citations.length === 0) {
     return null;
   }
 
   return (
-    <nav aria-label={SOURCES_LABEL}>
+    <Box component="section" aria-label={SOURCES_LABEL}>
       <Typography variant="overline" component="p">
         {SOURCES_LABEL}
       </Typography>
@@ -32,6 +36,6 @@ export default function Component({ citations }: CitationListProps) {
           </li>
         ))}
       </Box>
-    </nav>
+    </Box>
   );
 }

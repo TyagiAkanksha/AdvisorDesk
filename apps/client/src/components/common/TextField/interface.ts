@@ -16,8 +16,16 @@ export interface TextFieldProps {
   multiline?: boolean;
   minRows?: number;
   maxRows?: number;
-  /** Raw key events — the chat composer's Enter-to-send lives in its VM hook, not here. */
-  onKeyDown?: (event: KeyboardEvent<HTMLInputElement | HTMLTextAreaElement>) => void;
+  /**
+   * Raw key events — the chat composer's Enter-to-send lives in its VM hook, not here.
+   *
+   * p8 t24: typed against the generic `HTMLElement`, not the input/textarea union — MUI's own
+   * `TextField.onKeyDown` type is bound to its root element (`KeyboardEventHandler
+   * <HTMLDivElement>`, even though the event genuinely originates on the inner input/textarea),
+   * and `KeyboardEvent<HTMLDivElement>` is assignable to `KeyboardEvent<HTMLElement>` — so this
+   * prop passes straight through to MUI with no cast.
+   */
+  onKeyDown?: (event: KeyboardEvent<HTMLElement>) => void;
   /**
    * fix round 1 (M-2): forwarded to MUI's own `inputRef` — the underlying <input>/<textarea> DOM
    * node, for imperative focus management (the chat composer refocuses the field once streaming

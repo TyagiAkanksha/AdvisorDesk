@@ -11,7 +11,7 @@ import type { ICONS } from './Component';
  * entry in `Component.tsx` when a screen needs an icon that isn't listed yet.
  */
 export interface IconProps {
-  /** Key into the Icon registry (see `ICONS` in `Component.tsx`), e.g. "Search", "Menu". */
+  /** Key into the Icon registry (see `ICONS` in `Component.tsx`), e.g. "Search", "Send". */
   name: keyof typeof ICONS;
   /** Accessible name. Present -> `role="img"` + `aria-label`. Absent -> `aria-hidden="true"`. */
   label?: string;

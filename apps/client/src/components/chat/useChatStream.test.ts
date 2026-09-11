@@ -100,6 +100,40 @@ function streamResponse(frames: SseFrame[]): Response {
   });
 }
 
+// p8 t24 (carried in verbatim from `ChatScreen/Component.test.tsx`, which this file did not
+// already have): builds a `Response` whose SSE body stays open (no bytes enqueued, never closed)
+// until the returned `release()` is called — needed by the retry()/reset()-while-streaming guard
+// cases below, which must observe `streaming: true` for a deterministic window rather than racing
+// a fully-microtask-resolving stream.
+interface Deferred<T> {
+  promise: Promise<T>;
+  resolve: (value: T) => void;
+}
+
+function deferred<T>(): Deferred<T> {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((res) => {
+    resolve = res;
+  });
+  return { promise, resolve };
+}
+
+function gatedStreamResponse(frames: SseFrame[]): { response: Response; release: () => void } {
+  const gate = deferred<void>();
+  const body = new ReadableStream<Uint8Array>({
+    async start(controller) {
+      await gate.promise;
+      controller.enqueue(new TextEncoder().encode(sseBody(frames)));
+      controller.close();
+    },
+  });
+  const response = new Response(body, {
+    status: 200,
+    headers: { 'content-type': 'text/event-stream' },
+  });
+  return { response, release: () => gate.resolve() };
+}
+
 function jsonErrorResponse(status: number, code: string, message: string): Response {
   return new Response(JSON.stringify({ error: { code, message } }), {
     status,
@@ -564,5 +598,45 @@ describe('useChatStream', () => {
     const { result } = renderHook(() => useChatStream());
     act(() => result.current.retry());
     expect(result.current.messages).toEqual([]);
+  });
+
+  // p8 t24 (carry-in): two additional guard cases on `retry()`/`reset()`'s re-entrancy/abort
+  // behavior while a stream is still open.
+
+  it('retry() is a no-op while streaming', async () => {
+    const { response, release } = gatedStreamResponse([
+      { event: 'token', data: { text: 'Partial' } },
+      { event: 'done', data: { session_id: 's-1', message_id: 'm-1' } },
+    ]);
+    const fetchMock = vi.fn().mockResolvedValue(response);
+    vi.stubGlobal('fetch', fetchMock);
+    const { result } = renderHook(() => useChatStream());
+    act(() => result.current.send('Q'));
+    await waitFor(() => expect(result.current.streaming).toBe(true));
+
+    act(() => result.current.retry());
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    release();
+    await waitFor(() => expect(result.current.streaming).toBe(false));
+    expect(result.current.messages.map((m) => m.role)).toEqual(['user', 'assistant']);
+  });
+
+  it('reset() while streaming aborts and leaves no messages behind', async () => {
+    const { response, release } = gatedStreamResponse([
+      { event: 'token', data: { text: 'Partial' } },
+      { event: 'done', data: { session_id: 's-1', message_id: 'm-1' } },
+    ]);
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(response));
+    const { result } = renderHook(() => useChatStream());
+    act(() => result.current.send('Q'));
+    await waitFor(() => expect(result.current.streaming).toBe(true));
+
+    act(() => result.current.reset());
+    release();
+
+    await waitFor(() => expect(result.current.streaming).toBe(false));
+    expect(result.current.messages).toEqual([]);
+    expect(result.current.error).toBeNull();
   });
 });

@@ -112,7 +112,7 @@ describe('ArticleScreen', () => {
     ).toBeInTheDocument();
   });
 
-  it('renders the back link, tag links to the filter, the disclaimer as an info alert, and the chat CTA', () => {
+  it('renders the back link, tag links to the filter, the disclaimer as an info note, and the chat CTA', () => {
     render(<ArticleScreen article={article} related={[]} />);
 
     expect(screen.getByRole('link', { name: /Back to articles/ })).toHaveAttribute('href', '/');
@@ -120,11 +120,17 @@ describe('ArticleScreen', () => {
       'href',
       `/?tag=${encodeURIComponent(article.tags[0]!)}`,
     );
-    expect(screen.getByRole('alert')).toHaveTextContent('not financial advice');
+    expect(screen.getByRole('note')).toHaveTextContent('not financial advice');
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'Ask a question about this topic' })).toHaveAttribute(
       'href',
       '/chat',
     );
+  });
+
+  it('renders the back link with the glyph from copy', () => {
+    render(<ArticleScreen article={article} related={[]} />);
+    expect(screen.getByRole('link', { name: '← Back to articles' })).toHaveAttribute('href', '/');
   });
 
   it('renders related articles when given and omits the section when empty', () => {

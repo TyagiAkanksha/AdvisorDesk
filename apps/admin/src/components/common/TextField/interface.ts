@@ -22,8 +22,16 @@ export interface TextFieldProps {
   error?: boolean;
   helperText?: string;
   onBlur?: () => void;
-  /** Raw key events, e.g. Enter-to-send in a chat composer. */
-  onKeyDown?: (event: KeyboardEvent<HTMLInputElement | HTMLTextAreaElement>) => void;
+  /**
+   * Raw key events, e.g. Enter-to-send in a chat composer.
+   *
+   * p8 t24: typed against the generic `HTMLElement`, not the input/textarea union — MUI's own
+   * `TextField.onKeyDown` type is bound to its root element (`KeyboardEventHandler
+   * <HTMLDivElement>`, even though the event genuinely originates on the inner input/textarea),
+   * and `KeyboardEvent<HTMLDivElement>` is assignable to `KeyboardEvent<HTMLElement>` — so this
+   * prop passes straight through to MUI with no cast.
+   */
+  onKeyDown?: (event: KeyboardEvent<HTMLElement>) => void;
   /** phase-8 task-14 (DESIGN.md §C5): the editor's Body field renders in a monospace font. */
   monospace?: boolean;
 }

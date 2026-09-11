@@ -25,4 +25,10 @@ describe('RelatedArticles', () => {
 
     expect(container).toBeEmptyDOMElement();
   });
+
+  it('renders card titles as h3 under its own h2', () => {
+    render(<RelatedArticles items={[items[0]!]} />);
+    expect(screen.getByRole('heading', { level: 2, name: 'Related articles' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { level: 3, name: items[0]!.title })).toBeInTheDocument();
+  });
 });

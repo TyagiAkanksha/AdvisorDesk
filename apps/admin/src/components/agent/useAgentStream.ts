@@ -18,6 +18,9 @@ export interface ToolEvent {
   tool: string;
   /** `'call'`: compact `JSON.stringify(arguments)`. `'result'`: `result_summary` verbatim. */
   detail: string;
+  /** Length of the assistant turn's `text` at the moment this event arrived — lets the renderer
+   * place the card between the text that preceded it and the text that followed (phase-8 t22). */
+  textOffset: number;
 }
 
 /** One turn in the conversation — `AgentPanel`'s render list, `AgentMessage`'s prop. */
@@ -32,6 +35,10 @@ export interface UseAgentStreamResult {
   streaming: boolean;
   error: string | null;
   send: (text: string) => void;
+  /** Abort the in-flight request; whatever arrived stays; no error; no-op when idle. */
+  stop: () => void;
+  /** Stop if streaming, then clear turns and error. */
+  reset: () => void;
 }
 
 const NETWORK_ERROR_MESSAGE = "Couldn't reach the agent. Please try again.";
@@ -56,13 +63,21 @@ function appendAssistantToken(turns: AgentTurn[], chunk: string): AgentTurn[] {
 }
 
 /** Append a `ToolEvent` to the in-progress assistant turn's `events` list, in arrival order —
- * same "start a new assistant turn if needed" rule as `appendAssistantToken`. Pure. */
-function appendAssistantEvent(turns: AgentTurn[], event: ToolEvent): AgentTurn[] {
+ * same "start a new assistant turn if needed" rule as `appendAssistantToken`. `textOffset` is
+ * computed here from the in-progress assistant turn's current `text.length` (0 when a new
+ * assistant turn has to be started) — the caller only supplies the wire-derived fields. Pure. */
+function appendAssistantEvent(
+  turns: AgentTurn[],
+  event: Omit<ToolEvent, 'textOffset'>,
+): AgentTurn[] {
   const last = turns[turns.length - 1];
   if (last === undefined || last.role !== 'assistant') {
-    return [...turns, { role: 'assistant', text: '', events: [event] }];
+    return [...turns, { role: 'assistant', text: '', events: [{ ...event, textOffset: 0 }] }];
   }
-  return [...turns.slice(0, -1), { ...last, events: [...last.events, event] }];
+  return [
+    ...turns.slice(0, -1),
+    { ...last, events: [...last.events, { ...event, textOffset: last.text.length }] },
+  ];
 }
 
 /** I-1: if `done` fires and the last turn is still the user's own turn (no `token`/`tool_call`
@@ -175,26 +190,50 @@ export function useAgentStream(): UseAgentStreamResult {
             return;
           }
 
+          // A frame that finishes arriving AFTER `stop()`/`reset()` already called
+          // `controller.abort()` must not still mutate state — real network abort cuts the
+          // stream off immediately, but a chunk already in flight at the moment of `abort()` can
+          // still resolve afterwards (the exact race `reset()`'s "leaves no turns behind"
+          // contract has to hold against: reset already cleared `turns`, and applying a late
+          // token on top would resurrect a turn the user just discarded). `stop()` doesn't need
+          // this to "keep the partial turn" either — whatever landed BEFORE `abort()` is already
+          // in state and untouched — so skipping post-abort frames is the correct no-op for both.
+          const applyIfNotAborted = (apply: () => void) => {
+            if (!controller.signal.aborted) {
+              apply();
+            }
+          };
+
           await parseSseStream(body.getReader(), {
             onToken: (chunk) => {
-              setTurnsState((prev) => appendAssistantToken(prev, chunk));
+              applyIfNotAborted(() => {
+                setTurnsState((prev) => appendAssistantToken(prev, chunk));
+              });
             },
             onToolCall: ({ tool, arguments: args }) => {
-              setTurnsState((prev) =>
-                appendAssistantEvent(prev, { kind: 'call', tool, detail: JSON.stringify(args) }),
-              );
+              applyIfNotAborted(() => {
+                setTurnsState((prev) =>
+                  appendAssistantEvent(prev, { kind: 'call', tool, detail: JSON.stringify(args) }),
+                );
+              });
             },
             onToolResult: ({ tool, result_summary }) => {
-              setTurnsState((prev) =>
-                appendAssistantEvent(prev, { kind: 'result', tool, detail: result_summary }),
-              );
+              applyIfNotAborted(() => {
+                setTurnsState((prev) =>
+                  appendAssistantEvent(prev, { kind: 'result', tool, detail: result_summary }),
+                );
+              });
             },
             onDone: () => {
-              setTurnsState(ensureAssistantTurnOnDone);
-              dispatch(invalidateAgentWrites());
+              applyIfNotAborted(() => {
+                setTurnsState(ensureAssistantTurnOnDone);
+                dispatch(invalidateAgentWrites());
+              });
             },
             onError: ({ message }) => {
-              setError(message);
+              applyIfNotAborted(() => {
+                setError(message);
+              });
             },
           });
         } catch {
@@ -212,5 +251,23 @@ export function useAgentStream(): UseAgentStreamResult {
     [dispatch, setStreamingState, setTurnsState],
   );
 
-  return { turns, streaming, error, send };
+  // Abort the in-flight request; whatever arrived stays (the `finally` in `send()`'s async IIFE
+  // still runs and flips `streaming` false); no error surfaced — `AbortError` is swallowed by
+  // `controller.signal.aborted` check in the `catch` above. A no-op when idle (`current` is
+  // already `null`). Mirrors `useChatStream.ts`'s `stop`.
+  const stop = useCallback(() => {
+    abortControllerRef.current?.abort();
+  }, []);
+
+  // Start a new conversation: abort first (so a reset mid-stream doesn't leave a stray write in
+  // flight racing the cleared state), then clear `error` and `turns`. `setTurnsState(() => [])`
+  // (not a bare `setTurns`) keeps `turnsRef` in sync — the ref is what the next `send()` resends.
+  // Mirrors `useChatStream.ts`'s `reset` (minus the session id, which this hook doesn't have).
+  const reset = useCallback(() => {
+    abortControllerRef.current?.abort();
+    setError(null);
+    setTurnsState(() => []);
+  }, [setTurnsState]);
+
+  return { turns, streaming, error, send, stop, reset };
 }

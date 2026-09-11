@@ -72,6 +72,39 @@ function streamResponse(frames: SseFrame[]): Response {
   });
 }
 
+interface Deferred<T> {
+  promise: Promise<T>;
+  resolve: (value: T) => void;
+}
+
+function deferred<T>(): Deferred<T> {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((res) => {
+    resolve = res;
+  });
+  return { promise, resolve };
+}
+
+// phase-8 task-22: copied verbatim from `AgentPanel/Component.test.tsx`'s own judgment call (4)
+// header comment — a mocked `fetch`/`ReadableStream` that resolves entirely via microtasks can
+// race ahead of `stop()`/`reset()` being called mid-stream, so the `stop`/`reset` tests below
+// hold the stream open under test control rather than racing real timing.
+function gatedStreamResponse(frames: SseFrame[]): { response: Response; release: () => void } {
+  const gate = deferred<void>();
+  const body = new ReadableStream<Uint8Array>({
+    async start(controller) {
+      await gate.promise;
+      controller.enqueue(new TextEncoder().encode(sseBody(frames)));
+      controller.close();
+    },
+  });
+  const response = new Response(body, {
+    status: 200,
+    headers: { 'content-type': 'text/event-stream' },
+  });
+  return { response, release: () => gate.resolve() };
+}
+
 function Wrapper({ children }: { children: ReactNode }) {
   return <Provider store={store}>{children}</Provider>;
 }
@@ -120,8 +153,13 @@ describe('useAgentStream', () => {
     await waitFor(() => expect(result.current.streaming).toBe(false));
 
     const expectedEvents: ToolEvent[] = [
-      { kind: 'call', tool: 'create_draft', detail: JSON.stringify(argumentsFixture) },
-      { kind: 'result', tool: 'create_draft', detail: resultSummary },
+      {
+        kind: 'call',
+        tool: 'create_draft',
+        detail: JSON.stringify(argumentsFixture),
+        textOffset: 20,
+      },
+      { kind: 'result', tool: 'create_draft', detail: resultSummary, textOffset: 20 },
     ];
     const expectedTurns: AgentTurn[] = [
       {
@@ -246,5 +284,84 @@ describe('useAgentStream', () => {
     expect(result.current.error).toBeTruthy();
     // Never the raw error/JSON dumped verbatim — a friendly message.
     expect(result.current.error).not.toMatch(/[{}]/);
+  });
+
+  it('stop() aborts the in-flight stream, keeps the partial turn, sets no error, and ends streaming', async () => {
+    const { response, release } = gatedStreamResponse([
+      { event: 'token', data: { text: 'Partial ' } },
+      { event: 'done', data: { tool_calls: [] } },
+    ]);
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(response));
+
+    const { result } = renderHook(() => useAgentStream(), { wrapper: Wrapper });
+    act(() => result.current.send('Q'));
+    await waitFor(() => expect(result.current.streaming).toBe(true));
+
+    act(() => result.current.stop());
+    release();
+
+    await waitFor(() => expect(result.current.streaming).toBe(false));
+    expect(result.current.error).toBeNull();
+    expect(result.current.turns[0]).toEqual({ role: 'user', text: 'Q', events: [] });
+  });
+
+  it('stop() is a no-op when idle', () => {
+    const { result } = renderHook(() => useAgentStream(), { wrapper: Wrapper });
+
+    expect(() => act(() => result.current.stop())).not.toThrow();
+    expect(result.current.streaming).toBe(false);
+  });
+
+  it('reset() clears turns and error, and the next send() resends an empty history', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        streamResponse([
+          { event: 'token', data: { text: 'Hi' } },
+          { event: 'done', data: { tool_calls: [] } },
+        ]),
+      )
+      .mockResolvedValueOnce(
+        streamResponse([
+          { event: 'token', data: { text: 'Again' } },
+          { event: 'done', data: { tool_calls: [] } },
+        ]),
+      );
+    vi.stubGlobal('fetch', fetchMock);
+
+    const { result } = renderHook(() => useAgentStream(), { wrapper: Wrapper });
+    act(() => result.current.send('First'));
+    await waitFor(() => expect(result.current.streaming).toBe(false));
+    expect(result.current.turns).toHaveLength(2);
+
+    act(() => result.current.reset());
+    expect(result.current.turns).toEqual([]);
+    expect(result.current.error).toBeNull();
+
+    act(() => result.current.send('Second'));
+    await waitFor(() => expect(result.current.streaming).toBe(false));
+    const body = JSON.parse((fetchMock.mock.calls[1]?.[1] as RequestInit).body as string) as {
+      messages: unknown[];
+    };
+    expect(body.messages).toEqual([{ role: 'user', content: 'Second' }]);
+  });
+
+  it('reset() while streaming aborts first and leaves no turns behind', async () => {
+    const { response, release } = gatedStreamResponse([
+      { event: 'token', data: { text: 'Partial ' } },
+      { event: 'done', data: { tool_calls: [] } },
+    ]);
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(response));
+
+    const { result } = renderHook(() => useAgentStream(), { wrapper: Wrapper });
+    act(() => result.current.send('Q'));
+    await waitFor(() => expect(result.current.streaming).toBe(true));
+
+    act(() => result.current.reset());
+    release();
+
+    await waitFor(() => expect(result.current.streaming).toBe(false));
+    expect(result.current.turns).toEqual([]);
+    expect(result.current.error).toBeNull();
   });
 });

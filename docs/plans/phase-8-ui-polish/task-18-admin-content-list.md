@@ -119,11 +119,13 @@ export interface UseContentListResult {
 //   const [qInput, setQInput] = useState(params.q);
 //   const lastWrittenQ = useRef(params.q);
 //   useEffect(() => { if (params.q !== lastWrittenQ.current) { lastWrittenQ.current = params.q; setQInput(params.q); } }, [params.q]);
+//   const paramsRef = useRef(params); paramsRef.current = params;   // live params for the timer
 //   useEffect(() => {
 //     if (qInput === params.q) return;
-//     const timer = setTimeout(() => { lastWrittenQ.current = qInput; write({ ...params, q: qInput, page: 1 }); }, SEARCH_DEBOUNCE_MS);
+//     const timer = setTimeout(() => { lastWrittenQ.current = qInput; write({ ...paramsRef.current, q: qInput, page: 1 }); }, SEARCH_DEBOUNCE_MS);
 //     return () => clearTimeout(timer);
-//   }, [qInput, params.q]);   // `params`/`write` captured from the render that scheduled the timer
+//   }, [qInput, params.q]);   // the timer reads the LIVE params via the ref (t18 review I-1): a status/tag
+//                             // change inside the debounce window must not be reverted by the pending q write
 //   clearFilters = () => { lastWrittenQ.current = ''; setQInput(''); write(DEFAULT_CONTENT_LIST_PARAMS); };
 
 // components/ContentFilters/interface.ts (dumb)

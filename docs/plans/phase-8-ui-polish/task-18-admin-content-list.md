@@ -329,8 +329,12 @@ paging forward resets the next request to page=1` add
 
     renderScreen();
 
-    const status = await screen.findByRole('status');
-    expect(status).toHaveTextContent('No content yet');
+    // The loading skeleton is also `role="status"` — wait for the loaded state's own text.
+    const status = await waitFor(() => {
+      const element = screen.getByRole('status');
+      expect(element).toHaveTextContent('No content yet');
+      return element;
+    });
     expect(within(status).getByRole('link', { name: 'Create your first article' })).toHaveAttribute(
       'href',
       '/content/new',
@@ -344,8 +348,11 @@ paging forward resets the next request to page=1` add
 
     renderScreen();
 
-    const status = await screen.findByRole('status');
-    expect(status).toHaveTextContent('No content matches these filters');
+    const status = await waitFor(() => {
+      const element = screen.getByRole('status');
+      expect(element).toHaveTextContent('No content matches these filters');
+      return element;
+    });
     await user.click(within(status).getByRole('button', { name: 'Clear filters' }));
     expect(navigation.replace).toHaveBeenLastCalledWith('/content', { scroll: false });
   });

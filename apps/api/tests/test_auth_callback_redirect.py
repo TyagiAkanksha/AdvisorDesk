@@ -92,8 +92,10 @@ def test_callback_success_redirects_303_to_admin_app_url_with_cookie_set(
     assert any(c.startswith(f"{COOKIE_NAME}=") for c in set_cookies)
 
 
-def test_callback_unlisted_email_403_has_no_cookie_and_no_redirect(tmp_engine: Engine) -> None:
-    """Error path unchanged by the amendment: 403 envelope, no `Set-Cookie`, no `Location`."""
+def test_callback_unlisted_email_redirects_303_to_signin_forbidden_with_no_cookie(
+    tmp_engine: Engine,
+) -> None:
+    """Phase-8 C0: an allowlist failure lands on the admin sign-in page, never a JSON 403."""
     client, oauth_client = _build_client(tmp_engine)
     code = "redirect-unlisted-code"
     oauth_client.identities[code] = {
@@ -101,9 +103,6 @@ def test_callback_unlisted_email_403_has_no_cookie_and_no_redirect(tmp_engine: E
         "name": "Outsider",
         "avatar_url": None,
     }
-    # Phase-6 task-05: a validly minted + matching state is required so this 403 is caused by
-    # the UNLISTED EMAIL this test means to exercise, not by the (now-checked-first) state CSRF
-    # guard.
     state = mint_state(client.app.state.settings)  # type: ignore[attr-defined]
     client.cookies.set(_STATE_COOKIE_NAME, state)
 
@@ -111,12 +110,29 @@ def test_callback_unlisted_email_403_has_no_cookie_and_no_redirect(tmp_engine: E
         _CALLBACK_PATH, params={"code": code, "state": state}, follow_redirects=False
     )
 
-    assert response.status_code == 403
-    assert response.headers.get("location") is None
+    assert response.status_code == 303
+    assert response.headers["location"] == f"{_ADMIN_APP_URL}/signin?error=forbidden"
     assert response.headers.get("set-cookie") is None
-    body = response.json()
-    assert set(body.keys()) == {"error"}
-    assert isinstance(body["error"]["code"], str) and body["error"]["code"]
+
+
+def test_callback_failure_redirect_never_carries_the_email(tmp_engine: Engine) -> None:
+    """The rejected address must not leak into the URL (it is logged at WARNING only)."""
+    client, oauth_client = _build_client(tmp_engine)
+    code = "redirect-unlisted-code-2"
+    oauth_client.identities[code] = {
+        "email": "outsider@example.com",
+        "name": "Outsider",
+        "avatar_url": None,
+    }
+    state = mint_state(client.app.state.settings)  # type: ignore[attr-defined]
+    client.cookies.set(_STATE_COOKIE_NAME, state)
+
+    response = client.get(
+        _CALLBACK_PATH, params={"code": code, "state": state}, follow_redirects=False
+    )
+
+    assert "outsider" not in response.headers["location"]
+    assert "example.com" not in response.headers["location"]
 
 
 def test_login_as_helper_still_lands_a_usable_session_despite_the_303(

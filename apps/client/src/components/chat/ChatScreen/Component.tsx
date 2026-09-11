@@ -37,9 +37,7 @@ export default function Component() {
           {CHAT_TITLE}
         </Typography>
       )}
-      {messages.length === 0 ? (
-        <ChatWelcome onAsk={send} />
-      ) : (
+      {hasConversation ? (
         messages.map((message, index) => (
           // fix round 1 (M-3): index-as-key is safe here because every surviving index keeps
           // identical content across re-renders — `retry` (task 11) slices the array back to
@@ -49,6 +47,8 @@ export default function Component() {
           // mutates content in place at an existing index.
           <MessageBubble key={index} message={message} />
         ))
+      ) : (
+        <ChatWelcome onAsk={send} />
       )}
       {awaitingFirstToken && <ThinkingIndicator />}
       {error !== null && (
@@ -85,7 +85,7 @@ export default function Component() {
           streaming={streaming}
           onStop={stop}
           onNewConversation={reset}
-          showNewConversation={messages.length > 0}
+          showNewConversation={hasConversation}
         />
       </Box>
     </Box>

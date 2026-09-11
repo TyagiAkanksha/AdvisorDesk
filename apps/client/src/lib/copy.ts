@@ -55,6 +55,8 @@ export const SUGGESTED_QUESTIONS = [
   'What is the difference between a 529 plan and a UTMA account?',
   'Do I need umbrella insurance?',
 ] as const;
+/** Accessible name of the welcome block's suggested-questions region (p8 t24 M3). */
+export const SUGGESTED_QUESTIONS_LABEL = 'Suggested questions';
 export const THINKING_LABEL = 'Thinking…';
 export const SOURCES_LABEL = 'Sources';
 export const MESSAGE_FIELD_LABEL = 'Message';

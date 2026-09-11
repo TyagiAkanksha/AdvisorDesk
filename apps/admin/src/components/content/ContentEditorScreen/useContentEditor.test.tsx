@@ -4,9 +4,15 @@ import type { ReactNode } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import Providers from '@/app/providers';
-import type { ContentDto } from '@/types/api/content';
 
 import { useContentEditor } from './useContentEditor';
+import {
+  draftFixture,
+  editHandler,
+  mockEditorFetchWith as mockFetch,
+  requestBody,
+  requestMethod,
+} from './testing/renderEditor';
 
 // Task 19 (C5, hook half): `useContentEditor` gains required-title validation, an `isDirty`
 // flag that also drives a `beforeunload` guard, tag suggestions from `GET /tags`, and the
@@ -23,66 +29,6 @@ vi.mock('next/navigation', () => ({
 function Wrapper({ children }: { children: ReactNode }) {
   return <Providers>{children}</Providers>;
 }
-
-function requestUrl(input: RequestInfo | URL): string {
-  return input instanceof Request ? input.url : String(input);
-}
-
-function requestMethod(input: RequestInfo | URL, init?: RequestInit): string {
-  return input instanceof Request ? input.method : (init?.method ?? 'GET');
-}
-
-async function requestBody(input: RequestInfo | URL, init?: RequestInit): Promise<unknown> {
-  if (input instanceof Request) return input.clone().json();
-  return JSON.parse(String(init?.body));
-}
-
-function jsonResponse(body: unknown, status = 200): Response {
-  return new Response(JSON.stringify(body), {
-    status,
-    headers: { 'Content-Type': 'application/json' },
-  });
-}
-
-const draftFixture: ContentDto = {
-  author_id: null,
-  body_md: '# Roth IRA Conversion Basics\n\nBody.',
-  created_at: '2026-01-01T12:00:00Z',
-  id: '11111111-1111-1111-1111-111111111111',
-  published_at: null,
-  slug: 'roth-ira-conversion-basics',
-  status: 'draft',
-  tags: ['tax-planning'],
-  title: 'Roth IRA Conversion Basics',
-  updated_at: '2026-03-15T12:00:00Z',
-  updated_by: null,
-};
-
-// test-author simplification (brief note, task-19): the extra `input`/`init` args of the
-// original 4-arg `Handler` shape are unused by every handler body below — trimmed to
-// `(url, method) => Response` and kept consistent with feedback.test.tsx.
-type Handler = (url: URL, method: string) => Response | Promise<Response>;
-
-function mockFetch(handler: Handler) {
-  const fetchMock = vi.fn<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>(
-    async (input, init) => handler(new URL(requestUrl(input)), requestMethod(input, init)),
-  );
-  global.fetch = fetchMock;
-  return fetchMock;
-}
-
-const editHandler: Handler = (url, method) => {
-  if (url.pathname === `/api/v1/content/${draftFixture.id}` && method === 'GET')
-    return jsonResponse(draftFixture);
-  if (url.pathname === `/api/v1/content/${draftFixture.id}` && method === 'PATCH')
-    return jsonResponse(draftFixture);
-  if (url.pathname === '/api/v1/tags')
-    return jsonResponse([
-      { id: 't1', name: 'retirement', count: 2 },
-      { id: 't2', name: 'tax-planning', count: 1 },
-    ]);
-  return jsonResponse({ error: { code: 'not_found', message: 'unmocked route' } }, 404);
-};
 
 describe('useContentEditor', () => {
   afterEach(() => {
@@ -135,6 +81,19 @@ describe('useContentEditor', () => {
     act(() => result.current.setTitle('   '));
 
     expect(result.current.isDirty).toBe(false);
+  });
+
+  // hygiene t07 (phase-8 t19 M3): the trimmed-title rule must also keep the unload guard
+  // disarmed — a blank-looking form is not unsaved work.
+  it('new mode: a whitespace-only title does not arm the beforeunload guard', () => {
+    mockFetch(editHandler);
+    const { result } = renderHook(() => useContentEditor({}), { wrapper: Wrapper });
+
+    act(() => result.current.setTitle('   '));
+
+    const event = new Event('beforeunload', { cancelable: true });
+    window.dispatchEvent(event);
+    expect(event.defaultPrevented).toBe(false);
   });
 
   it('installs a beforeunload guard only while dirty', () => {

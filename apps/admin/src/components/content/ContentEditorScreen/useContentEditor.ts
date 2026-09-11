@@ -6,7 +6,6 @@ import { useRisingEdgeNotice, useSnackbar } from '@/components/common';
 import {
   useArchiveContentMutation,
   useCreateContentMutation,
-  useDeleteContentMutation,
   useGetContentQuery,
   usePublishContentMutation,
   useUpdateContentMutation,
@@ -14,18 +13,19 @@ import {
 import { useListTagsQuery } from '@/lib/api/tagsApi';
 import {
   CONTENT_ARCHIVED_MESSAGE,
-  CONTENT_DELETED_MESSAGE,
   CONTENT_PUBLISHED_MESSAGE,
   CONTENT_SAVED_MESSAGE,
-  DELETE_ERROR_FALLBACK,
   EDITOR_REFRESH_ERROR,
   SAVE_ERROR_FALLBACK,
-  TITLE_REQUIRED_MESSAGE,
   TRANSITION_ERROR_FALLBACK,
 } from '@/lib/copy';
 import { extractErrorMessage } from '@/lib/errorMessage';
 import { ContentStatus } from '@/types/api/content';
 import type { ContentUpdateDto } from '@/types/api/content';
+
+import { normalizeTag, tagsEqual } from './editorTags';
+import { useDeleteDialog } from './useDeleteDialog';
+import { useTitleValidation } from './useTitleValidation';
 
 // task-06 Interfaces: ALL editor state (fields, dirty tracking, transition dispatch) lives here
 // so ContentEditorScreen stays a dumb renderer (docs/FRONTEND-CONVENTIONS.md §3). `contentId`
@@ -83,32 +83,6 @@ export interface UseContentEditorResult {
   togglePreview: () => void;
 }
 
-// fix round 1, F4: order-INsensitive — the server always returns `tags` sorted alphabetically
-// (app.services.tags), while the client appends newly-typed tags at the end of the array, so a
-// positional comparison went false-not-equal for same-membership tag sets in a different order
-// (phantom dirty: Save never re-disabled after a refetch echoed the sorted list back). Compare
-// sorted copies; the array actually SENT to the server (`tags`, untouched) still preserves the
-// user's own order.
-function tagsEqual(a: string[], b: string[]): boolean {
-  if (a.length !== b.length) {
-    return false;
-  }
-  const sortedA = [...a].sort();
-  const sortedB = [...b].sort();
-  return sortedA.every((value, index) => value === sortedB[index]);
-}
-
-// Mirrors app.services.tags._normalize_tag_name (PRD §4.1: lowercase, hyphenated) so a tag
-// typed here matches what the server would store — any run of non-`[a-z0-9]` characters
-// collapses to one hyphen, leading/trailing hyphens are stripped.
-export function normalizeTag(raw: string): string {
-  return raw
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '');
-}
-
 export function useContentEditor({ contentId }: UseContentEditorArgs): UseContentEditorResult {
   const router = useRouter();
   const { success: notifySuccess, error: notifyError } = useSnackbar();
@@ -121,16 +95,12 @@ export function useContentEditor({ contentId }: UseContentEditorArgs): UseConten
   const [updateContent, { isLoading: isUpdating }] = useUpdateContentMutation();
   const [publishContent, { isLoading: isPublishing }] = usePublishContentMutation();
   const [archiveContent, { isLoading: isArchiving }] = useArchiveContentMutation();
-  const [deleteContentMutation, { isLoading: isDeleting }] = useDeleteContentMutation();
+  const deleteDialog = useDeleteDialog(contentId);
 
   const [title, setTitle] = useState('');
   const [body, setBody] = useState('');
   const [tags, setTags] = useState<string[]>([]);
   const [previewOpen, setPreviewOpen] = useState(false);
-  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
-  const [deleteError, setDeleteError] = useState<string | null>(null);
-  const [titleBlurred, setTitleBlurred] = useState(false);
-  const [submitAttempted, setSubmitAttempted] = useState(false);
 
   // Reseed the editable fields only when a *different* record has finished loading (by id) —
   // a same-id refetch (e.g. after Publish/Archive, which only change status/published_at)
@@ -153,9 +123,7 @@ export function useContentEditor({ contentId }: UseContentEditorArgs): UseConten
   const tagOptions = tagsData?.map((tag) => tag.name) ?? [];
 
   const trimmedTitle = title.trim();
-  const titleError =
-    (titleBlurred || submitAttempted) && trimmedTitle.length === 0 ? TITLE_REQUIRED_MESSAGE : null;
-  const onTitleBlur = () => setTitleBlurred(true);
+  const { titleError, onTitleBlur, markSubmitAttempted } = useTitleValidation(trimmedTitle);
 
   // fix round 1, F3: `content` (RTK Query's `data`) keeps the last successfully fetched value
   // even while a later background refetch is in flight or has failed — this is `true` once
@@ -208,21 +176,43 @@ export function useContentEditor({ contentId }: UseContentEditorArgs): UseConten
     return patch;
   };
 
+  // hygiene t07 (phase-8 t19 M1): one place where a mutation's outcome becomes feedback —
+  // this replaced five near-identical then/catch blocks. `success` is omitted by the
+  // save-then-publish PATCH: one click reports only "Published" (DESIGN.md §5 C5 ruling).
+  // Every caller's mutation resolves a `ContentDto`, so `undefined` means "it failed".
+  const withFeedback = async <T>(
+    run: () => Promise<T>,
+    messages: { success?: string; errorFallback: string },
+  ): Promise<T | undefined> => {
+    try {
+      const value = await run();
+      if (messages.success) {
+        notifySuccess(messages.success);
+      }
+      return value;
+    } catch (error) {
+      notifyError(extractErrorMessage(error, messages.errorFallback));
+      return undefined;
+    }
+  };
+
+  const createNew = async () => {
+    const created = await withFeedback(
+      () => createContent({ title: trimmedTitle, body_md: body, tags }).unwrap(),
+      { success: CONTENT_SAVED_MESSAGE, errorFallback: SAVE_ERROR_FALLBACK },
+    );
+    if (created) {
+      router.push(`/content/${created.id}`);
+    }
+  };
+
   const onSubmit = () => {
     if (trimmedTitle.length === 0) {
-      setSubmitAttempted(true);
+      markSubmitAttempted();
       return;
     }
     if (mode === 'new') {
-      void createContent({ title: trimmedTitle, body_md: body, tags })
-        .unwrap()
-        .then((created) => {
-          notifySuccess(CONTENT_SAVED_MESSAGE);
-          router.push(`/content/${created.id}`);
-        })
-        .catch((error: unknown) => {
-          notifyError(extractErrorMessage(error, SAVE_ERROR_FALLBACK));
-        });
+      void createNew();
       return;
     }
     if (!contentId || !isDirty) {
@@ -232,14 +222,10 @@ export function useContentEditor({ contentId }: UseContentEditorArgs): UseConten
     if (!patch) {
       return;
     }
-    void updateContent({ id: contentId, patch })
-      .unwrap()
-      .then(() => {
-        notifySuccess(CONTENT_SAVED_MESSAGE);
-      })
-      .catch((error: unknown) => {
-        notifyError(extractErrorMessage(error, SAVE_ERROR_FALLBACK));
-      });
+    void withFeedback(() => updateContent({ id: contentId, patch }).unwrap(), {
+      success: CONTENT_SAVED_MESSAGE,
+      errorFallback: SAVE_ERROR_FALLBACK,
+    });
   };
 
   const canPublish =
@@ -247,81 +233,43 @@ export function useContentEditor({ contentId }: UseContentEditorArgs): UseConten
     (content?.status === ContentStatus.Draft || content?.status === ContentStatus.Archived);
   const canArchive = mode === 'edit' && content?.status === ContentStatus.Published;
 
-  // fix round 1, F2 (probe-confirmed): Publish used to POST /publish straight away, so an
-  // unsaved edit never reached the server before phase-3 embedded the STALE stored body.
-  // Chosen semantics — SAVE-THEN-PUBLISH: a dirty editor PATCHes first; publish is only
-  // dispatched after that PATCH succeeds; a PATCH failure surfaces via the snackbar and never
-  // reaches publishContent at all. Archive is intentionally untouched (it doesn't embed
-  // anything, so there is nothing stale to save first). task-19: the save-then-publish path
-  // reports ONLY "Published" — the intermediate PATCH stays silent so the admin isn't told
-  // "Saved" and then immediately "Published" for one click.
-  const onPublish = () => {
+  // fix round 1, F2 (probe-confirmed) — SAVE-THEN-PUBLISH, unchanged: a dirty editor PATCHes
+  // first and publish is only dispatched after that PATCH succeeds, so phase-3 never embeds a
+  // stale stored body. task-19: the intermediate PATCH stays silent.
+  const publishFlow = async () => {
     if (!contentId) {
       return;
     }
-    const dispatchPublish = () => {
-      void publishContent(contentId)
-        .unwrap()
-        .then(() => {
-          notifySuccess(CONTENT_PUBLISHED_MESSAGE);
-        })
-        .catch((error: unknown) => {
-          notifyError(extractErrorMessage(error, TRANSITION_ERROR_FALLBACK));
-        });
-    };
-    if (!isDirty) {
-      dispatchPublish();
-      return;
-    }
-    const patch = buildPatch();
-    if (!patch) {
-      return;
-    }
-    void updateContent({ id: contentId, patch })
-      .unwrap()
-      .then(dispatchPublish)
-      .catch((error: unknown) => {
-        notifyError(extractErrorMessage(error, SAVE_ERROR_FALLBACK));
+    if (isDirty) {
+      const patch = buildPatch();
+      if (!patch) {
+        return;
+      }
+      const saved = await withFeedback(() => updateContent({ id: contentId, patch }).unwrap(), {
+        errorFallback: SAVE_ERROR_FALLBACK,
       });
+      if (saved === undefined) {
+        return;
+      }
+    }
+    await withFeedback(() => publishContent(contentId).unwrap(), {
+      success: CONTENT_PUBLISHED_MESSAGE,
+      errorFallback: TRANSITION_ERROR_FALLBACK,
+    });
+  };
+
+  const onPublish = () => {
+    void publishFlow();
   };
 
   const onArchive = () => {
     if (!contentId) {
       return;
     }
-    void archiveContent(contentId)
-      .unwrap()
-      .then(() => {
-        notifySuccess(CONTENT_ARCHIVED_MESSAGE);
-      })
-      .catch((error: unknown) => {
-        notifyError(extractErrorMessage(error, TRANSITION_ERROR_FALLBACK));
-      });
-  };
-
-  const openDeleteDialog = () => {
-    setDeleteError(null);
-    setDeleteDialogOpen(true);
-  };
-  const closeDeleteDialog = () => {
-    setDeleteDialogOpen(false);
-    setDeleteError(null);
-  };
-  const confirmDelete = () => {
-    if (!contentId) {
-      return;
-    }
-    setDeleteError(null);
-    void deleteContentMutation(contentId)
-      .unwrap()
-      .then(() => {
-        setDeleteDialogOpen(false);
-        notifySuccess(CONTENT_DELETED_MESSAGE);
-        router.push('/content');
-      })
-      .catch((error: unknown) => {
-        setDeleteError(extractErrorMessage(error, DELETE_ERROR_FALLBACK));
-      });
+    void withFeedback(() => archiveContent(contentId).unwrap(), {
+      success: CONTENT_ARCHIVED_MESSAGE,
+      errorFallback: TRANSITION_ERROR_FALLBACK,
+    });
   };
 
   // fix round 1, F3: a background refetch (e.g. the tag-invalidation-driven `getContent` refetch
@@ -363,12 +311,7 @@ export function useContentEditor({ contentId }: UseContentEditorArgs): UseConten
     isTransitioning: isPublishing || isArchiving,
     onPublish,
     onArchive,
-    isDeleting,
-    deleteDialogOpen,
-    deleteError,
-    openDeleteDialog,
-    closeDeleteDialog,
-    confirmDelete,
+    ...deleteDialog,
     previewOpen,
     togglePreview: () => setPreviewOpen((prev) => !prev),
   };

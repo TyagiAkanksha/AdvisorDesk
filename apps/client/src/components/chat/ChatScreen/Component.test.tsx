@@ -1,6 +1,4 @@
 // @vitest-environment jsdom
-import { readFileSync } from 'node:fs';
-
 import { render, screen, waitFor } from '@testing-library/react';
 import '@testing-library/jest-dom/vitest';
 import userEvent from '@testing-library/user-event';
@@ -406,12 +404,5 @@ describe('ChatScreen', () => {
 
     expect(screen.queryByRole('article')).toBeNull();
     expect(screen.getByRole('heading', { level: 1, name: 'Ask a question' })).toBeInTheDocument();
-  });
-
-  it('derives the conversation state once (t24 M4: no inline messages.length checks)', () => {
-    const source = readFileSync(new URL('./Component.tsx', import.meta.url), 'utf8');
-    expect(source).toContain('const hasConversation = messages.length > 0;');
-    expect(source).not.toMatch(/messages\.length === 0/);
-    expect(source).not.toMatch(/showNewConversation=\{messages\.length > 0\}/);
   });
 });

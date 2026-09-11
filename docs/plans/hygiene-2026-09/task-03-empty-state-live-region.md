@@ -42,6 +42,7 @@ unchanged — only the DOM nesting moves.
 - `apps/admin/src/components/common/EmptyState/Component.tsx`, `Component.test.tsx`
 - `apps/client/src/components/common/EmptyState/Component.tsx`, `Component.test.tsx`
 - `apps/admin/src/components/content/ContentListScreen/Component.test.tsx` (two pins, named above)
+- `apps/admin/src/components/agent/AgentPanel/Component.test.tsx` (one pin, named above)
 - `apps/client/src/components/content/ContentListScreen/Component.test.tsx` (two pins, named above)
 
 No interface changes.
@@ -121,8 +122,19 @@ the announcement (icon + text). The action sits **after** the live region as its
     `within(status).getByRole('link', …)` assertion with
     `expect(screen.getByRole('link', { name: 'Create your first article' })).toHaveAttribute('href', '/content/new');`
     followed by `expect(within(status).queryByRole('link')).toBeNull();`
-  - admin "no match": `await user.click(screen.getByRole('button', { name: 'Clear filters' }));`
-    preceded by `expect(within(status).queryByRole('button')).toBeNull();`
+  - admin "no match": `expect(within(status).queryByRole('button')).toBeNull();` then — because
+    the filters toolbar renders its own "Clear filters" whenever a filter is active —
+    `const clearButtons = screen.getAllByRole('button', { name: 'Clear filters' });
+    expect(clearButtons).toHaveLength(2); await user.click(clearButtons[1]!);` (the empty
+    state's button is the sibling right after the live region, so it is the last by name).
+    *(Controller amendment during execution: the original unscoped `getByRole` was ambiguous.)*
+  - admin `apps/admin/src/components/agent/AgentPanel/Component.test.tsx` — the test "the empty
+    state offers three suggested commands and clicking one sends it" pinned the three suggestion
+    buttons INSIDE the status region (`within(status).getAllByRole('button')`). Rewrite:
+    `expect(within(status).queryByRole('button')).toBeNull();` and
+    `const suggestions = AGENT_SUGGESTED_COMMANDS.map((command) => screen.getByRole('button', { name: command }));`
+    (import `AGENT_SUGGESTED_COMMANDS` from `@/lib/copy`); the rest of the test is unchanged.
+    *(Controller amendment: this pin was missed by the task file's Context list.)*
   - client `ContentListScreen/Component.test.tsx` ≈ line 55: keep
     `expect(within(status).queryByRole('link')).toBeNull();` (still true) **and** add
     `expect(screen.queryByRole('link', { name: 'Show all' })).toBeNull();` so the "no link by

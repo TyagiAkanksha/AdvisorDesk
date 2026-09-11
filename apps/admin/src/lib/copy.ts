@@ -76,3 +76,17 @@ export const SAVE_ERROR_FALLBACK = "Couldn't save this item. Please try again.";
 export const TRANSITION_ERROR_FALLBACK = "Couldn't update this item's status. Please try again.";
 export const EDITOR_REFRESH_ERROR = "Couldn't refresh this item — showing the last loaded version.";
 export const EDITOR_LOAD_ERROR = "Couldn't load this item.";
+
+// phase-8 task-20 (DESIGN.md §5 C5): editor screen copy — header meta prefixes, form field
+// labels, action row labels, and the disabled-Publish tooltip reasons.
+export const PREVIEW_LABEL = 'Preview';
+export const TITLE_FIELD_LABEL = 'Title';
+export const BODY_FIELD_LABEL = 'Body (Markdown)';
+export const TAGS_FIELD_LABEL = 'Tags';
+export const PUBLISH_LABEL = 'Publish';
+export const ARCHIVE_LABEL = 'Archive';
+export const PUBLISH_SAVE_FIRST_TOOLTIP = 'Save first';
+export const PUBLISH_ALREADY_TOOLTIP = 'Already published';
+export const META_CREATED_PREFIX = 'Created';
+export const META_UPDATED_PREFIX = 'Updated';
+export const META_PUBLISHED_PREFIX = 'Published';

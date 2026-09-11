@@ -1,11 +1,12 @@
 """Gates-as-test: pins on the committed prod config (6R-04, WR-03).
 
 `infra/deploy/prod/docker-compose.yml` and `infra/deploy/prod/Caddyfile` are the doc-of-record
-copies of what runs on the box (see `infra/deploy/prod/README.md`). `FORWARDED_ALLOW_IPS=*`'s
-safety in production rests on exactly two facts: (1) Caddy overwrites `X-Forwarded-For` with the
-real client IP before the api ever sees it, and (2) the api container is never reachable except
-through Caddy. This file pins both directly against the committed files so a future edit that
-breaks either fact fails a test instead of only a docstring assertion.
+copies of what runs on the box (see `infra/deploy/prod/README.md`). `FORWARDED_ALLOW_IPS`'s
+safety in production (`*` until 2026-09-11, the Docker bridge range `172.16.0.0/12` since — the
+committed value is pinned below) rests on exactly two facts: (1) Caddy overwrites
+`X-Forwarded-For` with the real client IP before the api ever sees it, and (2) the api container
+is never reachable except through Caddy. This file pins both directly against the committed
+files so a future edit that breaks either fact fails a test instead of only a docstring assertion.
 
 Skips cleanly (with a reason) when the files are absent, so the suite stays runnable on checkouts
 predating this task (e.g. a stale worktree from before 6R-04 landed) — never a silent omission,
@@ -79,3 +80,20 @@ def test_compose_does_not_publish_api_port_to_host() -> None:
     api_service = compose["services"]["api"]
     assert "ports" not in api_service, "api service must not publish ports to the host"
     assert api_service.get("expose"), "api service must expose (not publish) its port"
+
+
+def test_compose_forwarded_allow_ips_is_the_docker_bridge_range() -> None:
+    """Desktop closeout 2026-09-11: uvicorn trusts `X-Forwarded-For` only from the Docker bridge
+    range (`172.16.0.0/12`), never `*` again and never a single unpinned /16.
+
+    Why the /12 and not the bridge's actual /16: the compose network's subnet is not pinned
+    (no `networks:` ipam block), so Docker may hand out a different 172.x.0.0/16 on a network
+    recreate — and a stale /16 fails SILENTLY (uvicorn stops trusting Caddy, every visitor
+    shares one rate-limit bucket; `VERIFY.md` §2). The /12 is exactly the RFC 1918 block
+    Docker draws default bridge subnets from. Any narrower or wider value is a deliberate
+    change that must re-run `VERIFY.md` §2/§2b.
+    """
+    _skip_if_absent()
+    compose = yaml.safe_load(_COMPOSE_PATH.read_text())
+    environment = compose["services"]["api"]["environment"]
+    assert environment["FORWARDED_ALLOW_IPS"] == "172.16.0.0/12"

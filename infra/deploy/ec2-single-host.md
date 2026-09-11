@@ -82,7 +82,8 @@ Prefer the **git-sha image tags** over `latest` when bumping versions — same r
 The Caddyfile **overwrites** `X-Forwarded-For` with `{remote_host}` on every proxied request —
 a client-supplied XFF chain is discarded wholesale, so the header the API sees is spoof-proof
 by construction. Because the api container is not host-published (only Caddy can reach it over
-the compose network), `FORWARDED_ALLOW_IPS=*` is safe **in this topology** — the "never
+the compose network), `FORWARDED_ALLOW_IPS=*` was safe **in this topology** (since 2026-09-11 the
+committed value is `172.16.0.0/12`, the Docker bridge range, as defence in depth) — the "never
 blind-trust `*`" escalation ladder in `apprunner-api.md` existed for an ingress that *appends*
 to the client's chain, which is not what Caddy does here. `VERIFY.md` checks 2/2b still apply
 verbatim and passed live: distinct real IPs get distinct rate-limit buckets, and forged-XFF

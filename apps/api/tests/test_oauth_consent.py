@@ -35,7 +35,6 @@ from __future__ import annotations
 
 import re
 import urllib.parse
-from datetime import UTC, datetime
 
 import pytest
 from auth_helpers import FakeGoogleOAuthClient, login_as
@@ -364,10 +363,10 @@ def test_continue_unknown_client_invalid_client(tmp_engine: Engine, db_session: 
 
 
 def test_approve_records_consent_and_issues_code(tmp_engine: Engine, db_session: Session) -> None:
-    """Approving the consent form records an `OAuthConsent` row (`revoked_at is None`,
-    `scope == "mcp"`) and issues a code exactly like `_issue_code_and_redirect` always has — the
-    same DB-row assertions `test_oauth_authorize.py::test_full_bridge_issues_code` makes, so the
-    consent hop provably issues the same kind of code, not a different, unbound one.
+    """Approving the consent form records an `OAuthConsent` row (`scope == "mcp"`) and issues a
+    code exactly like `_issue_code_and_redirect` always has — the same DB-row assertions
+    `test_oauth_authorize.py::test_full_bridge_issues_code` makes, so the consent hop provably
+    issues the same kind of code, not a different, unbound one.
 
     docs/plans/mcp-oauth/task-06-consent-screen.md.
     """
@@ -404,7 +403,6 @@ def test_approve_records_consent_and_issues_code(tmp_engine: Engine, db_session:
             OAuthConsent.user_id == owner.id, OAuthConsent.client_id == client_id
         )
     ).scalar_one()
-    assert consent.revoked_at is None
     assert consent.scope == "mcp"
 
     code_row = db_session.execute(select(OAuthAuthorizationCode)).scalar_one()
@@ -504,69 +502,6 @@ def test_repeat_authorization_skips_consent(tmp_engine: Engine, db_session: Sess
         .all()
     )
     assert len(consent_rows) == 1
-
-
-def test_revoked_consent_reprompts(tmp_engine: Engine, db_session: Session) -> None:
-    """Revoking an existing consent row (`revoked_at` set) makes `continue` show the page again;
-    approving again REVIVES the same row (`revoked_at` cleared back to `None`, same row `id`) —
-    `record_consent`'s "existing row (any revoked_at) -> set scope, revoked_at=None; else insert"
-    contract, not a second, duplicate row.
-
-    docs/plans/mcp-oauth/task-06-consent-screen.md.
-    """
-    app = _build_app(tmp_engine)
-    client = TestClient(app)
-    client_id = _register(client, client_name="Claude")
-
-    authorize_response = client.get(
-        _AUTHORIZE_PATH, params=_authorize_params(client_id), follow_redirects=False
-    )
-    assert authorize_response.status_code == 303, authorize_response.text
-    login_as(client, "admin@example.com")
-    first_continue = client.get(_CONTINUE_PATH, follow_redirects=False)
-    assert first_continue.status_code == 200, first_continue.text
-    nonce_match = _NONCE_RE.search(first_continue.text)
-    assert nonce_match is not None, first_continue.text
-    approve_response = client.post(
-        _DECISION_PATH,
-        data={"decision": "approve", "nonce": nonce_match.group(1)},
-        follow_redirects=False,
-    )
-    assert approve_response.status_code == 302, approve_response.text
-
-    owner = db_session.execute(select(User).where(User.email == "admin@example.com")).scalar_one()
-    consent = db_session.execute(
-        select(OAuthConsent).where(
-            OAuthConsent.user_id == owner.id, OAuthConsent.client_id == client_id
-        )
-    ).scalar_one()
-    original_id = consent.id
-    consent.revoked_at = datetime.now(UTC)
-    db_session.commit()
-
-    second_authorize = client.get(
-        _AUTHORIZE_PATH,
-        params=_authorize_params(client_id, state="second-state"),
-        follow_redirects=False,
-    )
-    assert second_authorize.status_code == 303, second_authorize.text
-    second_continue = client.get(_CONTINUE_PATH, follow_redirects=False)
-    assert second_continue.status_code == 200, second_continue.text
-    nonce2_match = _NONCE_RE.search(second_continue.text)
-    assert nonce2_match is not None, second_continue.text
-
-    reapprove_response = client.post(
-        _DECISION_PATH,
-        data={"decision": "approve", "nonce": nonce2_match.group(1)},
-        follow_redirects=False,
-    )
-
-    assert reapprove_response.status_code == 302, reapprove_response.text
-    db_session.expire_all()
-    revived = db_session.get(OAuthConsent, original_id)
-    assert revived is not None
-    assert revived.revoked_at is None
-    assert revived.id == original_id
 
 
 # ---------------------------------------------------------------------------

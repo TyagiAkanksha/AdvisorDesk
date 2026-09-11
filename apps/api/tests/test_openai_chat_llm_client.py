@@ -167,6 +167,9 @@ def test_openai_provider_chat_completions_wire_shape_carries_no_nvidia_extra_bod
     assert captured["url"] == "https://fake-provider.example/v1/chat/completions"
     body = captured["body"]
     assert isinstance(body, dict)
-    assert set(body.keys()) == {"model", "messages", "stream"}
+    # closeout 2026-09-11: `temperature` joined the wire shape (pinned to 0 so answers are
+    # deterministic — the phase-7 groundedness baseline was noise at the default 1.0).
+    assert set(body.keys()) == {"model", "messages", "stream", "temperature"}
+    assert body["temperature"] == 0
     assert body["model"] == "gpt-4o-mini"
     assert body["stream"] is True

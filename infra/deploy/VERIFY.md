@@ -3,9 +3,9 @@
 **This is a template.** Every check below is the exact command to run against the live,
 deployed stack — run it for real during the deployment session, and paste the actual output
 into the matching ```text``` block in place of the `(recorded during deployment)` placeholder.
-No output here is fabricated: as of 2026-09-08 only §5a carries recorded output (mcp-oauth
-deploy, main @ `8f9cab3`); every other block is still unrun. Phase-7 task-03 re-runs this same
-checklist later, so keep the commands byte-for-byte reusable.
+No output here is fabricated: as of 2026-09-11 §5a (mcp-oauth deploy, main @ `8f9cab3`) and §2b
+(spoof-resistance, recorded 2026-09-11) carry recorded output; every other block is still unrun.
+Phase-7 task-03 re-runs this same checklist later, so keep the commands byte-for-byte reusable.
 
 Set these once, then reuse them in every command below:
 
@@ -144,7 +144,8 @@ is being honored: an attacker can mint a fresh rate-limit bucket per request, wh
 `ec2-single-host.md`), then re-run checks 2 and 2b.
 
 ```text
-(recorded during deployment — forged-XFF retries after exhausting the bucket)
+(recorded 2026-09-11: PASSED — api logged 208.104.31.154 for a request carrying
+X-Forwarded-For: 1.2.3.4)
 ```
 
 ## 3. SSE streams unbuffered through the custom domain

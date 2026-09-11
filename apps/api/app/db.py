@@ -42,7 +42,11 @@ def make_engine(database_url: str, *, schema: str | None = None) -> Engine:
     if schema is not None:
         connect_args["options"] = f"-csearch_path={schema},public"
 
-    return create_engine(url, connect_args=connect_args)
+    # `pool_pre_ping=True`: two post-deploy 500s (`psycopg.OperationalError: SSL connection has
+    # been closed unexpectedly`, mcp-oauth verification-record §5) came from stale pooled
+    # connections after the DB side dropped idle SSL sessions; this pings (`SELECT 1`) and
+    # transparently reconnects on checkout instead of handing back a dead connection.
+    return create_engine(url, connect_args=connect_args, pool_pre_ping=True)
 
 
 def make_session_factory(engine: Engine) -> sessionmaker[Session]:

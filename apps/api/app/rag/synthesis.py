@@ -135,10 +135,10 @@ class OpenAICompatibleChatLLM:
     NVIDIA NIM's compatible endpoint when `Settings.llm_provider="nvidia"` — mirrors
     `app.rag.embeddings.OpenAICompatibleEmbedder` exactly (`from_settings` classmethod, same
     empty-key-boot-safe `"unset"` fallback via `settings.llm_api_key`), except: `model=settings.
-    chat_model`, and streaming via the standard `chat.completions.create(stream=True)` with NO
-    provider-specific `extra_body` — the chat-completions path needs neither `input_type` nor
-    `truncate`, both embedding-only NIM extras (PRD §7.2 is explicit these are for
-    `/v1/embeddings`), so this wire shape is unchanged by the provider swap.
+    chat_model`, and streaming via the standard `chat.completions.create(stream=True,
+    temperature=0)` with NO provider-specific `extra_body` — the chat-completions path needs
+    neither `input_type` nor `truncate`, both embedding-only NIM extras (PRD §7.2 is explicit
+    these are for `/v1/embeddings`), so this wire shape is unchanged by the provider swap.
     """
 
     def __init__(self, *, client: OpenAI, model: str) -> None:
@@ -217,6 +217,11 @@ class OpenAICompatibleChatLLM:
                     {"role": "user", "content": _build_user_message(question, sources)},
                 ],
                 stream=True,
+                # closeout 2026-09-11: deterministic answers. The eval judge
+                # (app/eval/groundedness.py) and the agent (app/agent/llm.py) already pin 0;
+                # at the OpenAI default (1.0) the phase-7 groundedness baseline moved 41–59%
+                # between identical runs — pure sampling noise.
+                temperature=0,
             )
             for chunk in stream:
                 if not chunk.choices:

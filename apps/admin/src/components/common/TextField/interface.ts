@@ -24,4 +24,6 @@ export interface TextFieldProps {
   onBlur?: () => void;
   /** Raw key events, e.g. Enter-to-send in a chat composer. */
   onKeyDown?: (event: KeyboardEvent<HTMLInputElement | HTMLTextAreaElement>) => void;
+  /** phase-8 task-14 (DESIGN.md §C5): the editor's Body field renders in a monospace font. */
+  monospace?: boolean;
 }

@@ -1,4 +1,4 @@
-# Phase 8 — UI Polish — Implementation Plan (sub-phases A and B)
+# Phase 8 — UI Polish — Implementation Plan (sub-phases A, B and C)
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development
 > (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use
@@ -118,7 +118,7 @@ appears once; buttons in sentence case; off-white page background with white car
 
 ---
 
-## Sub-phase B — client screens (apps/client) — branch `feat/ui-polish-b`
+## Sub-phase B — client screens (apps/client) — MERGED (PR #29, main a81f4da)
 
 **Goal:** the public site becomes a finished content site on the A foundation: a header/footer
 shell, a filterable article grid, an article reading layout with related articles, and a chat
@@ -162,3 +162,84 @@ route; footer disclaimer; home = h1 + description + one gold CTA, tag chips filt
 disclaimer, related cards, chat CTA; chat = welcome with four suggested questions, navy/outlined
 bubbles ≤ 640px, Thinking… row, titled Sources list, warning refusal, composer with Send→Stop
 swap, New conversation, helper line; no horizontal scroll at 390 anywhere.
+
+---
+
+## Sub-phase C — admin screens + API redirect (apps/admin, apps/api) — branch `feat/ui-polish-c`
+
+**Goal:** the admin console becomes a finished, responsive internal app on the A foundation: a
+sign-in card that explains a failed login (backed by a 5-line API change), a responsive shell
+with a highlighted current route, a real dashboard, a URL-driven content table, an editor with
+a live preview and proper feedback, a focused connected-apps page, and an agent panel with
+collapsible tool cards (DESIGN.md §5). Sub-phases A and B are merged and live (PRs #28/#29,
+prod `a81f4da`).
+
+**Additional constraints for C** (on top of Global Constraints above):
+- **API change (task 13 only):** `CONVENTIONS.md` §8 — `apps/api/openapi.json` and BOTH apps'
+  `src/types/generated/schema.d.ts` are regenerated in the same commit; `pnpm gates:api` runs
+  before that commit. No other backend change in this sub-phase.
+- **MUI boundary holds for hooks too:** `useMediaQuery` is wrapped once as
+  `common/useBreakpointDown` (task 14); no screen imports `@mui/*` or `@mui/material/useMediaQuery`.
+- **Test seams (task 14):** URL-driven screens use the stateful `@/testing/nextNavigation`
+  mock (`vi.mock('next/navigation', () => import('@/testing/nextNavigation'))` +
+  `navigation.reset(href)`), responsive branches use `stubMatchMedia(true)`; every other test
+  keeps mocking only `fetch`. Existing static `useRouter` mocks in files that never read the
+  URL stay as they are.
+- **jsdom/MUI 9 facts (from A/B):** MUI 9 emits SPLIT classes (`MuiButton-contained` +
+  `MuiButton-colorError`, `MuiIconButton-colorInherit`, `MuiChip-outlined`); `userEvent.tab()`
+  fires a real Tab keydown; a closed `keepMounted` Drawer is `visibility: hidden` (excluded from
+  role queries; `{ hidden: true }` gives it an EMPTY name); jsdom resolves `vw` → px; jsdom has no
+  `matchMedia` (MUI falls back to `false` = desktop); a disabled MUI button has `pointer-events:
+  none` (hover its `<span>` wrapper); `Intl` emits U+202F before AM/PM (`\s` in regexes).
+- **Skeleton matches screen:** every screen's loading state is a `role="status"
+  aria-label={LOADING_LABEL}` skeleton shaped like the screen it replaces (no spinners in screens).
+- **Feedback:** every mutation reports through `useSnackbar()` (exact copy per brief); the last
+  `AppSnackbar` call site migrates in task 19 and the primitive is deleted there.
+- **Pins:** a task that changes a pinned behaviour rewrites the pin in its RED step and says so
+  (each brief lists which); pins in untouched files must stay green with zero edits.
+- **Copy:** every new user-facing string in `apps/admin/src/lib/copy.ts` (constants named in
+  each brief). Sentence case; no emoji; gold never appears on a destructive control.
+- **Screenshots:** iframe technique (1440 + 390) from the real screens against the local API
+  with the seed data, signed in as the allowlisted admin; throwaway routes/stubs used only to
+  reach a state (never a real agent request) and deleted before commit.
+- **Deferred minors from B carried in for the whole-branch review (not per-task scope):**
+  article disclaimer `role="alert"` → `role="note"`; no h1 once client chat starts; `←` glyph
+  outside copy; one `nav` landmark per Sources list; related-fetch failure taking down the
+  article + `cache()` uniformity; `searchParams` string[] typing; `ArticleCard` `titleAs`; unused
+  icon prune across BOTH apps; `retry`/`reset` guard tests; nav slack < 330px; TagChips/
+  ArticleCard chip duplication; `theme.test` twin guard; TextField `onKeyDown` cast; `maxRows`
+  pin. Owner calls parked from the B checkpoint: the article disclaimer appears three times
+  (seed body italic + info Alert + footer); the teal info Alert is the only non-navy/gold hue.
+
+| # | Task | Depends on | Review | Deliverable |
+|---|---|---|---|---|
+| 13 | [API: callback failures redirect to `/signin?error=`](task-13-api-signin-redirect.md) ★ | — | Opus | `state`/`forbidden` 303s, six pins rewritten + one new, openapi + both codegens |
+| 14 | [Admin C foundation: test seams, `useBreakpointDown`, `lib/format`, primitive extensions](task-14-admin-c-foundation.md) | — | Sonnet | `testing/{nextNavigation,matchMedia}`, `useBreakpointDown`, `format.ts`, Grid/Chip/CircularProgress, EmptyState/IconButton/TextField/Autocomplete extensions, 5 icons, `APP_NAME` |
+| 15 | [Admin shell: responsive nav, active route, single main](task-15-admin-shell.md) | 14 | Sonnet | `useAppShell`, `isActivePath`, `AccountMenu` leaf, temporary drawer below md, wordmark, agent drawer widths, `PageContainer` without `main` |
+| 16 | [Sign-in card with `?error=`](task-16-admin-signin.md) | 13, 15 | Sonnet | centred card, `signInErrorMessage`, page reads `searchParams` |
+| 17 | [Dashboard: linked stat cards, tag table, recent content](task-17-admin-dashboard.md) | 15 | Sonnet | `useDashboard`, `TagTable`, `RecentContent`, `DashboardSkeleton`, first `AppSnackbar` site retired |
+| 18 | [Content list: URL-synced filters, MUI table, skeletons, empty states](task-18-admin-content-list.md) ★ | 15 | Opus | `contentListParams`, URL-as-state `useContentList` (debounce + clamp), `ContentFilters`, MUI `ContentTable`, `ContentTableSkeleton`, `Suspense` page |
+| 19 | [Editor hook: validation, dirty guard, global snackbar, tag options](task-19-editor-hook.md) | 18 | Sonnet | `titleError`/`isDirty`/`tagOptions`/header fields, `beforeunload`, `AppSnackbar` deleted |
+| 20 | [Editor screen: header meta, split live preview, action row, red delete](task-20-editor-screen.md) ★ | 19 | Opus | `EditorMeta`/`EditorForm`/`EditorPreview`/`EditorSkeleton`, `lib/markdown.ts` (admin), Publish tooltips, phone Preview toggle |
+| 21 | [Connected apps: header, focused table, destructive revoke, refresh feedback](task-21-connected-apps.md) | 18 | Sonnet | Client/Connected/Last used/Revoke table, `ConnectedAppsSkeleton`, "Access revoked", F-5 closed |
+| 22 | [`useAgentStream` stop/reset, text offsets, `turnSegments`](task-22-agent-stream-controls.md) | 14 | Sonnet | `stop`/`reset`, `ToolEvent.textOffset`, `lib/agentTurnSegments` |
+| 23 | [Agent panel: header, suggestions, markdown turns, collapsible tool cards, Stop](task-23-agent-panel.md) ★ | 22, 15 | Opus | `useAgentComposer`, `AgentComposer`, `WorkingIndicator`, collapsible `ToolCallCard`, interleaved `AgentMessage`, `onClose` |
+
+**Execution order:** 13 → 14 → 15 → 16 → 17 → 18 → 19 → 20 → 21 → 22 → 23 (13 is independent
+and could run last; keeping it first lets 16 verify end-to-end against the local API). One
+writer in the tree at a time. Sub-phase C ships when 23 is green, the whole-branch Opus review
+passes (with the carried-in B minors triaged), and the owner has done the visual checkpoint;
+then one PR, merge, and one deploy of all three images.
+
+### Visual checkpoint (⚠️ owner, after 23)
+
+Admin at 1440 and 390: sign-in card centred, `?error=forbidden` message; shell with wordmark,
+icons, highlighted current route, menu button + temporary drawer on the phone, no horizontal
+scroll; dashboard cards link into filtered lists and the tag table links by tag; content list
+filters rewrite the URL and the back button restores them, table scrolls sideways on the phone,
+Edit/Delete tooltips, red Delete; editor two-column with sticky preview that matches the public
+article, Preview toggle on the phone, "Title is required", Publish tooltip, snackbars on
+save/publish/archive/delete, unsaved-changes prompt on reload; connected apps table with short
+ids and red Revoke; agent panel with suggestions, a collapsed → expanded tool card, Working…,
+Stop, Clear, full-width on the phone. API: a wrong-account sign-in lands on the card with the
+allowlist message instead of raw JSON.

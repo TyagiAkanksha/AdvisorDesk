@@ -1,9 +1,16 @@
 import { useState } from 'react';
 
+import { useRisingEdgeNotice, useSnackbar } from '@/components/common';
 import {
   useGetConnectedAppsQuery,
   useRevokeConnectedAppMutation,
 } from '@/lib/api/connectedAppsApi';
+import {
+  ACCESS_REVOKED_MESSAGE,
+  CONNECTED_APPS_LOAD_ERROR,
+  CONNECTED_APPS_REFRESH_ERROR,
+  REVOKE_ERROR_FALLBACK,
+} from '@/lib/copy';
 import { extractErrorMessage } from '@/lib/errorMessage';
 import type { ConnectedAppDto } from '@/types/api/connectedApps';
 
@@ -11,17 +18,11 @@ import type { ConnectedAppDto } from '@/types/api/connectedApps';
 // dialog's revoke flow so ConnectedAppsScreen stays dumb (docs/FRONTEND-CONVENTIONS.md §3).
 // `hasData` is `true` once a page has ever loaded, so a LATER background refetch failure (e.g.
 // another tab's revoke invalidating the `ConnectedApps` tag while this screen is still mounted)
-// doesn't blank an already-rendered list back to a full-screen error — UNLIKE `useContentList`/
-// `useDashboardStats`, this hook does not surface that background-failure case at all today (no
-// Snackbar, no dismiss action): a background refetch failure here is currently silent (final
-// fix round 1, F-5).
-const REVOKE_ERROR_FALLBACK = "Couldn't revoke this app. Please try again.";
-// Brief's Screen-behaviour section pins `isError && !hasData` -> `<ErrorState message=…>` to the
-// PRD §9 envelope's own message where the failed response carries one (task-09 brief's
-// Component.test.tsx: a 500 first load with `{"error":{"message":"boom"}}` must surface "boom",
-// not a generic string) — this fallback only covers the rarer case of no envelope at all (e.g. a
-// network error).
-const LOAD_ERROR_FALLBACK = "Couldn't load connected apps.";
+// doesn't blank an already-rendered list back to a full-screen error. phase-8 task-21 (DESIGN.md
+// §2, §5 C6, closes F-5): that background-refetch failure now surfaces through the global
+// snackbar via `useRisingEdgeNotice` (p8 final, F6) — same shared hook `useContentList`/
+// `useDashboard`/`useContentEditor` call for their own background-refresh notices. A successful
+// revoke also raises a snackbar success notice.
 
 export interface UseConnectedAppsResult {
   items: ConnectedAppDto[];
@@ -43,6 +44,10 @@ export interface UseConnectedAppsResult {
 export function useConnectedApps(): UseConnectedAppsResult {
   const { data, error, isLoading, isError } = useGetConnectedAppsQuery();
   const hasData = data !== undefined;
+
+  const { success: notifySuccess, error: notifyError } = useSnackbar();
+  const isBackgroundRefreshFailing = hasData && isError;
+  useRisingEdgeNotice(isBackgroundRefreshFailing, notifyError, CONNECTED_APPS_REFRESH_ERROR);
 
   const [pendingRevoke, setPendingRevoke] = useState<ConnectedAppDto | null>(null);
   const [triggerRevoke, { isLoading: isRevoking }] = useRevokeConnectedAppMutation();
@@ -66,6 +71,7 @@ export function useConnectedApps(): UseConnectedAppsResult {
       await triggerRevoke(pendingRevoke.client_id).unwrap();
       setPendingRevoke(null);
       setRevokeErrorMessage(null);
+      notifySuccess(ACCESS_REVOKED_MESSAGE);
     } catch (revokeError) {
       // Keep the dialog open (don't clear `pendingRevoke`) so the admin can read the message
       // and retry or cancel — mirrors useContentList's `deleteContent` failure handling.
@@ -78,7 +84,8 @@ export function useConnectedApps(): UseConnectedAppsResult {
     isLoading,
     isError,
     hasData,
-    errorMessage: !hasData && isError ? extractErrorMessage(error, LOAD_ERROR_FALLBACK) : null,
+    errorMessage:
+      !hasData && isError ? extractErrorMessage(error, CONNECTED_APPS_LOAD_ERROR) : null,
     pendingRevoke,
     requestRevoke,
     cancelRevoke,

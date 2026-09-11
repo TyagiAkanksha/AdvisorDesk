@@ -154,8 +154,9 @@ def test_openapi_baseline_declares_error_envelope_not_the_fastapi_default() -> N
 
     paths = schema["paths"]
     # A representative sample, not every operation: a list route, a by-id
-    # route (gets the extra 404), and the OAuth callback (gets 403 instead
-    # of 401, since it has no `require_admin` dependency).
+    # route (gets the extra 404), and the OAuth callback (has no
+    # `require_admin` dependency, so no 401; phase-8 C0: its former-403
+    # failure branches now 303-redirect instead of raising, so no 403 either).
     content_list_responses = paths["/api/v1/content"]["get"]["responses"]
     content_get_responses = paths["/api/v1/content/{content_id}"]["get"]["responses"]
     callback_responses = paths["/api/v1/auth/callback"]["get"]["responses"]
@@ -171,7 +172,7 @@ def test_openapi_baseline_declares_error_envelope_not_the_fastapi_default() -> N
     assert "401" in content_get_responses
     assert "404" in content_get_responses
     assert "401" not in callback_responses
-    assert "403" in callback_responses
+    assert "403" not in callback_responses
 
 
 # ---------------------------------------------------------------------------

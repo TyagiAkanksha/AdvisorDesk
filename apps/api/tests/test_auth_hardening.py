@@ -368,13 +368,14 @@ def test_login_state_cookie_is_secure_in_production() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_callback_rejects_forged_unsigned_state_with_403(tmp_engine: Engine) -> None:
-    """A `state` value never produced by `mint_state` fails signature verification -> 403.
+def test_callback_rejects_forged_unsigned_state_with_signin_redirect(tmp_engine: Engine) -> None:
+    """A `state` value never produced by `mint_state` fails signature verification -> 303 to
+    `/signin?error=state`.
 
     The callback `code` is deliberately left unregistered on the fake OAuth client: a correct
     implementation checks `state` BEFORE calling `exchange_code`, so it never looks the code up
     at all. If it did, the fake's `exchange_code` would raise `KeyError` instead of this test's
-    expected 403 — a stronger failure signal than a passing assertion alone.
+    expected 303 — a stronger failure signal than a passing assertion alone.
     """
     client, _ = _build_client(tmp_engine)
     forged_state = "forged-unsigned-state-value"
@@ -386,15 +387,16 @@ def test_callback_rejects_forged_unsigned_state_with_403(tmp_engine: Engine) -> 
         follow_redirects=False,
     )
 
-    assert response.status_code == 403
-    body = response.json()
-    assert set(body.keys()) == {"error"}
-    assert set(body["error"].keys()) == {"code", "message"}
-    assert isinstance(body["error"]["message"], str) and body["error"]["message"]
+    assert response.status_code == 303
+    assert response.headers["location"] == "http://localhost:3001/signin?error=state"
+    assert response.headers.get("set-cookie") is None
 
 
-def test_callback_rejects_valid_state_with_no_state_cookie_with_403(tmp_engine: Engine) -> None:
-    """A validly SIGNED `state` with no double-submit cookie at all is still rejected — 403.
+def test_callback_rejects_valid_state_with_no_state_cookie_with_signin_redirect(
+    tmp_engine: Engine,
+) -> None:
+    """A validly SIGNED `state` with no double-submit cookie at all is still rejected -> 303 to
+    `/signin?error=state`.
 
     Proves the double-submit cookie is required in addition to the signature: an attacker can
     mint a valid `state` from their OWN `/auth/login`, but cannot forge the victim's browser
@@ -411,15 +413,16 @@ def test_callback_rejects_valid_state_with_no_state_cookie_with_403(tmp_engine: 
         follow_redirects=False,
     )
 
-    assert response.status_code == 403
-    body = response.json()
-    assert set(body.keys()) == {"error"}
+    assert response.status_code == 303
+    assert response.headers["location"] == "http://localhost:3001/signin?error=state"
+    assert response.headers.get("set-cookie") is None
 
 
-def test_callback_rejects_valid_state_with_mismatched_state_cookie_with_403(
+def test_callback_rejects_valid_state_with_mismatched_state_cookie_with_signin_redirect(
     tmp_engine: Engine,
 ) -> None:
-    """A validly signed `state` whose double-submit cookie holds a DIFFERENT signed state — 403."""
+    """A validly signed `state` whose double-submit cookie holds a DIFFERENT signed state ->
+    303 to `/signin?error=state`."""
     client, _ = _build_client(tmp_engine)
     settings: Settings = client.app.state.settings  # type: ignore[attr-defined]
     state = mint_state(settings)
@@ -432,13 +435,16 @@ def test_callback_rejects_valid_state_with_mismatched_state_cookie_with_403(
         follow_redirects=False,
     )
 
-    assert response.status_code == 403
+    assert response.status_code == 303
+    assert response.headers["location"] == "http://localhost:3001/signin?error=state"
+    assert response.headers.get("set-cookie") is None
 
 
-def test_callback_rejects_expired_state_with_403(
+def test_callback_rejects_expired_state_with_signin_redirect(
     tmp_engine: Engine, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A `state` minted before `STATE_MAX_AGE_SECONDS` elapsed is rejected once it expires.
+    """A `state` minted before `STATE_MAX_AGE_SECONDS` elapsed is rejected once it expires ->
+    303 to `/signin?error=state`.
 
     Monkeypatches the module-level `app.auth.state.STATE_MAX_AGE_SECONDS` to 0 so any positive
     age at all counts as expired, then sleeps past a full second boundary so the elapsed-time
@@ -457,7 +463,9 @@ def test_callback_rejects_expired_state_with_403(
         follow_redirects=False,
     )
 
-    assert response.status_code == 403
+    assert response.status_code == 303
+    assert response.headers["location"] == "http://localhost:3001/signin?error=state"
+    assert response.headers.get("set-cookie") is None
 
 
 def test_full_login_then_callback_round_trip_succeeds_with_303_and_deletes_state_cookie(

@@ -32,7 +32,13 @@ import type { AutocompleteProps } from './interface';
 // - `'blur'` only reaches `onChange` at all when `autoSelect` is true (never set here); the
 //   field's own blur-driven commit is `commitPendingInput` below — excluding `'blur'` here keeps
 //   the two clear paths from fighting over the same state update.
-export default function Component({ label, value, onChange, size = 'small' }: AutocompleteProps) {
+export default function Component({
+  label,
+  value,
+  onChange,
+  size = 'small',
+  options = [],
+}: AutocompleteProps) {
   const [inputValue, setInputValue] = useState('');
 
   const commitPendingInput = () => {
@@ -47,7 +53,7 @@ export default function Component({ label, value, onChange, size = 'small' }: Au
     <MuiAutocomplete<string, true, false, true>
       multiple
       freeSolo
-      options={[]}
+      options={options}
       value={value}
       inputValue={inputValue}
       size={size}

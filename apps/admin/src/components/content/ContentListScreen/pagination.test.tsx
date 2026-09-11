@@ -2,12 +2,15 @@
 import { render, screen, waitFor, within } from '@testing-library/react';
 import '@testing-library/jest-dom/vitest';
 import userEvent from '@testing-library/user-event';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import Providers from '@/app/providers';
+import { navigation } from '@/testing/nextNavigation';
 import type { ContentDto, ContentListDto } from '@/types/api/content';
 
 import { ContentListScreen } from '.';
+
+vi.mock('next/navigation', () => import('@/testing/nextNavigation'));
 
 // fix round 1, F1 (C1: pagination UI was entirely missing — content past item 20 was
 // unreachable). Exercises the new common/Pagination wiring end-to-end through
@@ -97,9 +100,11 @@ const page2Fixture: ContentListDto = {
 };
 
 // After the sole page-2 row is deleted, a real API would answer page 2 with an empty page
-// (total drops to 20 — exactly one page). `useContentList` does not itself navigate back to
-// page 1 on this shrinkage (documented, not asserted as a requirement) — the UI's job is only
-// to render that answer as an explicit EmptyState rather than a stale/blank screen.
+// (total drops to 20 — exactly one page). p8 final, F16: this comment used to say
+// `useContentList` does NOT navigate back to page 1 on its own — that was true before WR-60's
+// stranded-page clamp existed; today the hook DOES rewrite the URL to the last valid page once
+// `total` is known (see the assertion below), so this fixture's empty page 2 is only ever
+// transient — never rendered as a lasting EmptyState.
 const page2AfterDeleteFixture: ContentListDto = {
   items: [],
   page: 2,
@@ -118,6 +123,9 @@ function mockFetch(listHandler: (url: URL) => Response) {
       }
       if (pathname.startsWith('/api/v1/content/') && method === 'DELETE') {
         return new Response(null, { status: 204 });
+      }
+      if (pathname === '/api/v1/tags' && method === 'GET') {
+        return jsonResponse([]);
       }
       return jsonResponse({ error: { code: 'not_found', message: 'unmocked route' } }, 404);
     },
@@ -145,6 +153,10 @@ function lastListCall(fetchMock: FetchMock) {
 }
 
 describe('ContentListScreen pagination', () => {
+  beforeEach(() => {
+    navigation.reset('/content');
+  });
+
   afterEach(() => {
     vi.restoreAllMocks();
   });
@@ -180,6 +192,7 @@ describe('ContentListScreen pagination', () => {
       expect(url.searchParams.get('page')).toBe('2');
     });
     await screen.findByRole('row', { name: new RegExp(itemC.title) });
+    expect(navigation.replace).toHaveBeenLastCalledWith('/content?page=2', { scroll: false });
   });
 
   it('changing a filter after paging forward resets the next request to page=1', async () => {
@@ -208,9 +221,10 @@ describe('ContentListScreen pagination', () => {
       expect(url.searchParams.get('page')).toBe('1');
       expect(url.searchParams.get('status')).toBe('published');
     });
+    expect(navigation.search).toBe('?status=published');
   });
 
-  it('deleting the sole row on page 2 leaves the pager mounted through the stranding refetch, with a working way back to page 1', async () => {
+  it('deleting the sole row on page 2 clamps the URL back to page 1 automatically (WR-60)', async () => {
     let deleteCount = 0;
     const fetchMock = vi.fn<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>(
       async (input, init) => {
@@ -228,6 +242,7 @@ describe('ContentListScreen pagination', () => {
           deleteCount += 1;
           return new Response(null, { status: 204 });
         }
+        if (pathname === '/api/v1/tags') return jsonResponse([]);
         return jsonResponse({ error: { code: 'not_found', message: 'unmocked route' } }, 404);
       },
     );
@@ -238,44 +253,18 @@ describe('ContentListScreen pagination', () => {
     await screen.findByRole('row', { name: new RegExp(itemA.title) });
     await user.click(screen.getByRole('button', { name: 'Go to next page' }));
     await screen.findByRole('row', { name: new RegExp(itemC.title) });
+    expect(navigation.search).toBe('?page=2');
 
-    const deleteButton = screen.getByRole('button', {
-      name: new RegExp(`delete.*${itemC.title}`, 'i'),
-    });
-    await user.click(deleteButton);
+    await user.click(
+      screen.getByRole('button', { name: new RegExp(`delete.*${itemC.title}`, 'i') }),
+    );
     const dialog = await screen.findByRole('dialog');
-    const confirmButton = within(dialog).getByRole('button', { name: /delete/i });
-    await user.click(confirmButton);
+    await user.click(within(dialog).getByRole('button', { name: /delete/i }));
 
-    // The DELETE fired, and the still-subscribed page-2 `listContent` query refetched (tag
-    // invalidation, no manual refetch call) — landing behavior: EmptyState, not a stranded
-    // stale row or a blank screen.
-    await waitFor(() => {
-      const calls = fetchMock.mock.calls.filter(
-        ([input, init]) =>
-          pathnameOf(input) === '/api/v1/content' &&
-          requestMethod(input, init) === 'GET' &&
-          new URL(requestUrl(input)).searchParams.get('page') === '2',
-      );
-      expect(calls.length).toBeGreaterThanOrEqual(2);
-    });
-    expect(await screen.findByRole('status')).toHaveTextContent(/no content found/i);
-
-    // fix round 2, C2/I3: this is what "doesn't strand the UI" actually requires — the pager
-    // (not just the EmptyState text) must still be mounted, offering a real way back. Before
-    // the round-2 fix, ContentListScreen only rendered `<Pagination/>` inside the
-    // `items.length>0` branch, so it unmounted along with the table here and this button did
-    // not exist.
-    const previousPageButton = screen.getByRole('button', { name: 'Go to previous page' });
-    fetchMock.mockClear();
-    await user.click(previousPageButton);
-
-    await waitFor(() => {
-      const call = lastListCall(fetchMock);
-      expect(call).toBeDefined();
-      const url = new URL(requestUrl(call![0]));
-      expect(url.searchParams.get('page')).toBe('1');
-    });
+    // The page-2 refetch answers an empty page with total 20 → last page is 1 → the hook rewrites
+    // the URL to page 1 and page 1's rows render — no stranded empty page, no manual "previous".
+    await waitFor(() => expect(navigation.search).toBe(''));
     await screen.findByRole('row', { name: new RegExp(itemA.title) });
+    expect(await screen.findByRole('status')).toHaveTextContent('Deleted');
   });
 });

@@ -5,6 +5,7 @@ import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import Providers from '@/app/providers';
+import { navigation } from '@/testing/nextNavigation';
 
 import { AppShell } from '.';
 
@@ -12,11 +13,7 @@ import { AppShell } from '.';
 // tasks 05/06 and the phase-5 panel mount into. Mock ONLY the network edge
 // (fetch) and the next/navigation framework seam (docs/FRONTEND-CONVENTIONS.md
 // §7); AppShell, baseApi, authApi, the store, and Providers are all real.
-const replaceMock = vi.fn();
-const pushMock = vi.fn();
-vi.mock('next/navigation', () => ({
-  useRouter: () => ({ replace: replaceMock, push: pushMock }),
-}));
+vi.mock('next/navigation', () => import('@/testing/nextNavigation'));
 
 // Contract pinned by this file: the account-menu trigger is a `button` whose
 // accessible name contains the signed-in user's name (from `getMe`); clicking
@@ -69,8 +66,7 @@ function renderShell() {
 
 describe('AppShell', () => {
   beforeEach(() => {
-    replaceMock.mockClear();
-    pushMock.mockClear();
+    navigation.reset('/');
   });
 
   afterEach(() => {
@@ -137,9 +133,44 @@ describe('AppShell', () => {
 
     await waitFor(() => {
       const redirectedToSignin =
-        replaceMock.mock.calls.some(([to]) => to === '/signin') ||
-        pushMock.mock.calls.some(([to]) => to === '/signin');
+        navigation.replace.mock.calls.some(([to]) => to === '/signin') ||
+        navigation.push.mock.calls.some(([to]) => to === '/signin');
       expect(redirectedToSignin).toBe(true);
     });
+  });
+
+  it('renders exactly one main landmark and the "Main" navigation landmark', async () => {
+    mockFetch();
+
+    renderShell();
+    await screen.findByText('Dashboard body');
+
+    expect(screen.getAllByRole('main')).toHaveLength(1);
+    expect(screen.getByRole('navigation', { name: 'Main' })).toBeInTheDocument();
+  });
+
+  it('marks the current route\'s nav link with aria-current="page" and no other', async () => {
+    navigation.reset('/connected-apps');
+    mockFetch();
+
+    renderShell();
+    await screen.findByText('Dashboard body');
+
+    expect(screen.getByRole('link', { name: 'Connected apps' })).toHaveAttribute(
+      'aria-current',
+      'page',
+    );
+    expect(screen.getByRole('link', { name: 'Content' })).not.toHaveAttribute('aria-current');
+    expect(screen.getByRole('link', { name: 'Dashboard' })).not.toHaveAttribute('aria-current');
+  });
+
+  it('renders the wordmark as a link to / and no menu button at desktop width', async () => {
+    mockFetch();
+
+    renderShell();
+    await screen.findByText('Dashboard body');
+
+    expect(screen.getByRole('link', { name: 'AdvisorDesk Admin' })).toHaveAttribute('href', '/');
+    expect(screen.queryByRole('button', { name: 'Open navigation' })).not.toBeInTheDocument();
   });
 });

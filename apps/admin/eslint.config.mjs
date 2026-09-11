@@ -30,6 +30,24 @@ const eslintConfig = defineConfig([
       ],
     },
   },
+  // phase-8 task-14 fix round 1: `eslint-config-next/typescript` sets
+  // `@typescript-eslint/no-unused-vars` to `'warn'` with no `argsIgnorePattern`, so a trailing
+  // intentionally-unused param only escapes it when a LATER param in the same list is used
+  // (the rule's default `args: 'after-used'`) — that's why `_event` leading params already
+  // scattered across `common/` (e.g. `Autocomplete/Component.tsx`'s `onChange={(_event,
+  // newValue) => ...}`) never warned, but `src/testing/nextNavigation.ts`'s `_options` (the
+  // LAST param in `replace`/`push`'s `vi.fn((href, _options?) => ...)`) does. This is a
+  // project-wide convention (leading AND trailing `_`-prefixed params both mean "intentionally
+  // unused"), not a `src/testing/`-only concern, so it's its own block — `files:
+  // ['src/**/*.{ts,tsx}']` with no `ignores` — rather than folded into the MUI-boundary block
+  // above (which excludes `src/components/common/**`, `theme.ts`, `providers.tsx` — this rule
+  // must still apply there).
+  {
+    files: ['src/**/*.{ts,tsx}'],
+    rules: {
+      '@typescript-eslint/no-unused-vars': ['warn', { argsIgnorePattern: '^_' }],
+    },
+  },
   eslintConfigPrettier,
   globalIgnores([
     // Default ignores of eslint-config-next:

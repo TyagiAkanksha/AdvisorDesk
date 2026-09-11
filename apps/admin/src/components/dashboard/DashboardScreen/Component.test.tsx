@@ -1,15 +1,18 @@
 // @vitest-environment jsdom
-import { render, screen } from '@testing-library/react';
+import { render, screen, within } from '@testing-library/react';
 import '@testing-library/jest-dom/vitest';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import Providers from '@/app/providers';
+import { formatDate } from '@/lib/format';
+import type { ContentDto, ContentListDto } from '@/types/api/content';
 
 import { DashboardScreen } from '.';
 
-// task-05 / PRD §2.2: the dashboard renders one card per content status with the count from
-// `GET /stats`. Mock ONLY the network edge (docs/FRONTEND-CONVENTIONS.md §7); DashboardScreen,
-// statsApi, baseApi, the store, and Providers are all real, unmocked modules.
+// task-17 (DESIGN.md §2, §5 C3): the dashboard renders linked stat cards, a "Content by tag"
+// table and a "Recent content" table built from `GET /stats` + `GET /api/v1/content`. Mock
+// ONLY the network edge (docs/FRONTEND-CONVENTIONS.md §7); DashboardScreen, statsApi,
+// contentApi, baseApi, the store, and Providers are all real, unmocked modules.
 //
 // Request-aware fetch mocking (task-04 review lesson, mirrored from RequireSession/AppShell
 // Component.test.tsx): `fetchBaseQuery` hands the mocked `fetch` a native `Request`, which
@@ -30,6 +33,36 @@ const statsFixture = {
   by_tag: { 'tax-planning': 2, retirement: 1 },
 };
 
+const itemA: ContentDto = {
+  author_id: null,
+  body_md: '# Roth IRA Conversion Basics',
+  created_at: '2026-01-01T12:00:00Z',
+  id: '11111111-1111-1111-1111-111111111111',
+  published_at: null,
+  slug: 'roth-ira-conversion-basics',
+  status: 'draft',
+  tags: ['tax-planning'],
+  title: 'Roth IRA Conversion Basics',
+  updated_at: '2026-03-15T12:00:00Z',
+  updated_by: null,
+};
+
+const recentFixture: ContentListDto = { items: [itemA], page: 1, page_size: 5, total: 1 };
+
+function mockFetch(overrides: { stats?: unknown; recent?: ContentListDto } = {}) {
+  const fetchMock = vi.fn<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>(
+    async (input) => {
+      const url = new URL(requestUrl(input));
+      if (url.pathname === '/api/v1/stats') return jsonResponse(overrides.stats ?? statsFixture);
+      if (url.pathname === '/api/v1/content')
+        return jsonResponse(overrides.recent ?? recentFixture);
+      return jsonResponse({ error: { code: 'not_found', message: 'unmocked route' } }, 404);
+    },
+  );
+  global.fetch = fetchMock;
+  return fetchMock;
+}
+
 function renderScreen() {
   return render(
     <Providers>
@@ -43,35 +76,69 @@ describe('DashboardScreen', () => {
     vi.restoreAllMocks();
   });
 
-  it('renders one card per content status with the count from GET /stats', async () => {
-    global.fetch = vi.fn<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>(
-      async (input) => {
-        if (requestUrl(input).includes('/stats')) return jsonResponse(statsFixture);
-        return jsonResponse({ error: { code: 'not_found', message: 'unmocked route' } }, 404);
-      },
-    );
+  it('renders one linked stat card per status, each pointing at the filtered content list', async () => {
+    mockFetch();
 
     renderScreen();
 
-    // One heading per known status (role/heading, per instructions), each paired with its
-    // count from the fixture (by role/text).
-    expect(await screen.findByRole('heading', { name: /draft/i })).toBeInTheDocument();
-    expect(screen.getByText('3')).toBeInTheDocument();
-
-    expect(screen.getByRole('heading', { name: /published/i })).toBeInTheDocument();
-    expect(screen.getByText('5')).toBeInTheDocument();
-
-    expect(screen.getByRole('heading', { name: /archived/i })).toBeInTheDocument();
-    expect(screen.getByText('1')).toBeInTheDocument();
+    const draft = await screen.findByRole('link', { name: /^Draft\s*3$/ });
+    expect(draft).toHaveAttribute('href', '/content?status=draft');
+    expect(screen.getByRole('link', { name: /^Published\s*5$/ })).toHaveAttribute(
+      'href',
+      '/content?status=published',
+    );
+    expect(screen.getByRole('link', { name: /^Archived\s*1$/ })).toHaveAttribute(
+      'href',
+      '/content?status=archived',
+    );
   });
 
-  it('shows a visible loading indicator (not a silent blank) while GET /stats is pending', () => {
-    // A fetch that never resolves keeps `getStats` in its loading state for the test's life.
+  it('renders the tag table sorted by count, each tag linking to the tag-filtered list', async () => {
+    mockFetch();
+
+    renderScreen();
+
+    const table = await screen.findByRole('table', { name: 'Content by tag' });
+    const rows = within(table).getAllByRole('row').slice(1); // skip the header row
+    expect(rows).toHaveLength(2);
+    expect(within(rows[0]!).getByRole('link', { name: 'tax-planning' })).toHaveAttribute(
+      'href',
+      '/content?tag=tax-planning',
+    );
+    expect(within(rows[0]!).getByRole('cell', { name: '2' })).toBeInTheDocument();
+    expect(within(rows[1]!).getByRole('link', { name: 'retirement' })).toHaveAttribute(
+      'href',
+      '/content?tag=retirement',
+    );
+  });
+
+  it('renders recent content with a title link, status chip and formatted updated date', async () => {
+    const fetchMock = mockFetch();
+
+    renderScreen();
+
+    const table = await screen.findByRole('table', { name: 'Recent content' });
+    const row = within(table).getByRole('row', { name: new RegExp(itemA.title) });
+    expect(within(row).getByRole('link', { name: itemA.title })).toHaveAttribute(
+      'href',
+      `/content/${itemA.id}`,
+    );
+    expect(within(row).getByText('Draft')).toBeInTheDocument();
+    expect(within(row).getByText(formatDate(itemA.updated_at))).toBeInTheDocument();
+
+    const listCall = fetchMock.mock.calls.find(
+      ([input]) => new URL(requestUrl(input)).pathname === '/api/v1/content',
+    );
+    expect(new URL(requestUrl(listCall![0])).searchParams.get('page_size')).toBe('5');
+  });
+
+  it('shows a labelled skeleton (not a spinner) while GET /stats is pending', () => {
     global.fetch = vi.fn(() => new Promise<Response>(() => {}));
 
     renderScreen();
 
-    expect(screen.getByRole('progressbar')).toBeInTheDocument();
+    expect(screen.getByRole('status', { name: 'Loading' })).toBeInTheDocument();
+    expect(screen.queryByRole('progressbar')).not.toBeInTheDocument();
   });
 
   it('renders ErrorState with visible, non-empty error text when GET /stats fails', async () => {
@@ -86,5 +153,31 @@ describe('DashboardScreen', () => {
     const alert = await screen.findByRole('alert');
     expect(alert).toBeVisible();
     expect(alert.textContent?.trim().length).toBeGreaterThan(0);
+  });
+
+  it('shows the empty messages when there are no tags and no content', async () => {
+    mockFetch({
+      stats: { by_status: {}, by_tag: {} },
+      recent: { items: [], page: 1, page_size: 5, total: 0 },
+    });
+
+    renderScreen();
+
+    expect(await screen.findByText('No tags yet.')).toBeInTheDocument();
+    expect(screen.getByText('No content yet.')).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: /^Draft\s*0$/ })).toBeInTheDocument();
+  });
+
+  it('a failed recent-content request shows an inline error but keeps the stat cards', async () => {
+    global.fetch = vi.fn<(input: RequestInfo | URL) => Promise<Response>>(async (input) => {
+      const url = new URL(requestUrl(input));
+      if (url.pathname === '/api/v1/stats') return jsonResponse(statsFixture);
+      return jsonResponse({ error: { code: 'internal_error', message: 'boom' } }, 500);
+    });
+
+    renderScreen();
+
+    expect(await screen.findByRole('link', { name: /^Draft\s*3$/ })).toBeInTheDocument();
+    expect(await screen.findByRole('alert')).toHaveTextContent("Couldn't load recent content.");
   });
 });

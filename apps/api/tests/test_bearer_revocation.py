@@ -484,7 +484,9 @@ def test_caplog_login_rejected_non_allowlisted_email_logs_warning_with_allowlist
             _CALLBACK_PATH, params={"code": code, "state": state}, follow_redirects=False
         )
 
-    assert response.status_code == 403
+    # Phase-8 C0: an allowlist failure 303-redirects to the admin sign-in page rather than 403ing.
+    assert response.status_code == 303
+    assert response.headers["location"].endswith("?error=forbidden")
     matches = [
         r
         for r in caplog.records
@@ -548,7 +550,9 @@ def test_caplog_oauth_state_verification_failed_logs_warning_and_never_logs_stat
             follow_redirects=False,
         )
 
-    assert response.status_code == 403
+    # Phase-8 C0: a state failure 303-redirects to the admin sign-in page rather than 403ing.
+    assert response.status_code == 303
+    assert response.headers["location"].endswith("?error=state")
     warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
     assert warnings, [r.getMessage() for r in caplog.records]
     assert forged_state not in caplog.text

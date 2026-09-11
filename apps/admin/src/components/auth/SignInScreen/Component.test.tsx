@@ -4,6 +4,8 @@ import '@testing-library/jest-dom/vitest';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { SIGN_IN_ERROR_FORBIDDEN, SIGN_IN_ERROR_STATE } from '@/lib/copy';
+
 // task-04 / PRD §5.1: the sign-in button is a REAL anchor navigation to the
 // backend's `GET /api/v1/auth/login` redirect (Google OAuth consent) — not a
 // JS `onClick` handler. `NEXT_PUBLIC_API_URL` drives the href, so it must be
@@ -50,5 +52,42 @@ describe('SignInScreen', () => {
     // href. If the implementation instead wired an onClick handler that
     // fetches the login URL, this would fail.
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('renders the card: main landmark, wordmark h1, subtitle, fine print, no alert', async () => {
+    const { SignInScreen } = await import('.');
+    render(<SignInScreen />);
+
+    expect(screen.getByRole('main')).toBeInTheDocument();
+    expect(
+      screen.getByRole('heading', { level: 1, name: 'AdvisorDesk Admin' }),
+    ).toBeInTheDocument();
+    expect(screen.getByText('Sign in to manage AdvisorDesk content')).toBeInTheDocument();
+    expect(
+      screen.getByText('Access is limited to allowlisted admin accounts.'),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+  });
+
+  it('error="forbidden" shows the allowlist message as an alert', async () => {
+    const { SignInScreen } = await import('.');
+    render(<SignInScreen error="forbidden" />);
+
+    expect(screen.getByRole('alert')).toHaveTextContent(SIGN_IN_ERROR_FORBIDDEN);
+  });
+
+  it('error="state" shows the expired/tampered message as an alert', async () => {
+    const { SignInScreen } = await import('.');
+    render(<SignInScreen error="state" />);
+
+    expect(screen.getByRole('alert')).toHaveTextContent(SIGN_IN_ERROR_STATE);
+  });
+
+  it('an unknown error value shows no alert (and never echoes the value)', async () => {
+    const { SignInScreen } = await import('.');
+    render(<SignInScreen error="something-else" />);
+
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    expect(screen.queryByText(/something-else/)).not.toBeInTheDocument();
   });
 });

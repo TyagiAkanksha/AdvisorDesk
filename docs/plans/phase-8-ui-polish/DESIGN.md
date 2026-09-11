@@ -390,6 +390,38 @@ admin `lib/copy.ts` (C2), dead Drawer `onClose` (C1), AgentPanel → `EmptyState
 test scoping (C3), Markdown twin anti-drift (A2). Review findings closed: WR-60 (C4), F-5 (C6).
 WR-12 (SSE parser duplication across apps) stays out of scope.
 
+### Plan-time rulings (recorded while writing task files 13–23; the text above is read with these)
+
+- **C1:** `useMediaQuery` lives behind one `common/useBreakpointDown(key)` hook (the MUI
+  boundary applies to hooks too); `IconButton` gains `href`/`color`/`edge`/`tooltip` so the
+  AppBar menu button and the table row actions stay inside the primitive layer. Active-route
+  matching uses a path-segment boundary (`/content/…` yes, `/content-archive` no).
+- **C2:** the `?error=` reason reaches the screen as a prop from the page's `searchParams`
+  (Server Component), not from `useSearchParams()` — no Suspense boundary, no client island;
+  the mapping is a pure `lib/signInError.ts`.
+- **C3:** the second panel is titled **Recent content**, not "Recently updated": the list
+  endpoint orders by `created_at desc` and §7 forbids new API params. Tag rows sort by count
+  desc, then name.
+- **C4:** the "Showing 1–20 of N" count is rendered once, by `common/Pagination` (already
+  there) — not repeated in the filter row. `useContentList` treats the URL as the single
+  source of truth (`lib/contentListParams.ts` parses/builds it); the page wraps the screen in
+  `<Suspense>` because Next 15+ fails the build for `useSearchParams()` on a prerendered route
+  without one. Delete success → "Deleted" notice.
+- **C5:** the header h1 is the SAVED title (`content.title`), never the live field; the
+  phone Preview/Edit toggle sits in the header actions (it must stay reachable while the form
+  is hidden); `stripLeadingHeading` is copied into `apps/admin/src/lib/markdown.ts` (sub-phase A
+  shipped it in the client only); the editor form leaf takes the hook result as its one prop;
+  save-then-publish emits a single "Published" notice.
+- **C6:** the token-count and expiry columns are dropped (Client · Connected · Last used ·
+  Revoke); the short id is the first 12 characters; revoke success → "Access revoked".
+- **C7:** interleaving is implemented by recording `textOffset` on every `ToolEvent` and a pure
+  `lib/agentTurnSegments.ts` that pairs `tool_call`/`tool_result` FIFO into one collapsible card
+  each; `AgentPanel` takes `onClose` from the shell; "Clear" is `useAgentStream().reset()`;
+  Send is gated on a non-blank draft and swaps to Stop while streaming (the field stays disabled
+  while streaming, as pinned); errors render as an inline `Alert severity="error"`.
+- **Loading states:** every C screen swaps its spinner for a screen-shaped skeleton
+  (`role="status" aria-label="Loading"`).
+
 ## 6. Testing
 
 - TDD per task (RED evidence, then GREEN). Component tests: `// @vitest-environment jsdom`,

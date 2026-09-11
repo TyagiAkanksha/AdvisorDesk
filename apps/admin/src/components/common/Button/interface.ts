@@ -1,3 +1,4 @@
+import type { SxProps, Theme } from '@mui/material/styles';
 import type { MouseEventHandler, ReactNode } from 'react';
 
 /**
@@ -28,4 +29,7 @@ export interface ButtonProps {
   // ConnectedAppsTable's per-row "Revoke" button needs an accessible name distinct from its
   // visible label ("Revoke <client_name>", docs/plans/mcp-oauth/task-09-admin-connected-apps-ui.md).
   'aria-label'?: string;
+  // phase-8 task-23: the agent panel's tool-card toggle needs left-aligned monospace text — an
+  // escape hatch straight through to MuiButton, admin-only (no client call site needs it yet).
+  sx?: SxProps<Theme>;
 }

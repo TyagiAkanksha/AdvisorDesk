@@ -117,11 +117,11 @@ export interface paths {
          *     the normalization is decided, since it is also what the allowlist check
          *     must agree with. `name`/`avatar_url` are passed through unchanged.
          *
-         *     Review round 1, finding F2: `responses=` declares the 403 `ForbiddenError`
-         *     raises below plus the 422 a missing/malformed `code`/`state` query param
-         *     produces (both rendered as `ErrorEnvelope` by `register_error_handlers`,
-         *     never FastAPI's own default validation-error schema) — this route has
-         *     no `require_admin` dependency, so, unlike the admin routes in
+         *     Review round 1, finding F2: `responses=` declared a 403 for the allowlist/state failures
+         *     below (superseded by phase-8 C0, which redirects instead of raising — see `Returns:` below)
+         *     plus the 422 a missing/malformed `code`/`state` query param produces (rendered as
+         *     `ErrorEnvelope` by `register_error_handlers`, never FastAPI's own default validation-error
+         *     schema) — this route has no `require_admin` dependency, so, unlike the admin routes in
          *     `app.routes.content_routes`, no 401 applies here. Final review, finding
          *     C-3 / t01 M14: 502 added for `oauth_client.exchange_code`'s
          *     `OAuthExchangeError` (a reused/expired `code`, or a Google-side
@@ -136,17 +136,21 @@ export interface paths {
          *     (rather than leaving FastAPI's implicit 200 default) makes the OpenAPI
          *     baseline's success entry both the true status code and correctly
          *     body-less (`RedirectResponse.media_type` is `None`, unlike the default
-         *     `JSONResponse`) — `responses=`'s `403`/`422` arms are untouched by this
-         *     and still render as `ErrorEnvelope`. Error paths never construct a
-         *     response at all (they raise), so they are unaffected by this route
-         *     always building a `RedirectResponse` on the success path.
+         *     `JSONResponse`) — `responses=`'s `422` arm is untouched by this and still
+         *     renders as `ErrorEnvelope` (the `403` arm no longer applies: phase-8 C0
+         *     below redirects instead of raising on both former-403 branches).
          *
-         *     Raises:
-         *         ForbiddenError: the normalized email is not in `ADMIN_EMAILS` — the
-         *             check runs before any row write (PRD §5.1/§9); OR `state` fails
+         *     Returns:
+         *         A `303` `RedirectResponse` in every case (phase-8 C0): on success, to
+         *             `landing_url` with the session cookie set; if `state` fails
          *             `verify_state` (bad signature/expired) or does not match the
          *             `advisordesk_oauth_state` cookie (phase-6 task-05, PRD §9
-         *             login-CSRF) — checked first, before `exchange_code`.
+         *             login-CSRF, checked first, before `exchange_code`), to
+         *             `{admin_app_url}/signin?error=state`; if the normalized email is
+         *             not in `ADMIN_EMAILS` (checked before any row write, PRD §5.1/§9),
+         *             to `{admin_app_url}/signin?error=forbidden`. Neither failure
+         *             redirect sets a cookie, and neither carries the email or the
+         *             `state` value — only the machine-readable `reason`.
          */
         get: operations["auth_callback"];
         put?: never;
@@ -1402,21 +1406,12 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Session cookie set; redirects to the admin app (settings.admin_app_url). */
+            /** @description Session cookie set and redirect to the admin app; or, on a state/allowlist failure, redirect to {admin_app_url}/signin?error=state|forbidden with no cookie. */
             303: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content?: never;
-            };
-            /** @description Forbidden */
-            403: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorEnvelope"];
-                };
             };
             /** @description Unprocessable Entity */
             422: {

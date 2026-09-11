@@ -2,12 +2,15 @@
 import { render, screen, waitFor, within } from '@testing-library/react';
 import '@testing-library/jest-dom/vitest';
 import userEvent from '@testing-library/user-event';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import Providers from '@/app/providers';
+import { navigation } from '@/testing/nextNavigation';
 import type { ContentDto, ContentListDto } from '@/types/api/content';
 
 import { ContentListScreen } from '.';
+
+vi.mock('next/navigation', () => import('@/testing/nextNavigation'));
 
 // fix round 1, F2 (a DELETE 500 used to leave the dialog open with zero feedback — a bare
 // `catch {}`). Mock ONLY the network edge (docs/FRONTEND-CONVENTIONS.md §7).
@@ -67,6 +70,10 @@ function renderScreen() {
 }
 
 describe('ContentListScreen delete-error surfacing', () => {
+  beforeEach(() => {
+    navigation.reset('/content');
+  });
+
   afterEach(() => {
     vi.restoreAllMocks();
   });

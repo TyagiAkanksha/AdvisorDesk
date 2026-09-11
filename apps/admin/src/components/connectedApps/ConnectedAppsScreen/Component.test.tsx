@@ -4,6 +4,7 @@ import '@testing-library/jest-dom/vitest';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import Providers from '@/app/providers';
+import { formatDateTime } from '@/lib/format';
 import type { ConnectedAppDto, ConnectedAppsResponseDto } from '@/types/api/connectedApps';
 
 import { ConnectedAppsScreen } from '.';
@@ -31,9 +32,10 @@ function jsonResponse(body: unknown, status = 200): Response {
 
 // Task-09 brief facts: `client_id: 'adkc_abc'` on the first fixture app is load-bearing —
 // revoke.test.tsx's DELETE URL assertion depends on it. `active_access_tokens` /
-// `active_refresh_tokens` are deliberately different numbers (2 vs 1) so the two counts render
-// as distinct text nodes within the row — same value for both would make `within(row).getByText`
-// ambiguous.
+// `active_refresh_tokens` are required by `ConnectedAppDto` (the endpoint still returns them)
+// but, since phase-8 task-21 (DESIGN.md §5 C6), the table itself renders neither column — the
+// token-count and expiry columns were dropped down to Client/Connected/Last used/Actions — so
+// their values here are unused filler, not asserted anywhere below.
 const appA: ConnectedAppDto = {
   active_access_tokens: 2,
   active_refresh_tokens: 1,
@@ -76,74 +78,72 @@ describe('ConnectedAppsScreen', () => {
     vi.restoreAllMocks();
   });
 
-  it('renders one row per connected app with name, counts, and formatted dates', async () => {
-    global.fetch = vi.fn<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>(
-      async () => jsonResponse(listFixture),
-    );
+  it('renders the header and one row per app: client name + short id, connected and last-used dates', async () => {
+    global.fetch = vi.fn(async () => jsonResponse(listFixture));
 
     renderScreen();
 
-    // p8 final I-1: the page title is the single h1 for this screen.
     expect(
       await screen.findByRole('heading', { level: 1, name: 'Connected apps' }),
     ).toBeInTheDocument();
+    expect(screen.getByText(/Apps authorised to use AdvisorDesk over MCP/)).toBeInTheDocument();
 
-    // Table columns (header text exact, brief's Screen behaviour section).
-    expect(await screen.findByText('App')).toBeInTheDocument();
-    expect(screen.getByText('Approved')).toBeInTheDocument();
-    expect(screen.getByText('Access tokens')).toBeInTheDocument();
-    expect(screen.getByText('Refresh tokens')).toBeInTheDocument();
-    expect(screen.getByText('Last used')).toBeInTheDocument();
-    expect(screen.getByText('Expires')).toBeInTheDocument();
+    // The header renders in every state — wait for the TABLE (the loaded state), not the heading.
+    const table = await screen.findByRole('table', { name: 'Connected apps' });
+    const headers = within(table)
+      .getAllByRole('columnheader')
+      .map((cell) => cell.textContent);
+    expect(headers).toEqual(['Client', 'Connected', 'Last used', 'Actions']);
 
     const rowA = screen.getByTestId('connected-app-adkc_abc');
     expect(within(rowA).getByText('Claude')).toBeInTheDocument();
-    expect(within(rowA).getByText(String(appA.active_access_tokens))).toBeInTheDocument();
-    expect(within(rowA).getByText(String(appA.active_refresh_tokens))).toBeInTheDocument();
+    expect(within(rowA).getByText('adkc_abc')).toBeInTheDocument();
     expect(
-      within(rowA).getByText(new Date(appA.consent_granted_at as string).toLocaleString()),
+      within(rowA).getByText(formatDateTime(appA.consent_granted_at as string)),
     ).toBeInTheDocument();
-    expect(
-      within(rowA).getByText(new Date(appA.last_used_at as string).toLocaleString()),
-    ).toBeInTheDocument();
-    expect(
-      within(rowA).getByText(new Date(appA.latest_expires_at as string).toLocaleString()),
-    ).toBeInTheDocument();
-    expect(within(rowA).getByRole('button', { name: 'Revoke Claude' })).toBeInTheDocument();
+    expect(within(rowA).getByText(formatDateTime(appA.last_used_at as string))).toBeInTheDocument();
+    expect(within(rowA).getByRole('button', { name: 'Revoke Claude' })).toHaveClass(
+      'MuiButton-colorError',
+    );
+    // Dropped columns (DESIGN.md §C6): token counts and expiry never render.
+    expect(within(rowA).queryByText(String(appA.active_access_tokens))).not.toBeInTheDocument();
 
     const rowB = screen.getByTestId('connected-app-adkc_def');
     expect(within(rowB).getByText('Other MCP client')).toBeInTheDocument();
-    // Both `last_used_at: null` and `latest_expires_at: null` render as the placeholder dash
-    // (brief's Screen behaviour section) — two distinct cells in this row.
-    expect(within(rowB).getAllByText('—')).toHaveLength(2);
+    expect(within(rowB).getAllByText('—')).toHaveLength(1); // last_used_at only
     expect(
       within(rowB).getByRole('button', { name: 'Revoke Other MCP client' }),
     ).toBeInTheDocument();
   });
 
-  it('renders EmptyState when the list is empty', async () => {
-    global.fetch = vi.fn<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>(
-      async () => jsonResponse({ items: [] }),
+  it('truncates long client ids to 12 characters in the caption line', async () => {
+    global.fetch = vi.fn(async () =>
+      jsonResponse({ items: [{ ...appA, client_id: 'adkc_0123456789abcdef' }] }),
     );
 
     renderScreen();
 
-    expect(await screen.findByText('No connected apps')).toBeInTheDocument();
-    expect(
-      screen.getByText(
-        'Apps that connect over MCP (like Claude) will appear here after you approve them.',
-      ),
-    ).toBeInTheDocument();
+    expect(await screen.findByText('adkc_0123456')).toBeInTheDocument();
+    expect(screen.queryByText('adkc_0123456789abcdef')).not.toBeInTheDocument();
   });
 
-  it('renders LoadingIndicator while the first load is pending', () => {
-    // A fetch that never resolves keeps `getConnectedApps` in its loading state for the test's
-    // life (mirrors DashboardScreen's Component.test.tsx pattern).
+  it('renders the header above the empty state when the list is empty', async () => {
+    global.fetch = vi.fn(async () => jsonResponse({ items: [] }));
+
+    renderScreen();
+
+    expect(await screen.findByText('No connected apps')).toBeInTheDocument();
+    expect(screen.getByRole('heading', { level: 1, name: 'Connected apps' })).toBeInTheDocument();
+    expect(screen.queryByRole('table')).not.toBeInTheDocument();
+  });
+
+  it('shows a labelled table skeleton (not a spinner) while the first load is pending', () => {
     global.fetch = vi.fn(() => new Promise<Response>(() => {}));
 
     renderScreen();
 
-    expect(screen.getByRole('progressbar')).toBeInTheDocument();
+    expect(screen.getByRole('status', { name: 'Loading' })).toBeInTheDocument();
+    expect(screen.queryByRole('progressbar')).not.toBeInTheDocument();
   });
 
   it('renders ErrorState with the envelope message on a 500 first load', async () => {

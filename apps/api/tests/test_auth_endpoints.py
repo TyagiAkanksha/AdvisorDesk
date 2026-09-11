@@ -162,13 +162,11 @@ def test_callback_allowlisted_email_creates_user_and_sets_session_cookie(
     assert user.avatar_url == "https://example.com/ada.png"
 
 
-def test_callback_unlisted_email_rejected_with_403_and_no_row_created(
+def test_callback_unlisted_email_redirects_to_signin_forbidden_and_no_row_created(
     tmp_engine: Engine,
 ) -> None:
-    """PRD §5.1/§9: an email outside `ADMIN_EMAILS` is rejected before any row write.
-
-    Asserts the PRD §9 error envelope shape `{"error": {"code", "message"}}`.
-    """
+    """PRD §5.1/§9 + phase-8 C0: an email outside `ADMIN_EMAILS` is rejected before any row write
+    and lands on the admin sign-in page with `?error=forbidden`."""
     client, oauth_client = _build_client(tmp_engine, admin_emails="admin@example.com")
     code = "unlisted-code"
     oauth_client.identities[code] = {
@@ -177,8 +175,8 @@ def test_callback_unlisted_email_rejected_with_403_and_no_row_created(
         "avatar_url": "https://example.com/outsider.png",
     }
     # Phase-6 task-05: a direct (non-login_as) callback call now needs a validly minted state
-    # + matching double-submit cookie, or it 403s on the state check BEFORE ever reaching the
-    # allowlist check this test actually means to exercise.
+    # + matching double-submit cookie, or it answers a 303 to `/signin?error=state` on the state
+    # check BEFORE ever reaching the allowlist check this test actually means to exercise.
     state = mint_state(client.app.state.settings)  # type: ignore[attr-defined]
     client.cookies.set(_STATE_COOKIE_NAME, state)
 
@@ -188,12 +186,9 @@ def test_callback_unlisted_email_rejected_with_403_and_no_row_created(
         follow_redirects=False,
     )
 
-    assert response.status_code == 403
-    body = response.json()
-    assert set(body.keys()) == {"error"}
-    assert set(body["error"].keys()) == {"code", "message"}
-    assert isinstance(body["error"]["code"], str) and body["error"]["code"]
-    assert isinstance(body["error"]["message"], str) and body["error"]["message"]
+    assert response.status_code == 303
+    assert response.headers["location"] == "http://localhost:3001/signin?error=forbidden"
+    assert response.headers.get("set-cookie") is None
     assert _fetch_user_by_email(tmp_engine, "outsider@example.com") is None
 
 

@@ -8,4 +8,6 @@ export interface AutocompleteProps {
   value: string[];
   onChange: (value: string[]) => void;
   size?: 'small' | 'medium';
+  /** phase-8 task-14 (DESIGN.md §C5): suggestions shown in the popup; freeSolo stays on. */
+  options?: string[];
 }

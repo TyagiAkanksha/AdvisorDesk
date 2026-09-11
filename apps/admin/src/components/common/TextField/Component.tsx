@@ -20,6 +20,7 @@ export default function Component({
   helperText,
   onBlur,
   onKeyDown,
+  monospace,
 }: TextFieldProps) {
   const handleChange = (event: ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
     onChange(event.target.value);
@@ -50,6 +51,11 @@ export default function Component({
       helperText={helperText}
       onBlur={onBlur}
       onKeyDown={onKeyDown ? handleKeyDown : undefined}
+      // Inline style (not `sx`'s nested-selector rule) because it's deterministic under both
+      // jsdom's cross-stylesheet cascade — AppRouterCacheProvider emits one `<style>` per rule,
+      // which jsdom's getComputedStyle doesn't resolve for nested selectors — and real browsers.
+      // Visually identical either way.
+      slotProps={monospace ? { htmlInput: { style: { fontFamily: 'monospace' } } } : undefined}
     />
   );
 }

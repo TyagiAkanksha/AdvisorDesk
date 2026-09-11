@@ -209,4 +209,34 @@ describe('ConnectedAppsScreen revoke', () => {
     );
     expect(deleteCall).toBeUndefined();
   });
+
+  it('a successful revoke shows an "Access revoked" notice and the confirm button is destructive', async () => {
+    let getCalls = 0;
+    global.fetch = vi.fn<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>(
+      async (input, init) => {
+        const pathname = pathnameOf(input);
+        const method = requestMethod(input, init);
+
+        if (pathname === '/api/v1/oauth/clients' && method === 'GET') {
+          getCalls += 1;
+          return getCalls === 1 ? jsonResponse(twoAppsFixture) : jsonResponse(oneAppFixture);
+        }
+        if (pathname === '/api/v1/oauth/clients/adkc_abc' && method === 'DELETE') {
+          return new Response(null, { status: 204 });
+        }
+        return jsonResponse({ error: { code: 'not_found', message: 'unmocked route' } }, 404);
+      },
+    );
+    const user = userEvent.setup();
+
+    renderScreen();
+    await screen.findByTestId('connected-app-adkc_abc');
+    await user.click(screen.getByRole('button', { name: 'Revoke Claude' }));
+    const dialog = await screen.findByRole('dialog');
+    const confirm = within(dialog).getByRole('button', { name: 'Revoke' });
+    expect(confirm).toHaveClass('MuiButton-colorError');
+    await user.click(confirm);
+
+    expect(await screen.findByRole('status')).toHaveTextContent('Access revoked');
+  });
 });

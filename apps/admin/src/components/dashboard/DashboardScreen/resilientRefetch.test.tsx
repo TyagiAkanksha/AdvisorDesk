@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import Providers from '@/app/providers';
 import { statsApi } from '@/lib/api/statsApi';
 import { store } from '@/lib/store';
+import type { ContentListDto } from '@/types/api/content';
 
 import { DashboardScreen } from '.';
 
@@ -36,6 +37,30 @@ const statsFixture = {
   by_tag: { 'tax-planning': 2, retirement: 1 },
 };
 
+// task-17: the dashboard now also issues `GET /api/v1/content` (recent content). This mock's
+// assertions are unchanged — the route is added only so that query no longer 404s while this
+// screen exercises the background-refetch-resilience path on `GET /stats`.
+const recentFixture: ContentListDto = {
+  items: [
+    {
+      author_id: null,
+      body_md: '# Recent Item',
+      created_at: '2026-01-01T12:00:00Z',
+      id: '33333333-3333-3333-3333-333333333333',
+      published_at: null,
+      slug: 'recent-item',
+      status: 'draft',
+      tags: [],
+      title: 'Recent Item',
+      updated_at: '2026-01-02T12:00:00Z',
+      updated_by: null,
+    },
+  ],
+  page: 1,
+  page_size: 5,
+  total: 1,
+};
+
 function renderScreen() {
   return render(
     <Providers>
@@ -64,6 +89,9 @@ describe('DashboardScreen resilient background refetch', () => {
             { error: { code: 'internal_error', message: 'Refresh failed.' } },
             500,
           );
+        }
+        if (requestUrl(input).includes('/api/v1/content')) {
+          return jsonResponse(recentFixture);
         }
         return jsonResponse({ error: { code: 'not_found', message: 'unmocked route' } }, 404);
       },

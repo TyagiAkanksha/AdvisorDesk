@@ -1,10 +1,12 @@
 // @vitest-environment jsdom
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import '@testing-library/jest-dom/vitest';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import Providers from '@/app/providers';
+import { PREVIEW_EMPTY_MESSAGE } from '@/lib/copy';
+import { formatDate } from '@/lib/format';
 import type { ContentDto } from '@/types/api/content';
 
 import { ContentEditorScreen } from '.';
@@ -71,7 +73,7 @@ const NEW_CONTENT_ID = '99999999-9999-9999-9999-999999999999';
 
 const draftFixture: ContentDto = {
   author_id: null,
-  body_md: '# Roth IRA Conversion Basics',
+  body_md: '# Roth IRA Conversion Basics\n\nBody.',
   created_at: '2026-01-01T00:00:00Z',
   id: '11111111-1111-1111-1111-111111111111',
   published_at: null,
@@ -106,6 +108,7 @@ interface MockFetchOptions {
   updateContentResponse?: Response;
   publishContentResponse?: Response;
   archiveContentResponse?: Response;
+  tagsResponse?: Response;
 }
 
 function mockFetch(options: MockFetchOptions = {}) {
@@ -142,7 +145,7 @@ function mockFetch(options: MockFetchOptions = {}) {
         return options.updateContentResponse ?? jsonResponse(draftFixture);
       }
       if (pathname === '/api/v1/tags' && method === 'GET') {
-        return jsonResponse([]);
+        return options.tagsResponse ?? jsonResponse([]);
       }
       return jsonResponse({ error: { code: 'not_found', message: 'unmocked route' } }, 404);
     },
@@ -375,21 +378,170 @@ describe('ContentEditorScreen', () => {
     expect(document.body.textContent).not.toContain('"code":"conflict"');
   });
 
-  it('activating Preview shows the body markdown text inside a labeled preview region', async () => {
-    mockFetch({ getContentResponse: jsonResponse(draftFixture) });
-    const user = userEvent.setup();
+  it('desktop: the live preview renders beside the form, with no Preview toggle, and mirrors the body', async () => {
+    mockFetch();
 
     renderEdit(draftFixture.id);
 
     await screen.findByRole('textbox', { name: /title/i });
-    await user.click(screen.getByRole('button', { name: /preview/i }));
+    const previewRegion = screen.getByRole('region', { name: 'Preview' });
+    expect(previewRegion).toHaveTextContent('Body.');
+    expect(screen.queryByRole('button', { name: /^preview$/i })).not.toBeInTheDocument();
+  });
 
-    const previewRegion = await screen.findByRole('region', { name: /preview/i });
-    // phase-3 task-04: MarkdownPreview now renders real markdown (react-markdown + remark-gfm)
-    // instead of task-06's `<pre>` placeholder, so the preview region's visible text is the
-    // parsed heading — the leading `# ` markdown syntax from `draftFixture.body_md` is stripped
-    // by design, not left as literal text.
-    expect(previewRegion).toHaveTextContent('Roth IRA Conversion Basics');
-    expect(previewRegion).not.toHaveTextContent(draftFixture.body_md);
+  it('edit mode: the header shows the saved title as h1 with status chip, slug and dates', async () => {
+    mockFetch();
+
+    renderEdit(draftFixture.id);
+
+    expect(
+      await screen.findByRole('heading', { level: 1, name: draftFixture.title }),
+    ).toBeInTheDocument();
+    const header = screen.getByRole('banner');
+    expect(within(header).getByText('Draft')).toBeInTheDocument();
+    expect(within(header).getByText(draftFixture.slug)).toBeInTheDocument();
+    expect(
+      within(header).getByText(`Created ${formatDate(draftFixture.created_at)}`),
+    ).toBeInTheDocument();
+    expect(
+      within(header).getByText(`Updated ${formatDate(draftFixture.updated_at)}`),
+    ).toBeInTheDocument();
+    expect(within(header).queryByText(/^Published /)).not.toBeInTheDocument();
+  });
+
+  it('edit mode: the h1 keeps the SAVED title while the Title field is edited', async () => {
+    mockFetch();
+    const user = userEvent.setup();
+
+    renderEdit(draftFixture.id);
+    const titleInput = await screen.findByRole('textbox', { name: /title/i });
+    await user.clear(titleInput);
+    await user.type(titleInput, 'Renamed');
+
+    expect(screen.getByRole('heading', { level: 1, name: draftFixture.title })).toBeInTheDocument();
+  });
+
+  it('new mode: the h1 is "New content" and Publish is disabled with a "Save first" tooltip', async () => {
+    mockFetch();
+    const user = userEvent.setup();
+
+    renderNew();
+
+    expect(
+      await screen.findByRole('heading', { level: 1, name: 'New content' }),
+    ).toBeInTheDocument();
+    const publish = screen.getByRole('button', { name: /publish/i });
+    expect(publish).toBeDisabled();
+    await user.hover(publish.parentElement!);
+    expect(await screen.findByRole('tooltip')).toHaveTextContent('Save first');
+  });
+
+  it('new mode: the preview region shows the empty-preview message before any content is typed', async () => {
+    mockFetch();
+
+    renderNew();
+
+    const region = await screen.findByRole('region', { name: 'Preview' });
+    expect(within(region).getByText(PREVIEW_EMPTY_MESSAGE)).toBeInTheDocument();
+  });
+
+  it('published: Publish is disabled with an "Already published" tooltip; Archive is enabled', async () => {
+    mockFetch({ getContentResponse: jsonResponse(publishedFixture) });
+    const user = userEvent.setup();
+
+    renderEdit(publishedFixture.id);
+
+    const publish = await screen.findByRole('button', { name: /publish/i });
+    expect(publish).toBeDisabled();
+    await user.hover(publish.parentElement!);
+    expect(await screen.findByRole('tooltip')).toHaveTextContent('Already published');
+    expect(screen.getByRole('button', { name: /archive/i })).toBeEnabled();
+  });
+
+  it('the preview strips a leading "# Title" matching the title and demotes the remaining headings', async () => {
+    mockFetch({
+      getContentResponse: jsonResponse({
+        ...draftFixture,
+        body_md: '# Roth IRA Conversion Basics\n\n## Section\n\nText.',
+      }),
+    });
+
+    renderEdit(draftFixture.id);
+
+    const region = await screen.findByRole('region', { name: 'Preview' });
+    expect(within(region).queryByRole('heading', { level: 1 })).not.toBeInTheDocument();
+    expect(
+      within(region).queryByRole('heading', { name: 'Roth IRA Conversion Basics' }),
+    ).not.toBeInTheDocument();
+    expect(within(region).getByRole('heading', { level: 3, name: 'Section' })).toBeInTheDocument();
+  });
+
+  it('Delete uses the error colour and opens a destructive confirm', async () => {
+    mockFetch();
+    const user = userEvent.setup();
+
+    renderEdit(draftFixture.id);
+    const deleteButton = await screen.findByRole('button', { name: /^delete$/i });
+    expect(deleteButton).toHaveClass('MuiButton-colorError');
+
+    await user.click(deleteButton);
+    const dialog = await screen.findByRole('dialog');
+    expect(within(dialog).getByRole('button', { name: /delete/i })).toHaveClass(
+      'MuiButton-colorError',
+    );
+  });
+
+  it('a blank Title shows "Title is required" after blur and blocks submit', async () => {
+    const fetchMock = mockFetch();
+    const user = userEvent.setup();
+
+    renderNew();
+    const title = screen.getByRole('textbox', { name: /title/i });
+    await user.click(title);
+    await user.tab();
+
+    expect(screen.getByText('Title is required')).toBeInTheDocument();
+    expect(title).toBeInvalid();
+    expect(
+      fetchMock.mock.calls.some(([input, init]) => requestMethod(input, init) === 'POST'),
+    ).toBe(false);
+  });
+
+  it('pressing Enter in the Title field submits the form', async () => {
+    const fetchMock = mockFetch();
+    const user = userEvent.setup();
+
+    renderEdit(draftFixture.id);
+    const title = await screen.findByRole('textbox', { name: /title/i });
+    await user.clear(title);
+    await user.type(title, 'Renamed{Enter}');
+
+    await waitFor(() =>
+      expect(
+        fetchMock.mock.calls.some(([input, init]) => requestMethod(input, init) === 'PATCH'),
+      ).toBe(true),
+    );
+  });
+
+  it('the Body field is monospace and Tags suggest existing tag names', async () => {
+    mockFetch({ tagsResponse: jsonResponse([{ id: 't1', name: 'retirement', count: 2 }]) });
+    const user = userEvent.setup();
+
+    renderEdit(draftFixture.id);
+
+    expect(await screen.findByRole('textbox', { name: /body/i })).toHaveStyle({
+      fontFamily: 'monospace',
+    });
+    await user.click(screen.getByRole('combobox', { name: /tags/i }));
+    expect(await screen.findByRole('option', { name: 'retirement' })).toBeInTheDocument();
+  });
+
+  it('edit mode: shows an editor-shaped skeleton (labelled Loading, no spinner) while loading', () => {
+    global.fetch = vi.fn(() => new Promise<Response>(() => {}));
+
+    renderEdit(draftFixture.id);
+
+    expect(screen.getByRole('status', { name: 'Loading' })).toBeInTheDocument();
+    expect(screen.queryByRole('progressbar')).not.toBeInTheDocument();
   });
 });

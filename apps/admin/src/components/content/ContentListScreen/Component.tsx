@@ -3,31 +3,35 @@
 import { useState } from 'react';
 
 import {
-  AppSnackbar,
   Box,
   Button,
   ConfirmDialog,
   EmptyState,
   ErrorState,
-  LoadingIndicator,
+  PageHeader,
   Pagination,
-  Select,
-  TextField,
 } from '@/components/common';
 import { useListTagsQuery } from '@/lib/api/tagsApi';
-import { CONTENT_STATUS_LABELS, ContentStatus } from '@/types/api/content';
+import {
+  ALL_TAGS_LABEL,
+  CONTENT_LOAD_ERROR,
+  CONTENT_TITLE,
+  CLEAR_FILTERS_LABEL,
+  CREATE_FIRST_ARTICLE_LABEL,
+  DELETE_CONTENT_DIALOG_TITLE,
+  NEW_CONTENT_LABEL,
+  NO_CONTENT_DESCRIPTION,
+  NO_CONTENT_TITLE,
+  NO_MATCH_DESCRIPTION,
+  NO_MATCH_TITLE,
+  deleteContentDialogBody,
+} from '@/lib/copy';
 import type { ContentDto } from '@/types/api/content';
 
+import { ContentFilters } from './components/ContentFilters';
 import { ContentTable } from './components/ContentTable';
+import { ContentTableSkeleton } from './components/ContentTableSkeleton';
 import { useContentList } from './useContentList';
-
-const STATUS_OPTIONS = [
-  { value: '', label: 'All statuses' },
-  ...Object.values(ContentStatus).map((status) => ({
-    value: status,
-    label: CONTENT_STATUS_LABELS[status],
-  })),
-];
 
 export default function Component() {
   const {
@@ -44,19 +48,19 @@ export default function Component() {
     setTag,
     q,
     setQ,
+    hasFilters,
+    clearFilters,
     setPage,
     deleteContent,
     isDeleting,
     deleteError,
     clearDeleteError,
-    refreshErrorMessage,
-    dismissRefreshError,
   } = useContentList();
   const { data: tags } = useListTagsQuery();
   const [deleteTarget, setDeleteTarget] = useState<ContentDto | null>(null);
 
   const tagOptions = [
-    { value: '', label: 'All tags' },
+    { value: '', label: ALL_TAGS_LABEL },
     ...(tags ?? []).map((item) => ({ value: item.name, label: item.name })),
   ];
 
@@ -73,8 +77,8 @@ export default function Component() {
       await deleteContent(deleteTarget.id);
       setDeleteTarget(null);
     } catch {
-      // fix round 1, F2: `deleteError` (from useContentList) now surfaces the failure inside
-      // the still-open ConfirmDialog — the admin can retry immediately or cancel.
+      // `deleteError` (from useContentList) surfaces the failure inside the still-open
+      // ConfirmDialog — the admin can retry immediately or cancel.
     }
   };
 
@@ -85,63 +89,68 @@ export default function Component() {
 
   return (
     <Box>
-      {/* fix round 1, F1: the editor's create flow (/content/new) had no entry point anywhere
-          in the admin UI — this header is that entry point. */}
-      <Box sx={{ display: 'flex', justifyContent: 'flex-end', mb: 2 }}>
-        <Button href="/content/new" variant="contained">
-          New content
-        </Button>
-      </Box>
-      <Box sx={{ display: 'flex', gap: 2, mb: 3, flexWrap: 'wrap' }}>
-        <Select
-          label="Status"
-          value={status}
-          onChange={(value) => setStatus(value as ContentStatus | '')}
-          options={STATUS_OPTIONS}
-        />
-        <Select label="Tag" value={tag} onChange={setTag} options={tagOptions} />
-        <TextField label="Search" value={q} onChange={setQ} placeholder="Search by title…" />
-      </Box>
+      <PageHeader
+        title={CONTENT_TITLE}
+        actions={
+          <Button href="/content/new" variant="contained">
+            {NEW_CONTENT_LABEL}
+          </Button>
+        }
+      />
+      <ContentFilters
+        status={status}
+        tag={tag}
+        q={q}
+        tagOptions={tagOptions}
+        hasFilters={hasFilters}
+        onStatusChange={setStatus}
+        onTagChange={setTag}
+        onQChange={setQ}
+        onClear={clearFilters}
+      />
 
-      {/* Final review, finding F8/C-4: `isError` alone used to blank the whole list back to
-          `ErrorState` even when a page was still cached from an earlier successful load — a
-          background refetch failure (e.g. another screen's mutation invalidating the
-          `'Content'` tag while this list is still mounted) looked identical to never having
-          loaded anything. `ErrorState` now only replaces the list when there is genuinely
-          nothing cached to show; a background failure with data still cached surfaces through
-          the snackbar below instead, and the table/pager stay mounted with the last-loaded
-          page. */}
-      {isLoading && !hasData ? <LoadingIndicator /> : null}
-      {!hasData && isError ? <ErrorState message="Couldn't load content." /> : null}
-      {hasData ? (
-        <AppSnackbar
-          open={refreshErrorMessage !== null}
-          message={refreshErrorMessage}
-          severity="warning"
-          onClose={dismissRefreshError}
+      {isLoading && !hasData ? <ContentTableSkeleton /> : null}
+      {!hasData && isError ? <ErrorState message={CONTENT_LOAD_ERROR} /> : null}
+      {hasData && items.length === 0 && !hasFilters ? (
+        <EmptyState
+          title={NO_CONTENT_TITLE}
+          description={NO_CONTENT_DESCRIPTION}
+          action={
+            <Button href="/content/new" variant="contained">
+              {CREATE_FIRST_ARTICLE_LABEL}
+            </Button>
+          }
         />
       ) : null}
-      {hasData && items.length === 0 ? <EmptyState message="No content found." /> : null}
+      {hasData && items.length === 0 && hasFilters ? (
+        <EmptyState
+          icon="Search"
+          title={NO_MATCH_TITLE}
+          description={NO_MATCH_DESCRIPTION}
+          action={
+            <Button variant="outlined" onClick={clearFilters}>
+              {CLEAR_FILTERS_LABEL}
+            </Button>
+          }
+        />
+      ) : null}
       {hasData && items.length > 0 ? (
         <ContentTable items={items} onDeleteClick={handleDeleteClick} />
       ) : null}
-      {/* fix round 2, C2: hoisted out of the items.length>0 branch — a stranded empty page
-          (e.g. deleting the sole row on page 2, whose refetch then answers zero items) must
-          not unmount the pager along with the table, or there is no way back to an earlier
-          page except side effects. EmptyState still replaces only the table above. */}
       {hasData ? (
         <Pagination page={page} pageSize={pageSize} total={total} onPageChange={setPage} />
       ) : null}
 
       <ConfirmDialog
         open={deleteTarget !== null}
-        title="Delete content"
-        body={`“${deleteTarget?.title ?? ''}” will be permanently deleted — there is no restore.`}
+        title={DELETE_CONTENT_DIALOG_TITLE}
+        body={deleteContentDialogBody(deleteTarget?.title ?? '')}
         confirmLabel="Delete"
         onConfirm={handleConfirmDelete}
         onClose={handleCloseDialog}
         isPending={isDeleting}
         errorMessage={deleteError ?? undefined}
+        destructive
       />
     </Box>
   );

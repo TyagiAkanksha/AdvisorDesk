@@ -55,4 +55,10 @@ describe('TextField', () => {
 
     expect(screen.getByRole('textbox', { name: /Title/ })).toBeRequired();
   });
+
+  it('monospace renders the input in a monospace font family', () => {
+    render(<TextField label="Body" value="" onChange={() => {}} multiline monospace />);
+
+    expect(screen.getByRole('textbox', { name: 'Body' })).toHaveStyle({ fontFamily: 'monospace' });
+  });
 });

@@ -1,14 +1,17 @@
 // @vitest-environment jsdom
 import { render, screen, waitFor } from '@testing-library/react';
 import '@testing-library/jest-dom/vitest';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import Providers from '@/app/providers';
 import { contentApi } from '@/lib/api/contentApi';
 import { store } from '@/lib/store';
+import { navigation } from '@/testing/nextNavigation';
 import type { ContentDto, ContentListDto } from '@/types/api/content';
 
 import { ContentListScreen } from '.';
+
+vi.mock('next/navigation', () => import('@/testing/nextNavigation'));
 
 // Final review, finding F8/C-4 (propagates task-06 fix round 1 F3's resilience pattern to the
 // content list): a background refetch (e.g. another screen's mutation invalidating the
@@ -70,6 +73,10 @@ function renderScreen() {
 }
 
 describe('ContentListScreen resilient background refetch', () => {
+  beforeEach(() => {
+    navigation.reset('/content');
+  });
+
   afterEach(() => {
     vi.restoreAllMocks();
   });

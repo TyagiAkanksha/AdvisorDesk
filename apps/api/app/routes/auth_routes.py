@@ -1,14 +1,18 @@
 """Auth routes (PRD §5.1): Google OAuth login/callback, logout, `/auth/me`.
 
-CONVENTIONS.md §4: no `try/except` here — `ForbiddenError`/`AuthRequiredError`
-(raised below and by `require_admin`) flow to
-`app.routes.errors::register_error_handlers`, which builds the PRD §9
-envelope; routes never construct error responses themselves.
+CONVENTIONS.md §4: no `try/except` here — `AuthRequiredError` (raised by
+`require_admin`) flows to `app.routes.errors::register_error_handlers`, which
+builds the PRD §9 envelope; routes never construct error responses
+themselves. `auth_callback`'s own failure branches are the exception (phase-8
+C0): they `return` a `RedirectResponse` to the admin app's sign-in page
+directly, rather than raising, so a failed login never dead-ends on a JSON
+error page on the API origin.
 """
 
 from __future__ import annotations
 
 import logging
+from typing import Literal
 
 from fastapi import APIRouter, Depends, Request, Response
 from fastapi.responses import RedirectResponse
@@ -23,12 +27,23 @@ from app.config import Settings
 from app.models.schemas.auth import GoogleIdentity, MeResponse
 from app.models.schemas.common import ErrorEnvelope
 from app.routes.deps import get_oauth_client, get_session, get_settings
-from app.services.errors import AuthRequiredError, ForbiddenError
+from app.services.errors import AuthRequiredError
 from app.services.users import bump_session_epoch, get_active_user, upsert_from_google
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+
+def _sign_in_error_redirect(
+    settings: Settings, reason: Literal["state", "forbidden"]
+) -> RedirectResponse:
+    """Phase-8 C0: land a failed callback on the admin sign-in page with a machine-readable
+    reason (`state` | `forbidden`) instead of a JSON 403 on the API origin. Never carries the
+    email or the state value. `admin_app_url` is rstripped of a trailing slash so a configured
+    value with one doesn't produce a doubled slash in the redirect target."""
+    admin_app_url = settings.admin_app_url.rstrip("/")
+    return RedirectResponse(f"{admin_app_url}/signin?error={reason}", status_code=303)
 
 
 @router.get("/auth/login", operation_id="auth_login")
@@ -66,10 +81,11 @@ def auth_login(
     responses={
         303: {
             "description": (
-                "Session cookie set; redirects to the admin app (settings.admin_app_url)."
+                "Session cookie set and redirect to the admin app; or, on a state/allowlist "
+                "failure, redirect to {admin_app_url}/signin?error=state|forbidden with no "
+                "cookie."
             ),
         },
-        403: {"model": ErrorEnvelope},
         422: {"model": ErrorEnvelope},
         502: {"model": ErrorEnvelope},
     },
@@ -102,11 +118,11 @@ def auth_callback(
     the normalization is decided, since it is also what the allowlist check
     must agree with. `name`/`avatar_url` are passed through unchanged.
 
-    Review round 1, finding F2: `responses=` declares the 403 `ForbiddenError`
-    raises below plus the 422 a missing/malformed `code`/`state` query param
-    produces (both rendered as `ErrorEnvelope` by `register_error_handlers`,
-    never FastAPI's own default validation-error schema) — this route has
-    no `require_admin` dependency, so, unlike the admin routes in
+    Review round 1, finding F2: `responses=` declared a 403 for the allowlist/state failures
+    below (superseded by phase-8 C0, which redirects instead of raising — see `Returns:` below)
+    plus the 422 a missing/malformed `code`/`state` query param produces (rendered as
+    `ErrorEnvelope` by `register_error_handlers`, never FastAPI's own default validation-error
+    schema) — this route has no `require_admin` dependency, so, unlike the admin routes in
     `app.routes.content_routes`, no 401 applies here. Final review, finding
     C-3 / t01 M14: 502 added for `oauth_client.exchange_code`'s
     `OAuthExchangeError` (a reused/expired `code`, or a Google-side
@@ -121,17 +137,21 @@ def auth_callback(
     (rather than leaving FastAPI's implicit 200 default) makes the OpenAPI
     baseline's success entry both the true status code and correctly
     body-less (`RedirectResponse.media_type` is `None`, unlike the default
-    `JSONResponse`) — `responses=`'s `403`/`422` arms are untouched by this
-    and still render as `ErrorEnvelope`. Error paths never construct a
-    response at all (they raise), so they are unaffected by this route
-    always building a `RedirectResponse` on the success path.
+    `JSONResponse`) — `responses=`'s `422` arm is untouched by this and still
+    renders as `ErrorEnvelope` (the `403` arm no longer applies: phase-8 C0
+    below redirects instead of raising on both former-403 branches).
 
-    Raises:
-        ForbiddenError: the normalized email is not in `ADMIN_EMAILS` — the
-            check runs before any row write (PRD §5.1/§9); OR `state` fails
+    Returns:
+        A `303` `RedirectResponse` in every case (phase-8 C0): on success, to
+            `landing_url` with the session cookie set; if `state` fails
             `verify_state` (bad signature/expired) or does not match the
             `advisordesk_oauth_state` cookie (phase-6 task-05, PRD §9
-            login-CSRF) — checked first, before `exchange_code`.
+            login-CSRF, checked first, before `exchange_code`), to
+            `{admin_app_url}/signin?error=state`; if the normalized email is
+            not in `ADMIN_EMAILS` (checked before any row write, PRD §5.1/§9),
+            to `{admin_app_url}/signin?error=forbidden`. Neither failure
+            redirect sets a cookie, and neither carries the email or the
+            `state` value — only the machine-readable `reason`.
     """
     # Audit logging (phase-6 remediation task-03, WR-05, kept OUT of this docstring so
     # CONVENTIONS.md §8's openapi.json baseline — which embeds this docstring verbatim as the
@@ -143,13 +163,13 @@ def auth_callback(
         # Phase-6 remediation task-03 (WR-05): WARNING only — never `state`/`state_cookie`
         # themselves (a forged/replayed state value must never reach any log line).
         logger.warning("OAuth state verification failed")
-        raise ForbiddenError("OAuth state verification failed — restart sign-in.")
+        return _sign_in_error_redirect(settings, "state")
 
     identity = oauth_client.exchange_code(code)
     normalized_email = identity["email"].strip().lower()
     if normalized_email not in settings.admin_email_set:
         logger.warning("Login rejected: email=%s reason=allowlist", normalized_email)
-        raise ForbiddenError(f"{identity['email']} is not an allowlisted admin.")
+        return _sign_in_error_redirect(settings, "forbidden")
 
     normalized_identity: GoogleIdentity = {
         "email": normalized_email,

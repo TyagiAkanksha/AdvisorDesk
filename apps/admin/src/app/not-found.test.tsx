@@ -12,4 +12,10 @@ describe('not-found route', () => {
     expect(screen.getByRole('heading', { level: 1, name: 'Page not found' })).toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'Back to dashboard' })).toHaveAttribute('href', '/');
   });
+
+  it('keeps a main landmark of its own (it renders outside AppShell)', () => {
+    render(<NotFound />);
+
+    expect(screen.getByRole('main')).toBeInTheDocument();
+  });
 });

@@ -102,7 +102,8 @@ def test_callback_sets_httponly_lax_non_secure_cookie_in_development(tmp_engine:
         "avatar_url": None,
     }
     # Phase-6 task-05: a direct (non-login_as) callback call needs a validly minted state +
-    # matching double-submit cookie, or it 403s on the state check before ever reaching here.
+    # matching double-submit cookie, or it answers a 303 to `/signin?error=state` on the state
+    # check before ever reaching here.
     state = mint_state(client.app.state.settings)  # type: ignore[attr-defined]
     client.cookies.set(_STATE_COOKIE_NAME, state)
 
@@ -136,8 +137,9 @@ def test_callback_sets_secure_cookie_in_production(tmp_engine: Engine) -> None:
     # than driving a real `/auth/login` round trip — in production the state cookie itself
     # carries `Secure`, and httpx's cookie jar (like a real browser) will not echo a `Secure`
     # cookie back over the plain-HTTP `TestClient` transport, so a natural login->callback
-    # round trip would silently drop it and this test would 403 on the state check instead of
-    # reaching the cookie-flags assertion below. Direct injection bypasses that scheme check.
+    # round trip would silently drop it and this test would answer a 303 to
+    # `/signin?error=state` instead of reaching the cookie-flags assertion below. Direct
+    # injection bypasses that scheme check.
     state = mint_state(client.app.state.settings)  # type: ignore[attr-defined]
     client.cookies.set(_STATE_COOKIE_NAME, state)
 

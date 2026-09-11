@@ -1,7 +1,6 @@
 'use client';
 
 import {
-  AppSnackbar,
   Autocomplete,
   Box,
   Button,
@@ -112,13 +111,6 @@ export default function Component({ contentId }: ContentEditorScreenProps) {
         onClose={editor.closeDeleteDialog}
         isPending={editor.isDeleting}
         errorMessage={editor.deleteError ?? undefined}
-      />
-
-      <AppSnackbar
-        open={editor.snackbarMessage !== null}
-        message={editor.snackbarMessage}
-        severity="error"
-        onClose={editor.closeSnackbar}
       />
     </Box>
   );

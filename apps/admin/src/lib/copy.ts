@@ -63,3 +63,16 @@ export const DELETE_ERROR_FALLBACK = "Couldn't delete this item. Please try agai
 // tooltip here; the editor's phone toggle + Delete button reuse these (task 20)
 export const EDIT_LABEL = 'Edit';
 export const DELETE_LABEL = 'Delete';
+
+// phase-8 task-19 (DESIGN.md §5 C5): editor hook — title validation + mutation feedback copy
+// (the four hook-local fallbacks move here too: SAVE_ERROR_FALLBACK, TRANSITION_ERROR_FALLBACK,
+// EDITOR_REFRESH_ERROR, EDITOR_LOAD_ERROR). `CONTENT_DELETED_MESSAGE`/`DELETE_ERROR_FALLBACK`
+// above (task-18) are reused as-is for the editor's own Delete feedback.
+export const TITLE_REQUIRED_MESSAGE = 'Title is required';
+export const CONTENT_SAVED_MESSAGE = 'Saved';
+export const CONTENT_PUBLISHED_MESSAGE = 'Published';
+export const CONTENT_ARCHIVED_MESSAGE = 'Archived';
+export const SAVE_ERROR_FALLBACK = "Couldn't save this item. Please try again.";
+export const TRANSITION_ERROR_FALLBACK = "Couldn't update this item's status. Please try again.";
+export const EDITOR_REFRESH_ERROR = "Couldn't refresh this item — showing the last loaded version.";
+export const EDITOR_LOAD_ERROR = "Couldn't load this item.";

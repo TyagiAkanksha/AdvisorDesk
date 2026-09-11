@@ -1,8 +1,6 @@
 export { Alert } from './Alert';
 export type { AlertProps } from './Alert';
 export { AppBar } from './AppBar';
-export { AppSnackbar } from './AppSnackbar';
-export type { AppSnackbarProps } from './AppSnackbar';
 export { Autocomplete } from './Autocomplete';
 export type { AutocompleteProps } from './Autocomplete';
 export { Avatar } from './Avatar';

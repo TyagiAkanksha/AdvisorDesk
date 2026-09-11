@@ -1,7 +1,8 @@
 import { skipToken } from '@reduxjs/toolkit/query/react';
 import { useRouter } from 'next/navigation';
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
+import { useSnackbar } from '@/components/common';
 import {
   useArchiveContentMutation,
   useCreateContentMutation,
@@ -10,21 +11,25 @@ import {
   usePublishContentMutation,
   useUpdateContentMutation,
 } from '@/lib/api/contentApi';
+import { useListTagsQuery } from '@/lib/api/tagsApi';
+import {
+  CONTENT_ARCHIVED_MESSAGE,
+  CONTENT_DELETED_MESSAGE,
+  CONTENT_PUBLISHED_MESSAGE,
+  CONTENT_SAVED_MESSAGE,
+  DELETE_ERROR_FALLBACK,
+  EDITOR_REFRESH_ERROR,
+  SAVE_ERROR_FALLBACK,
+  TITLE_REQUIRED_MESSAGE,
+  TRANSITION_ERROR_FALLBACK,
+} from '@/lib/copy';
 import { extractErrorMessage } from '@/lib/errorMessage';
 import { ContentStatus } from '@/types/api/content';
 import type { ContentUpdateDto } from '@/types/api/content';
 
-const SAVE_ERROR_FALLBACK = "Couldn't save this item. Please try again.";
-const TRANSITION_ERROR_FALLBACK = "Couldn't update this item's status. Please try again.";
-const DELETE_ERROR_FALLBACK = "Couldn't delete this item. Please try again.";
-// fix round 1, F3: shown when a background refetch (e.g. the tag-invalidation-driven
-// `getContent` refetch after a successful Save/Publish/Archive elsewhere) fails while a
-// previously loaded item is still cached — non-destructive, unlike the full-screen ErrorState.
-const REFRESH_ERROR_FALLBACK = "Couldn't refresh this item — showing the last loaded version.";
-
-// task-06 Interfaces: ALL editor state (fields, dirty tracking, transition dispatch, snackbar
-// state) lives here so ContentEditorScreen stays a dumb renderer (docs/FRONTEND-CONVENTIONS.md
-// §3). `contentId` omitted => NEW mode (blank form); a string id => EDIT mode.
+// task-06 Interfaces: ALL editor state (fields, dirty tracking, transition dispatch) lives here
+// so ContentEditorScreen stays a dumb renderer (docs/FRONTEND-CONVENTIONS.md §3). `contentId`
+// omitted => NEW mode (blank form); a string id => EDIT mode.
 export interface UseContentEditorArgs {
   contentId?: string;
 }
@@ -37,15 +42,28 @@ export interface UseContentEditorResult {
    * the Component distinguish "nothing to show, replace the form with ErrorState" from "a
    * background refetch failed but we still have a cached item, keep the form". */
   hasContent: boolean;
+  /** Header data from the loaded record (edit mode); null in new mode / before load. */
+  savedTitle: string | null;
+  slug: string | null;
+  status: ContentStatus | null;
+  createdAt: string | null;
+  updatedAt: string | null;
+  publishedAt: string | null;
   title: string;
   setTitle: (value: string) => void;
+  /** TITLE_REQUIRED_MESSAGE once the field was blurred or a submit was attempted while blank;
+   * null otherwise. */
+  titleError: string | null;
+  onTitleBlur: () => void;
   body: string;
   setBody: (value: string) => void;
   tags: string[];
   setTags: (value: string[]) => void;
-  /** Display-only — never rendered as an editable control (PRD §4 slug immutability). */
-  slug: string | null;
-  status: ContentStatus | null;
+  /** Existing tag names (GET /tags) for the Autocomplete; [] until loaded or on failure. */
+  tagOptions: string[];
+  /** New mode: any field non-empty. Edit mode: differs from the loaded record (order-insensitive
+   * tags). */
+  isDirty: boolean;
   submitLabel: 'Create' | 'Save';
   canSubmit: boolean;
   isSaving: boolean;
@@ -63,8 +81,6 @@ export interface UseContentEditorResult {
   confirmDelete: () => void;
   previewOpen: boolean;
   togglePreview: () => void;
-  snackbarMessage: string | null;
-  closeSnackbar: () => void;
 }
 
 // fix round 1, F4: order-INsensitive — the server always returns `tags` sorted alphabetically
@@ -95,9 +111,11 @@ export function normalizeTag(raw: string): string {
 
 export function useContentEditor({ contentId }: UseContentEditorArgs): UseContentEditorResult {
   const router = useRouter();
+  const { success: notifySuccess, error: notifyError } = useSnackbar();
   const mode: 'new' | 'edit' = contentId ? 'edit' : 'new';
 
   const { data: content, isLoading, isError } = useGetContentQuery(contentId ?? skipToken);
+  const { data: tagsData } = useListTagsQuery();
 
   const [createContent, { isLoading: isCreating }] = useCreateContentMutation();
   const [updateContent, { isLoading: isUpdating }] = useUpdateContentMutation();
@@ -109,12 +127,10 @@ export function useContentEditor({ contentId }: UseContentEditorArgs): UseConten
   const [body, setBody] = useState('');
   const [tags, setTags] = useState<string[]>([]);
   const [previewOpen, setPreviewOpen] = useState(false);
-  const [snackbarMessage, setSnackbarMessage] = useState<string | null>(null);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
-  // fix round 2, N2: whether the admin has already dismissed the CURRENT background-refetch
-  // failure's alert (see the render-phase reset just below `hasContent`, and `closeSnackbar`).
-  const [refreshErrorDismissed, setRefreshErrorDismissed] = useState(false);
+  const [titleBlurred, setTitleBlurred] = useState(false);
+  const [submitAttempted, setSubmitAttempted] = useState(false);
 
   // Reseed the editable fields only when a *different* record has finished loading (by id) —
   // a same-id refetch (e.g. after Publish/Archive, which only change status/published_at)
@@ -134,25 +150,40 @@ export function useContentEditor({ contentId }: UseContentEditorArgs): UseConten
     setTags(next.map(normalizeTag).filter((value) => value.length > 0));
   };
 
+  const tagOptions = tagsData?.map((tag) => tag.name) ?? [];
+
+  const trimmedTitle = title.trim();
+  const titleError =
+    (titleBlurred || submitAttempted) && trimmedTitle.length === 0 ? TITLE_REQUIRED_MESSAGE : null;
+  const onTitleBlur = () => setTitleBlurred(true);
+
   // fix round 1, F3: `content` (RTK Query's `data`) keeps the last successfully fetched value
   // even while a later background refetch is in flight or has failed — this is `true` once
   // we've ever had something to show for this record.
   const hasContent = mode === 'edit' && content !== undefined;
 
-  // fix round 2, N2: the F3 refresh alert was undismissable — `backgroundRefetchFailed` stayed
-  // true for as long as `isError` did, so closing it just re-derived the same message next
-  // render. Reset the dismissal (render-phase-adjust, same idiom as the `seededContentId` reseed
-  // above) once `isError` clears — a fresh, later failure is a NEW failure and gets its own
-  // alert rather than staying permanently silenced by an earlier dismissal.
-  if (!isError && refreshErrorDismissed) {
-    setRefreshErrorDismissed(false);
-  }
-
   const isDirty =
-    mode === 'edit' && content
-      ? title !== content.title || body !== content.body_md || !tagsEqual(tags, content.tags)
-      : false;
-  const canSubmit = mode === 'new' ? title.trim().length > 0 : isDirty;
+    mode === 'new'
+      ? title.length > 0 || body.length > 0 || tags.length > 0
+      : content
+        ? trimmedTitle !== content.title ||
+          body !== content.body_md ||
+          !tagsEqual(tags, content.tags)
+        : false;
+  const canSubmit = mode === 'new' ? trimmedTitle.length > 0 : isDirty;
+
+  // Dirty guard: warns on a real page unload/reload/close while there is unsaved work. In-app
+  // navigation is NOT blocked — the App Router has no supported navigation blocker
+  // (DESIGN.md §C5) — so this only ever fires for `beforeunload`.
+  useEffect(() => {
+    if (!isDirty) return;
+    const guard = (event: BeforeUnloadEvent) => {
+      event.preventDefault();
+      event.returnValue = '';
+    };
+    window.addEventListener('beforeunload', guard);
+    return () => window.removeEventListener('beforeunload', guard);
+  }, [isDirty]);
 
   // fix round 1, F2: shared by onSubmit's EDIT branch and onPublish's save-then-publish path —
   // tri-state PATCH body (only the fields that actually changed), built from current field
@@ -162,8 +193,8 @@ export function useContentEditor({ contentId }: UseContentEditorArgs): UseConten
       return null;
     }
     const patch: ContentUpdateDto = {};
-    if (title !== content.title) {
-      patch.title = title;
+    if (trimmedTitle !== content.title) {
+      patch.title = trimmedTitle;
     }
     if (body !== content.body_md) {
       patch.body_md = body;
@@ -175,14 +206,19 @@ export function useContentEditor({ contentId }: UseContentEditorArgs): UseConten
   };
 
   const onSubmit = () => {
+    if (trimmedTitle.length === 0) {
+      setSubmitAttempted(true);
+      return;
+    }
     if (mode === 'new') {
-      void createContent({ title, body_md: body, tags })
+      void createContent({ title: trimmedTitle, body_md: body, tags })
         .unwrap()
         .then((created) => {
+          notifySuccess(CONTENT_SAVED_MESSAGE);
           router.push(`/content/${created.id}`);
         })
         .catch((error: unknown) => {
-          setSnackbarMessage(extractErrorMessage(error, SAVE_ERROR_FALLBACK));
+          notifyError(extractErrorMessage(error, SAVE_ERROR_FALLBACK));
         });
       return;
     }
@@ -195,8 +231,11 @@ export function useContentEditor({ contentId }: UseContentEditorArgs): UseConten
     }
     void updateContent({ id: contentId, patch })
       .unwrap()
+      .then(() => {
+        notifySuccess(CONTENT_SAVED_MESSAGE);
+      })
       .catch((error: unknown) => {
-        setSnackbarMessage(extractErrorMessage(error, SAVE_ERROR_FALLBACK));
+        notifyError(extractErrorMessage(error, SAVE_ERROR_FALLBACK));
       });
   };
 
@@ -208,9 +247,11 @@ export function useContentEditor({ contentId }: UseContentEditorArgs): UseConten
   // fix round 1, F2 (probe-confirmed): Publish used to POST /publish straight away, so an
   // unsaved edit never reached the server before phase-3 embedded the STALE stored body.
   // Chosen semantics — SAVE-THEN-PUBLISH: a dirty editor PATCHes first; publish is only
-  // dispatched after that PATCH succeeds; a PATCH failure surfaces via the existing snackbar
-  // and never reaches publishContent at all. Archive is intentionally untouched (it doesn't
-  // embed anything, so there is nothing stale to save first).
+  // dispatched after that PATCH succeeds; a PATCH failure surfaces via the snackbar and never
+  // reaches publishContent at all. Archive is intentionally untouched (it doesn't embed
+  // anything, so there is nothing stale to save first). task-19: the save-then-publish path
+  // reports ONLY "Published" — the intermediate PATCH stays silent so the admin isn't told
+  // "Saved" and then immediately "Published" for one click.
   const onPublish = () => {
     if (!contentId) {
       return;
@@ -218,8 +259,11 @@ export function useContentEditor({ contentId }: UseContentEditorArgs): UseConten
     const dispatchPublish = () => {
       void publishContent(contentId)
         .unwrap()
+        .then(() => {
+          notifySuccess(CONTENT_PUBLISHED_MESSAGE);
+        })
         .catch((error: unknown) => {
-          setSnackbarMessage(extractErrorMessage(error, TRANSITION_ERROR_FALLBACK));
+          notifyError(extractErrorMessage(error, TRANSITION_ERROR_FALLBACK));
         });
     };
     if (!isDirty) {
@@ -234,7 +278,7 @@ export function useContentEditor({ contentId }: UseContentEditorArgs): UseConten
       .unwrap()
       .then(dispatchPublish)
       .catch((error: unknown) => {
-        setSnackbarMessage(extractErrorMessage(error, SAVE_ERROR_FALLBACK));
+        notifyError(extractErrorMessage(error, SAVE_ERROR_FALLBACK));
       });
   };
 
@@ -244,8 +288,11 @@ export function useContentEditor({ contentId }: UseContentEditorArgs): UseConten
     }
     void archiveContent(contentId)
       .unwrap()
+      .then(() => {
+        notifySuccess(CONTENT_ARCHIVED_MESSAGE);
+      })
       .catch((error: unknown) => {
-        setSnackbarMessage(extractErrorMessage(error, TRANSITION_ERROR_FALLBACK));
+        notifyError(extractErrorMessage(error, TRANSITION_ERROR_FALLBACK));
       });
   };
 
@@ -266,6 +313,7 @@ export function useContentEditor({ contentId }: UseContentEditorArgs): UseConten
       .unwrap()
       .then(() => {
         setDeleteDialogOpen(false);
+        notifySuccess(CONTENT_DELETED_MESSAGE);
         router.push('/content');
       })
       .catch((error: unknown) => {
@@ -273,40 +321,43 @@ export function useContentEditor({ contentId }: UseContentEditorArgs): UseConten
       });
   };
 
-  // fix round 1, F3 (dismissal added in fix round 2, N2): an explicit mutation failure
-  // (save/publish/archive, set via `setSnackbarMessage` above) always takes priority; once
-  // dismissed (or if there never was one), a *background* refetch failure — `isError` true
-  // while a record is still cached, and not yet dismissed — is itself surfaced through the same
-  // snackbar instead of tearing down the form.
-  const backgroundRefetchFailed =
-    mode === 'edit' && isError && hasContent && !refreshErrorDismissed;
-  const displayedSnackbarMessage =
-    snackbarMessage ?? (backgroundRefetchFailed ? REFRESH_ERROR_FALLBACK : null);
-  // N2: only the background-refetch alert needs a dismissal flag — an explicit
-  // `snackbarMessage` is already "dismissed" by clearing the state that produced it. Closing
-  // the explicit one (when both would otherwise apply) never touches the dismissal flag, so a
-  // background failure the admin hasn't actually seen yet still gets its own alert afterwards.
-  const closeSnackbar = () => {
-    if (!snackbarMessage && backgroundRefetchFailed) {
-      setRefreshErrorDismissed(true);
-      return;
+  // fix round 1, F3: a background refetch (e.g. the tag-invalidation-driven `getContent` refetch
+  // after a successful Save/Publish/Archive elsewhere) failing while a previously loaded item is
+  // still cached must not tear down the form — surfaced through the global snackbar instead.
+  // task-19: reported once per failure episode via the rising edge of `hasContent && isError`
+  // (same idiom as useDashboard/useContentList's background-refresh notices) — the
+  // SnackbarProvider owns the notice's own dismiss/auto-hide lifecycle, so no dismissal state is
+  // needed here.
+  const isBackgroundRefreshFailing = mode === 'edit' && hasContent && isError;
+  const wasBackgroundRefreshFailing = useRef(false);
+  useEffect(() => {
+    if (isBackgroundRefreshFailing && !wasBackgroundRefreshFailing.current) {
+      notifyError(EDITOR_REFRESH_ERROR);
     }
-    setSnackbarMessage(null);
-  };
+    wasBackgroundRefreshFailing.current = isBackgroundRefreshFailing;
+  }, [isBackgroundRefreshFailing, notifyError]);
 
   return {
     mode,
     isLoading,
     isError,
     hasContent,
+    savedTitle: content?.title ?? null,
+    slug: content?.slug ?? null,
+    status: content?.status ?? null,
+    createdAt: content?.created_at ?? null,
+    updatedAt: content?.updated_at ?? null,
+    publishedAt: content?.published_at ?? null,
     title,
     setTitle,
+    titleError,
+    onTitleBlur,
     body,
     setBody,
     tags,
     setTags: setTagsNormalized,
-    slug: content?.slug ?? null,
-    status: content?.status ?? null,
+    tagOptions,
+    isDirty,
     submitLabel: mode === 'new' ? 'Create' : 'Save',
     canSubmit,
     isSaving: isCreating || isUpdating,
@@ -324,7 +375,5 @@ export function useContentEditor({ contentId }: UseContentEditorArgs): UseConten
     confirmDelete,
     previewOpen,
     togglePreview: () => setPreviewOpen((prev) => !prev),
-    snackbarMessage: displayedSnackbarMessage,
-    closeSnackbar,
   };
 }

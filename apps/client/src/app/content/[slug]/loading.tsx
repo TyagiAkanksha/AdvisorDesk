@@ -5,7 +5,7 @@ import { ArticleSkeleton } from '@/components/content/ArticleSkeleton';
 // loads (docs/FRONTEND-CONVENTIONS.md §9 — never a silent blank region).
 export default function Loading() {
   return (
-    <PageContainer>
+    <PageContainer maxWidth="md">
       <ArticleSkeleton />
     </PageContainer>
   );

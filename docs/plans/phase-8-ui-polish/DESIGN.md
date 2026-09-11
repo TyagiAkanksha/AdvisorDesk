@@ -245,6 +245,9 @@ layout work.
 - CTA: `Button variant="outlined" href="/chat"` "Ask a question about this topic".
 - `getContentBySlug` wrapped in React `cache()` in `lib/publicApi.ts` so `generateMetadata` and
   the page share one fetch. Missing slug → branded `not-found.tsx`.
+- **p8 final (I-2):** the meta line's tag chips render through a `TagChips` client leaf
+  (`common/Link` as `component=`, same pattern as `ArticleCard`/`TagFilter`) instead of a plain
+  `<a>` chip, so a tag click from an article navigates client-side like every other tag chip.
 
 ### B4 Chat `/chat` — `ChatScreen`
 
@@ -270,6 +273,11 @@ layout work.
   the partial assistant message) and `reset(): void`. Tested with stream fixtures.
 - Error: `Alert severity="error"` with the envelope `message` + `Retry` (re-sends the last
   user message).
+
+**Plan-time corrections (task 12):** the composer keeps the visible label "Message" and drops
+the placeholder (an MUI floating label plus a placeholder is redundant and the placeholder only
+shows while focused); the column uses `minHeight: 60vh` with the composer `position: sticky;
+bottom: 0` instead of a `calc(100vh - header - footer)` height — no dependency on shell heights.
 
 ## 5. Sub-phase C — admin (`apps/admin`) + one API change
 

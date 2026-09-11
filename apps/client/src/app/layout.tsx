@@ -1,6 +1,9 @@
 import { Inter, Source_Serif_4 } from 'next/font/google';
 import type { ReactNode } from 'react';
 
+import { Box } from '@/components/common';
+import { SiteFooter } from '@/components/shell/SiteFooter';
+import { SiteHeader } from '@/components/shell/SiteHeader';
 import { rootMetadata } from '@/lib/metadata';
 
 import Providers from './providers';
@@ -22,7 +25,13 @@ export default function RootLayout({ children }: { children: ReactNode }) {
   return (
     <html lang="en" className={`${headingFont.variable} ${bodyFont.variable}`}>
       <body>
-        <Providers>{children}</Providers>
+        <Providers>
+          <Box sx={{ minHeight: '100vh', display: 'flex', flexDirection: 'column' }}>
+            <SiteHeader />
+            {children}
+            <SiteFooter />
+          </Box>
+        </Providers>
       </body>
     </html>
   );

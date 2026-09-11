@@ -80,6 +80,13 @@ function readerFor(body: string): ReadableStreamDefaultReader<Uint8Array> {
   return readerForChunks([body]);
 }
 
+// task-11 (phase-8, sub-phase B): a one-line byte-encoding helper for the `stop()` test's
+// manual reader mock below (that test can't reuse `readerForChunks`/`readerFor` — it needs a
+// `read()` implementation that blocks on a gate promise between frames, not a fixed chunk list).
+function encode(text: string): Uint8Array {
+  return new TextEncoder().encode(text);
+}
+
 function streamResponse(frames: SseFrame[]): Response {
   const body = new ReadableStream<Uint8Array>({
     start(controller) {
@@ -445,5 +452,117 @@ describe('useChatStream', () => {
     expect(
       result.current.messages.filter((message: ChatMessage) => message.role === 'assistant'),
     ).toHaveLength(0);
+  });
+
+  // task-11 (phase-8, sub-phase B): `stop()`/`reset()`/`retry()` — RED (TDD). `useChatStream`
+  // does not yet expose these three fields, so every case below fails on
+  // `result.current.stop`/`reset`/`retry` being `undefined` (TypeError on call), and the module
+  // fails to type-check against the (not-yet-widened) `UseChatStreamResult`. Expected.
+  // Brief: .superpowers/sdd/phase-8-ui-polish/task-11-brief.md, Steps (TDD) — test code verbatim.
+
+  it('stop() aborts the in-flight stream, keeps the partial assistant text, sets no error, and ends streaming', async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    // First frame arrives, then the reader blocks on `gate` until abort.
+    const reader = {
+      read: vi
+        .fn()
+        .mockResolvedValueOnce({
+          done: false,
+          value: encode('event: token\ndata: {"text":"Partial "}\n\n'),
+        })
+        .mockImplementationOnce(() => gate.then(() => ({ done: true, value: undefined }))),
+      cancel: vi.fn(),
+      releaseLock: vi.fn(),
+    };
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({ ok: true, body: { getReader: () => reader } }),
+    );
+
+    const { result } = renderHook(() => useChatStream());
+    act(() => result.current.send('Question?'));
+    await waitFor(() => expect(result.current.messages[1]?.text).toBe('Partial '));
+    expect(result.current.streaming).toBe(true);
+
+    act(() => result.current.stop());
+    release();
+
+    await waitFor(() => expect(result.current.streaming).toBe(false));
+    expect(result.current.messages[1]?.text).toBe('Partial ');
+    expect(result.current.error).toBeNull();
+  });
+
+  it('stop() is a no-op when idle', () => {
+    const { result } = renderHook(() => useChatStream());
+    expect(() => act(() => result.current.stop())).not.toThrow();
+    expect(result.current.streaming).toBe(false);
+  });
+
+  it("reset() clears messages and error and removes localStorage['advisordesk_session']", async () => {
+    localStorage.setItem('advisordesk_session', 's-old');
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(
+        streamResponse([
+          { event: 'token', data: { text: 'Hi' } },
+          { event: 'citations', data: { citations: [] } },
+          { event: 'done', data: { session_id: 's-1', message_id: 'm-1' } },
+        ]),
+      ),
+    );
+    const { result } = renderHook(() => useChatStream());
+    act(() => result.current.send('Q'));
+    await waitFor(() => expect(result.current.streaming).toBe(false));
+    expect(result.current.messages).toHaveLength(2);
+    expect(localStorage.getItem('advisordesk_session')).toBe('s-1');
+
+    act(() => result.current.reset());
+
+    expect(result.current.messages).toEqual([]);
+    expect(result.current.error).toBeNull();
+    expect(localStorage.getItem('advisordesk_session')).toBeNull();
+  });
+
+  it('retry() after an HTTP error drops the failed exchange and re-sends the same question', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 429,
+        json: async () => ({ error: { code: 'rate_limited', message: 'Slow down' } }),
+      })
+      .mockResolvedValueOnce(
+        streamResponse([
+          { event: 'token', data: { text: 'Answer' } },
+          { event: 'citations', data: { citations: [] } },
+          { event: 'done', data: { session_id: 's-2', message_id: 'm-2' } },
+        ]),
+      );
+    vi.stubGlobal('fetch', fetchMock);
+
+    const { result } = renderHook(() => useChatStream());
+    act(() => result.current.send('Retry me'));
+    await waitFor(() => expect(result.current.error).toBe('Slow down'));
+    expect(result.current.messages).toEqual([{ role: 'user', text: 'Retry me' }]);
+
+    act(() => result.current.retry());
+
+    await waitFor(() => expect(result.current.streaming).toBe(false));
+    expect(result.current.error).toBeNull();
+    expect(result.current.messages.map((m) => m.role)).toEqual(['user', 'assistant']);
+    expect(result.current.messages[0]?.text).toBe('Retry me');
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(JSON.parse((fetchMock.mock.calls[1]?.[1] as RequestInit).body as string)).toMatchObject({
+      message: 'Retry me',
+    });
+  });
+
+  it('retry() is a no-op with no user message', () => {
+    const { result } = renderHook(() => useChatStream());
+    act(() => result.current.retry());
+    expect(result.current.messages).toEqual([]);
   });
 });

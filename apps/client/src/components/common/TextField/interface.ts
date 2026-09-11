@@ -1,4 +1,4 @@
-import type { KeyboardEvent } from 'react';
+import type { KeyboardEvent, Ref } from 'react';
 
 // task-05 (phase-4): the client app's first labeled-text-input primitive (the chat message
 // field) — FRONTEND-CONVENTIONS.md §4 "grow common/ on demand". Mirrors
@@ -18,4 +18,10 @@ export interface TextFieldProps {
   maxRows?: number;
   /** Raw key events — the chat composer's Enter-to-send lives in its VM hook, not here. */
   onKeyDown?: (event: KeyboardEvent<HTMLInputElement | HTMLTextAreaElement>) => void;
+  /**
+   * fix round 1 (M-2): forwarded to MUI's own `inputRef` — the underlying <input>/<textarea> DOM
+   * node, for imperative focus management (the chat composer refocuses the field once streaming
+   * ends, and after "New conversation").
+   */
+  inputRef?: Ref<HTMLInputElement | HTMLTextAreaElement>;
 }

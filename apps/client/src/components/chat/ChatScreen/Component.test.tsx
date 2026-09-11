@@ -217,8 +217,10 @@ describe('ChatScreen', () => {
     render(<ChatScreen />);
     await askQuestion(user, 'Compare Roth and traditional IRAs.');
 
-    const firstLink = await screen.findByRole('link', { name: '[1]' });
-    const secondLink = screen.getByRole('link', { name: '[2]' });
+    // phase-8 task-12 (DESIGN.md §B4) pin update: Sources links are now titled
+    // ('[1] <title>'), not bare '[n]' chips.
+    const firstLink = await screen.findByRole('link', { name: '[1] Roth IRA Basics' });
+    const secondLink = screen.getByRole('link', { name: '[2] Traditional IRA Basics' });
     expect(firstLink).toHaveAttribute('href', '/content/roth-ira-basics');
     expect(secondLink).toHaveAttribute('href', '/content/traditional-ira-basics');
   });
@@ -256,7 +258,12 @@ describe('ChatScreen', () => {
     const input = screen.getByRole('textbox', { name: 'Message' });
     const sendButton = screen.getByRole('button', { name: 'Send' });
     expect(input).toBeEnabled();
+    // phase-8 task-12 (DESIGN.md §B4) pin update: Send is disabled while the draft is empty and
+    // enabled once there is something to send — the old pin expected it enabled on a blank form.
+    expect(sendButton).toBeDisabled();
+    await user.type(input, 'A question.');
     expect(sendButton).toBeEnabled();
+    await user.clear(input);
 
     await askQuestion(user, 'A question.');
 
@@ -264,11 +271,138 @@ describe('ChatScreen', () => {
     // narrow race window, so `waitFor` here is about letting React's state update propagate,
     // not about racing the mocked network.
     await waitFor(() => expect(input).toBeDisabled());
-    expect(screen.getByRole('button', { name: 'Send' })).toBeDisabled();
+    // phase-8 task-12 (DESIGN.md §B4) pin update: the composer swaps Send for a Stop icon
+    // button while streaming — there is no "Send" button to query at this point.
+    expect(screen.getByRole('button', { name: 'Stop' })).toBeInTheDocument();
 
     release();
 
     await waitFor(() => expect(input).toBeEnabled());
-    expect(screen.getByRole('button', { name: 'Send' })).toBeEnabled();
+    // phase-8 task-12 pin update: Stop swaps back to Send once the stream completes.
+    expect(screen.getByRole('button', { name: 'Send' })).toBeInTheDocument();
+  });
+
+  // phase-8 task-12 (DESIGN.md §B4) — new cases appended per the task brief.
+
+  it('shows the welcome state with suggested questions, and clicking one sends it', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(
+        streamResponse([
+          { event: 'token', data: { text: 'Answer.' } },
+          { event: 'citations', data: { citations: [] } },
+          { event: 'done', data: { session_id: 's-9', message_id: 'm-9' } },
+        ]),
+      ),
+    );
+    const user = userEvent.setup();
+    render(<ChatScreen />);
+
+    expect(screen.getByRole('heading', { level: 1, name: 'Ask a question' })).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Do I need umbrella insurance?' }));
+
+    expect(await screen.findByRole('article', { name: 'You' })).toHaveTextContent(
+      'Do I need umbrella insurance?',
+    );
+    expect(screen.queryByRole('heading', { level: 1 })).toBeNull();
+  });
+
+  it('shows Thinking… after sending until the first token arrives', async () => {
+    const { response, release } = gatedStreamResponse([
+      { event: 'token', data: { text: 'First token.' } },
+      { event: 'citations', data: { citations: [] } },
+      { event: 'done', data: { session_id: 's-10', message_id: 'm-10' } },
+    ]);
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(response));
+    const user = userEvent.setup();
+    render(<ChatScreen />);
+    await askQuestion(user, 'Slow question');
+
+    expect(await screen.findByText('Thinking…')).toBeInTheDocument();
+    release();
+    await waitFor(() => expect(screen.queryByText('Thinking…')).toBeNull());
+  });
+
+  it('shows an error alert with Retry after a failed request, and Retry re-sends the question', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 429,
+        json: async () => ({ error: { code: 'rate_limited', message: 'Slow down' } }),
+      })
+      .mockResolvedValueOnce(
+        streamResponse([
+          { event: 'token', data: { text: 'Second try.' } },
+          { event: 'citations', data: { citations: [] } },
+          { event: 'done', data: { session_id: 's-11', message_id: 'm-11' } },
+        ]),
+      );
+    vi.stubGlobal('fetch', fetchMock);
+    const user = userEvent.setup();
+    render(<ChatScreen />);
+    await askQuestion(user, 'Rate me');
+
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent('Slow down');
+    await user.click(screen.getByRole('button', { name: 'Try again' }));
+
+    expect(await screen.findByText('Second try.')).toBeInTheDocument();
+    expect(screen.queryByRole('alert')).toBeNull();
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  // fix round 1 (I-2): the composer's Enter/Shift+Enter keyboard rule (`useChatComposer`) was
+  // only unit-tested against a synthetic key object — nothing exercised it through the real
+  // `<textarea>` end to end.
+  it('Enter sends the typed question and clears the field; Shift+Enter inserts a newline instead of sending', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(
+        streamResponse([
+          { event: 'token', data: { text: 'Answer.' } },
+          { event: 'citations', data: { citations: [] } },
+          { event: 'done', data: { session_id: 's-13', message_id: 'm-13' } },
+        ]),
+      ),
+    );
+    const user = userEvent.setup();
+    render(<ChatScreen />);
+    const input = screen.getByRole('textbox', { name: 'Message' });
+
+    await user.type(input, 'Enter question{Enter}');
+
+    expect(await screen.findByRole('article', { name: 'You' })).toHaveTextContent('Enter question');
+    expect(input).toHaveValue('');
+
+    // Let the stream finish (re-enables the field) before typing again.
+    await screen.findByText('Answer.');
+    await user.type(input, 'Line one{Shift>}{Enter}{/Shift}Line two');
+
+    // No second user turn was sent — Shift+Enter inserted a newline into the field instead.
+    expect(screen.getAllByRole('article', { name: 'You' })).toHaveLength(1);
+    expect(input).toHaveValue('Line one\nLine two');
+  });
+
+  it('New conversation clears the transcript and shows the welcome state again', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(
+        streamResponse([
+          { event: 'token', data: { text: 'Answer.' } },
+          { event: 'citations', data: { citations: [] } },
+          { event: 'done', data: { session_id: 's-12', message_id: 'm-12' } },
+        ]),
+      ),
+    );
+    const user = userEvent.setup();
+    render(<ChatScreen />);
+    await askQuestion(user, 'First');
+    await screen.findByText('Answer.');
+
+    await user.click(screen.getByRole('button', { name: 'New conversation' }));
+
+    expect(screen.queryByRole('article')).toBeNull();
+    expect(screen.getByRole('heading', { level: 1, name: 'Ask a question' })).toBeInTheDocument();
   });
 });

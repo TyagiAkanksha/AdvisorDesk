@@ -288,6 +288,20 @@ function persistSessionId(sessionId: string): void {
   }
 }
 
+/** phase-8 task-11 (DESIGN.md §B4): `reset()`'s "forget the stored session" half — same I-3
+ * try/catch shape as `readStoredSessionId`/`persistSessionId` (a throwing accessor degrades to a
+ * no-op rather than blocking the rest of `reset()`'s work). */
+function clearStoredSessionId(): void {
+  try {
+    if (typeof localStorage === 'undefined') {
+      return;
+    }
+    localStorage.removeItem(SESSION_STORAGE_KEY);
+  } catch {
+    // Intentionally swallowed — see `readStoredSessionId`/`persistSessionId` above.
+  }
+}
+
 /**
  * Turn a non-2xx `/public/chat` response (PRD §9: e.g. a 429 rate-limit rejection) into a
  * friendly, never-raw-JSON message — the §9 envelope's own `.message` field is already
@@ -346,6 +360,12 @@ export interface UseChatStreamResult {
   streaming: boolean;
   error: string | null;
   send: (text: string) => void;
+  /** Abort the in-flight request. The partial assistant message (if any) is kept as-is; no error is raised. No-op when idle. */
+  stop: () => void;
+  /** Start a new conversation: clear messages and error, forget the stored session id. Aborts first if streaming. */
+  reset: () => void;
+  /** After an error: drop the failed exchange (the last user message and any assistant message after it) and send that question again. No-op when there is no user message or while streaming. */
+  retry: () => void;
 }
 
 /**
@@ -369,6 +389,15 @@ export function useChatStream(): UseChatStreamResult {
     streamingRef.current = value;
     setStreaming(value);
   }, []);
+
+  // phase-8 task-11 (DESIGN.md §B4): a `messagesRef` mirror of `messages`, read synchronously by
+  // `retry()` below — same rationale as `streamingRef` above: a plain `messages` state read
+  // inside a stable-identity `useCallback` would close over whatever `messages` was on first
+  // render, not the current value.
+  const messagesRef = useRef<ChatMessage[]>(messages);
+  useEffect(() => {
+    messagesRef.current = messages;
+  }, [messages]);
 
   // M-5: the in-flight request's `AbortController`, if any — aborted on unmount below, and
   // cleared once its exchange finishes (success, failure, or abort) so a later `send()` always
@@ -457,5 +486,51 @@ export function useChatStream(): UseChatStreamResult {
     [setStreamingState],
   );
 
-  return { messages, streaming, error, send };
+  // phase-8 task-11 (DESIGN.md §B4): abort the in-flight request, if any. The `send()` request's
+  // own `catch` above already ignores an abort we ourselves triggered (`controller.signal.aborted`
+  // check, M-5), and its `finally` flips `streaming` false and clears `abortControllerRef` either
+  // way — so this callback has nothing else to do, and whatever tokens already streamed in stay
+  // exactly as they are. A no-op when idle (`abortControllerRef.current` is already `null`).
+  const stop = useCallback(() => {
+    abortControllerRef.current?.abort();
+  }, []);
+
+  // phase-8 task-11 (DESIGN.md §B4): start a new conversation. Aborts first (so a reset mid-stream
+  // doesn't leave an orphaned request racing to append tokens to the just-cleared `messages`),
+  // then clears local state and forgets the persisted session id so the next `send()` starts a
+  // fresh server-side session rather than resuming the old one.
+  const reset = useCallback(() => {
+    stop();
+    setMessages([]);
+    setError(null);
+    clearStoredSessionId();
+  }, [stop]);
+
+  // phase-8 task-11 (DESIGN.md §B4): re-send the last user question after an error. Guarded like
+  // `send()`'s own re-entrancy check (M-4) — a retry while still streaming, or with no user
+  // message to retry, is a no-op. Drops the failed exchange (the last user turn and any assistant
+  // turn after it, e.g. a partial answer that preceded a mid-stream `error` event) via
+  // `messagesRef`'s synchronous snapshot, then calls `send()` — which re-appends the same user
+  // text and clears `error` itself, so this callback doesn't need to.
+  const retry = useCallback(() => {
+    if (streamingRef.current) {
+      return;
+    }
+    const current = messagesRef.current;
+    let lastUserIndex = -1;
+    for (let i = current.length - 1; i >= 0; i -= 1) {
+      if (current[i]?.role === 'user') {
+        lastUserIndex = i;
+        break;
+      }
+    }
+    if (lastUserIndex === -1) {
+      return;
+    }
+    const text = current[lastUserIndex]?.text ?? '';
+    setMessages((prev) => prev.slice(0, lastUserIndex));
+    send(text);
+  }, [send]);
+
+  return { messages, streaming, error, send, stop, reset, retry };
 }

@@ -4,7 +4,7 @@ import type { PageContainerProps } from './interface';
 
 export default function Component({ children, maxWidth }: PageContainerProps) {
   return (
-    <Container component="main" maxWidth={maxWidth ?? 'lg'} sx={{ py: 4 }}>
+    <Container component="main" maxWidth={maxWidth ?? 'lg'} sx={{ py: 4, flexGrow: 1 }}>
       {children}
     </Container>
   );

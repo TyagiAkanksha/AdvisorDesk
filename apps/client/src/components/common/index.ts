@@ -10,6 +10,8 @@ export { Card } from './Card';
 export type { CardProps } from './Card';
 export { Chip } from './Chip';
 export type { ChipProps } from './Chip';
+export { CircularProgress } from './CircularProgress';
+export type { CircularProgressProps } from './CircularProgress';
 export { Divider } from './Divider';
 export type { DividerProps } from './Divider';
 export { EmptyState } from './EmptyState';

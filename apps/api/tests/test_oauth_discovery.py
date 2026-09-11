@@ -19,12 +19,28 @@ from __future__ import annotations
 
 import importlib
 
+import pytest
 from fastapi.testclient import TestClient
 
 from app.config import Settings
 from app.factory import create_app
 
 _ISSUER = "https://api.example"
+
+_DISCOVERY_ENV = ["MCP_HTTP_ENABLED", "OAUTH_ISSUER_URL"]
+
+
+@pytest.fixture
+def clean_discovery_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Strip the env vars this file's default-`Settings()` test depends on (CONVENTIONS §5).
+
+    hygiene t08 (p8 t13 minor): `test_discovery_available_without_mcp_enabled` asserts the
+    zero-env-var defaults; a developer shell exporting `MCP_HTTP_ENABLED=true` (or a custom
+    issuer) made it fail for reasons unrelated to the code under test.
+    """
+    for name in _DISCOVERY_ENV:
+        monkeypatch.delenv(name, raising=False)
+
 
 _EXPECTED_PROTECTED_RESOURCE = {
     "resource": f"{_ISSUER}/api/v1/mcp",
@@ -104,7 +120,7 @@ def test_discovery_cache_control_header() -> None:
         assert response.headers["cache-control"] == "public, max-age=3600"
 
 
-def test_discovery_available_without_mcp_enabled() -> None:
+def test_discovery_available_without_mcp_enabled(clean_discovery_env: None) -> None:
     """Default `Settings()` (MCP disabled) still serves both docs, at the default issuer."""
     settings = Settings()
     assert settings.mcp_http_enabled is False

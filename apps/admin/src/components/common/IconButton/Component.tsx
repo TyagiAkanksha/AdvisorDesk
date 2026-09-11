@@ -4,19 +4,14 @@ import MuiIconButton from '@mui/material/IconButton';
 import MuiTooltip from '@mui/material/Tooltip';
 import Link from 'next/link';
 
+import { isInternalHref } from '@/lib/href';
+
 import { Icon } from '../Icon';
 import type { IconButtonProps } from './interface';
 
-// phase-8 task-14: same `isInternalHref` precedent as `common/Button` — an internal `href`
-// (starts with `/`, e.g. a row's "Edit" action) renders via next/link's `Link` for client-side
-// navigation; an external `href` falls through to MUI's own plain `<a>` (href without
-// `component`). `'use client'` is required the moment a Server Component call site passes
-// `Link` (a function) as `component` into MUI's `'use client'` IconButton — same reasoning as
-// `common/Button`'s `'use client'`.
-function isInternalHref(href: string): boolean {
-  return href.startsWith('/') && !href.startsWith('//');
-}
-
+// The internal/external split is `isInternalHref` (src/lib/href.ts, hygiene t02). `'use client'`
+// is required the moment a Server Component call site passes `Link` (a function) as `component`
+// into MUI's `'use client'` IconButton — same reasoning as `common/Button`'s `'use client'`.
 export default function Component({
   name,
   label,

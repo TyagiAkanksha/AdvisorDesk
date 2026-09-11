@@ -44,16 +44,20 @@ export function parseContentListParams(search: URLSearchParams): ContentListPara
 
 // Defaults are omitted entirely (never written as e.g. `page=1`) so a cleared filter set
 // round-trips to the bare `/content` pathname, not `/content?status=&tag=&q=&page=1`.
+// hygiene t06 M1: `tag`/`q` are trimmed here too, defence in depth — no code path (including a
+// future one) can emit a blank-looking param into the URL.
 export function buildContentListSearch(params: ContentListParams): string {
   const query = new URLSearchParams();
+  const tag = params.tag.trim();
+  const q = params.q.trim();
   if (params.status) {
     query.set('status', params.status);
   }
-  if (params.tag) {
-    query.set('tag', params.tag);
+  if (tag) {
+    query.set('tag', tag);
   }
-  if (params.q) {
-    query.set('q', params.q);
+  if (q) {
+    query.set('q', q);
   }
   if (params.page !== DEFAULT_CONTENT_LIST_PARAMS.page) {
     query.set('page', String(params.page));
@@ -65,4 +69,17 @@ export function buildContentListSearch(params: ContentListParams): string {
 
 export function hasActiveFilters(params: ContentListParams): boolean {
   return Boolean(params.status || params.tag || params.q);
+}
+
+// hygiene t06 M2: `true` when `search` is exactly what `buildContentListSearch` would produce for
+// the params it parses to — i.e. it carries no unknown `status`, no unusable `page`, no untrimmed
+// `tag`/`q`, no stray key and no non-canonical key order. The comparison is against the
+// RE-SERIALISED form on both sides (`URLSearchParams.toString()`), so e.g. a `%20`-encoded deep
+// link is still canonical when it decodes to the same params. `parseContentListParams` only
+// reads `status|tag|q|page` — any other key (a campaign/tracking param, or one a future feature
+// adds) is deliberately dropped on load: the list's query-param set is closed, so add a new key
+// here first (final-review M-3).
+export function isCanonicalContentListSearch(search: URLSearchParams): boolean {
+  const raw = search.toString();
+  return buildContentListSearch(parseContentListParams(search)) === (raw ? `?${raw}` : '');
 }

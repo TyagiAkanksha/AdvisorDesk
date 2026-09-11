@@ -324,10 +324,11 @@ describe('ContentListScreen', () => {
       expect(element).toHaveTextContent('No content yet');
       return element;
     });
-    expect(within(status).getByRole('link', { name: 'Create your first article' })).toHaveAttribute(
+    expect(screen.getByRole('link', { name: 'Create your first article' })).toHaveAttribute(
       'href',
       '/content/new',
     );
+    expect(within(status).queryByRole('link')).toBeNull();
   });
 
   it('renders the "no match" empty state with a Clear filters button when filters exclude everything', async () => {
@@ -342,7 +343,12 @@ describe('ContentListScreen', () => {
       expect(element).toHaveTextContent('No content matches these filters');
       return element;
     });
-    await user.click(within(status).getByRole('button', { name: 'Clear filters' }));
+    expect(within(status).queryByRole('button')).toBeNull();
+    // The filters toolbar renders its own "Clear filters" whenever a filter is active, so the
+    // empty state's button (its sibling right after the live region) is the LAST one by name.
+    const clearButtons = screen.getAllByRole('button', { name: 'Clear filters' });
+    expect(clearButtons).toHaveLength(2);
+    await user.click(clearButtons[1]!);
     expect(navigation.replace).toHaveBeenLastCalledWith('/content', { scroll: false });
   });
 

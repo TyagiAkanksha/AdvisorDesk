@@ -3,6 +3,8 @@
 import MuiLink from '@mui/material/Link';
 import NextLink from 'next/link';
 
+import { isInternalHref } from '@/lib/href';
+
 import type { LinkProps } from './interface';
 
 // task-04 fix round 1 (F1): isolated client leaf. `component={NextLink}` passes a function
@@ -14,11 +16,7 @@ import type { LinkProps } from './interface';
 // to the smallest leaf that needs it, not up to the whole tree. Twin copy: apps/admin/src/
 // components/common/Link/Component.tsx.
 //
-// Mirrors apps/admin/src/components/common/Button/Component.tsx's `isInternalHref` split.
-function isInternalHref(href: string): boolean {
-  return href.startsWith('/') && !href.startsWith('//');
-}
-
+// The internal/external split is `isInternalHref` (src/lib/href.ts, hygiene t02).
 export default function Component({ href, children, ...rest }: LinkProps) {
   if (isInternalHref(href)) {
     return (

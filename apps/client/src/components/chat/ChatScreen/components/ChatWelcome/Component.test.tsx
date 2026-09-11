@@ -13,7 +13,9 @@ describe('ChatWelcome', () => {
     const onAsk = vi.fn();
     render(<ChatWelcome onAsk={onAsk} />);
 
-    expect(screen.getByRole('region', { name: 'Ask a question' })).toBeInTheDocument();
+    expect(screen.getByRole('region', { name: 'Suggested questions' })).toBeInTheDocument();
+    // t24 M3: the region must NOT reuse the page heading's name.
+    expect(screen.queryByRole('region', { name: 'Ask a question' })).not.toBeInTheDocument();
     expect(screen.queryByRole('heading')).not.toBeInTheDocument();
     expect(screen.getByText(/cite their sources/)).toBeInTheDocument();
     const buttons = screen.getAllByRole('button');

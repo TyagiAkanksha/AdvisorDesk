@@ -53,6 +53,7 @@ describe('ContentListScreen', () => {
     const status = screen.getByRole('status');
     expect(status).toHaveTextContent('No published content yet.');
     expect(within(status).queryByRole('link')).toBeNull();
+    expect(screen.queryByRole('link', { name: 'Show all' })).toBeNull();
     expect(screen.queryByRole('navigation', { name: 'Filter by tag' })).toBeNull();
   });
 
@@ -61,7 +62,8 @@ describe('ContentListScreen', () => {
 
     const status = screen.getByRole('status');
     expect(status).toHaveTextContent("No articles tagged 'insurance'.");
-    expect(within(status).getByRole('link', { name: 'Show all' })).toHaveAttribute('href', '/');
+    expect(screen.getByRole('link', { name: 'Show all' })).toHaveAttribute('href', '/');
+    expect(within(status).queryByRole('link')).toBeNull();
     expect(screen.getByRole('navigation', { name: 'Filter by tag' })).toBeInTheDocument();
   });
 });

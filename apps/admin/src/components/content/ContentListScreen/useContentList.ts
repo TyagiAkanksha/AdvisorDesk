@@ -7,12 +7,13 @@ import {
   DEFAULT_CONTENT_LIST_PARAMS,
   buildContentListSearch,
   hasActiveFilters,
+  isCanonicalContentListSearch,
   parseContentListParams,
 } from '@/lib/contentListParams';
+import type { ContentListParams } from '@/lib/contentListParams';
 import { CONTENT_DELETED_MESSAGE, CONTENT_REFRESH_ERROR, DELETE_ERROR_FALLBACK } from '@/lib/copy';
 import { extractErrorMessage } from '@/lib/errorMessage';
 import type { ContentDto, ContentStatus } from '@/types/api/content';
-import type { ContentListParams } from '@/lib/contentListParams';
 
 // task-05 Interfaces: `useContentList` owns filters/pagination/debounce state so
 // ContentListScreen stays dumb (docs/FRONTEND-CONVENTIONS.md §3). phase-8 task-18 (DESIGN.md §2,
@@ -62,6 +63,19 @@ export function useContentList(): UseContentListResult {
     router.replace(`${pathname}${buildContentListSearch(next)}`, { scroll: false });
   };
 
+  // hygiene t06 M2: an unusable param (unknown `status`, `page=0`/`page=abc`, a whitespace-only
+  // `tag`/`q`, a stray key, or a non-canonical key order) is silently ignored by
+  // `parseContentListParams`, so the address bar disagreed with the filters actually applied.
+  // Same single-shot idiom as the WR-60 clamp below — one effect keyed on the input it
+  // corrects, whose own write makes the condition false, so no ref guard and no loop.
+  const rawSearch = searchParams.toString();
+  useEffect(() => {
+    if (!isCanonicalContentListSearch(searchParams)) {
+      write(params);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- fires only off the raw URL string.
+  }, [rawSearch]);
+
   // Search field: an instant local echo of `params.q`, written back to the URL 300ms after the
   // last keystroke. `lastWrittenQ` distinguishes "the URL changed because WE just wrote it"
   // (already in sync, no echo needed) from "the URL changed externally" (back button — sync the
@@ -86,12 +100,15 @@ export function useContentList(): UseContentListResult {
     paramsRef.current = params;
   });
   useEffect(() => {
-    if (qInput === params.q) {
+    // hygiene t06 M1: the URL gets the TRIMMED term. `'   '` is the same as empty (nothing is
+    // written, the field keeps what was typed); `'  roth  '` writes `?q=roth` once.
+    const trimmedQ = qInput.trim();
+    if (trimmedQ === params.q) {
       return;
     }
     const timer = setTimeout(() => {
-      lastWrittenQ.current = qInput;
-      write({ ...paramsRef.current, q: qInput, page: 1 });
+      lastWrittenQ.current = trimmedQ;
+      write({ ...paramsRef.current, q: trimmedQ, page: 1 });
     }, SEARCH_DEBOUNCE_MS);
     return () => clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps

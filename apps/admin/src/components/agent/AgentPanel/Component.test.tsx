@@ -5,6 +5,7 @@ import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import Providers from '@/app/providers';
+import { AGENT_SUGGESTED_COMMANDS } from '@/lib/copy';
 
 import { AgentPanel } from '.';
 
@@ -266,8 +267,13 @@ describe('AgentPanel', () => {
     const user = userEvent.setup();
 
     renderPanel();
+    // hygiene t03 (t23 M5): the suggestions are EmptyState's `action`, rendered as a sibling
+    // after the `role="status"` live region — never inside it.
     const status = screen.getByRole('status');
-    const suggestions = within(status).getAllByRole('button');
+    expect(within(status).queryByRole('button')).toBeNull();
+    const suggestions = AGENT_SUGGESTED_COMMANDS.map((command) =>
+      screen.getByRole('button', { name: command }),
+    );
     expect(suggestions).toHaveLength(3);
 
     await user.click(suggestions[1]!);

@@ -39,10 +39,11 @@ export default function Component({ children }: RequireSessionProps) {
   }
 
   if (isError) {
-    // The 401 case redirects via the effect above — render nothing while
-    // that navigation is in flight, exactly like the previous behavior.
+    // The 401 case redirects via the effect above. hygiene final B6: never a silent blank
+    // region (§9) — now that the shell renders around this gate, a spinner stays visible in
+    // <main> while that navigation is in flight, instead of rendering nothing.
     if (unauthorized) {
-      return null;
+      return <LoadingIndicator />;
     }
     return <ErrorState message="Couldn't verify your session. Please try again." />;
   }

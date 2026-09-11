@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { render, screen } from '@testing-library/react';
+import { render, screen, within } from '@testing-library/react';
 import '@testing-library/jest-dom/vitest';
 import { describe, expect, it } from 'vitest';
 
@@ -14,7 +14,7 @@ describe('EmptyState', () => {
     expect(screen.queryByRole('link')).toBeNull();
   });
 
-  it('renders an action link when given', () => {
+  it('renders an action link when given, outside the status region', () => {
     render(
       <EmptyState
         message="No articles tagged 'x'."
@@ -24,5 +24,7 @@ describe('EmptyState', () => {
     );
 
     expect(screen.getByRole('link', { name: 'Show all' })).toHaveAttribute('href', '/');
+    // t23 M5: interactive controls must not live inside a polite live region.
+    expect(within(screen.getByRole('status')).queryByRole('link')).toBeNull();
   });
 });

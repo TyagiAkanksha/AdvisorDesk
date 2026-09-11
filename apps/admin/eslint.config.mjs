@@ -3,32 +3,68 @@ import nextVitals from 'eslint-config-next/core-web-vitals';
 import nextTs from 'eslint-config-next/typescript';
 import eslintConfigPrettier from 'eslint-config-prettier';
 
+// phase-8 task-02, docs/FRONTEND-CONVENTIONS.md §4: `src/components/common/` is the only place
+// that imports MUI, plus the theme file and the Providers client boundary. Was a comment-only
+// convention; now `pnpm lint` enforces it.
+const MUI_EXEMPT = ['src/components/common/**', 'src/theme/theme.ts', 'src/app/providers.tsx'];
+// Test files, the app-level seams, and any colocated `testing/` folder (test-only support code
+// such as task 07's `ContentEditorScreen/testing/renderEditor.tsx`).
+const TEST_FILES = ['src/**/*.test.{ts,tsx}', 'src/testing/**', 'src/**/testing/**'];
+
+const MUI_PATTERN = {
+  group: ['@mui/*', '@mui/**'],
+  message: 'Import MUI only through @/components/common (docs/FRONTEND-CONVENTIONS.md §4).',
+};
+// hygiene t09: `src/testing/` holds test seams that mock framework modules — production code
+// must never import them, whether via `@/testing/*` or a relative/colocated `testing/` folder
+// (final-review I-1). `@testing-library/*` does not match `**/testing/*` — verified.
+const TESTING_PATTERN = {
+  group: ['@/testing', '@/testing/*', '@/testing/**', '**/testing/*', '**/testing/**'],
+  message:
+    'Test seams (@/testing/*, **/testing/*) may only be imported from *.test files (hygiene t09).',
+};
+
+// Flat config REPLACES a rule's options when a later block matches the same file, so each file
+// must get exactly one `no-restricted-imports` block carrying every pattern that applies to it:
+//   production code outside common/theme/providers → MUI + testing patterns
+//   test files outside common                       → MUI pattern only
+//   common/theme/providers (non-test)                → testing pattern only
+//   test-support folders (src/testing/**, **/testing/**), non-test → MUI pattern only; inside
+//     common/ → testing pattern only (block 3)
+//   test files inside common, src/testing/**, **/testing/** → no restriction
+const restrictImports = (...patterns) => ({
+  'no-restricted-imports': ['error', { patterns }],
+});
+
 // eslint-config-prettier must be last: it only turns off stylistic rules that
 // would conflict with `prettier --check` (docs/FRONTEND-CONVENTIONS.md §8).
 const eslintConfig = defineConfig([
   ...nextVitals,
   ...nextTs,
-  // phase-8 task-02, docs/FRONTEND-CONVENTIONS.md §4: `src/components/common/` is the only place
-  // that imports MUI, plus the theme file and the Providers client boundary. Was a comment-only
-  // convention; now `pnpm lint` enforces it. `ignores` here is block-local (flat config), so
-  // these paths are merely exempt from THIS rule, not from linting.
+  // `ignores` here is block-local (flat config), so these paths are merely exempt from THIS
+  // rule, not from linting.
   {
     files: ['src/**/*.{ts,tsx}'],
-    ignores: ['src/components/common/**', 'src/theme/theme.ts', 'src/app/providers.tsx'],
-    rules: {
-      'no-restricted-imports': [
-        'error',
-        {
-          patterns: [
-            {
-              group: ['@mui/*', '@mui/**'],
-              message:
-                'Import MUI only through @/components/common (docs/FRONTEND-CONVENTIONS.md §4).',
-            },
-          ],
-        },
-      ],
-    },
+    ignores: [...MUI_EXEMPT, ...TEST_FILES],
+    rules: restrictImports(MUI_PATTERN, TESTING_PATTERN),
+  },
+  {
+    files: ['src/**/*.test.{ts,tsx}'],
+    ignores: ['src/components/common/**'],
+    rules: restrictImports(MUI_PATTERN),
+  },
+  {
+    files: MUI_EXEMPT,
+    ignores: ['src/**/*.test.{ts,tsx}'],
+    rules: restrictImports(TESTING_PATTERN),
+  },
+  // final-review I-2 / M-1: non-test files under a colocated `testing/` folder (e.g.
+  // src/testing/, ContentEditorScreen/testing/) keep the MUI boundary they had on main, without
+  // reaching into common/ — a common/testing/** file falls through to block 3 above instead.
+  {
+    files: ['src/testing/**', 'src/**/testing/**'],
+    ignores: ['src/**/*.test.{ts,tsx}', 'src/components/common/**'],
+    rules: restrictImports(MUI_PATTERN),
   },
   // phase-8 task-14 fix round 1: `eslint-config-next/typescript` sets
   // `@typescript-eslint/no-unused-vars` to `'warn'` with no `argsIgnorePattern`, so a trailing

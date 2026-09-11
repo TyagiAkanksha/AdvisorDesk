@@ -1,7 +1,5 @@
 'use client';
 
-import { useState } from 'react';
-
 import {
   Box,
   Button,
@@ -14,9 +12,9 @@ import {
 import { useListTagsQuery } from '@/lib/api/tagsApi';
 import {
   ALL_TAGS_LABEL,
+  CLEAR_FILTERS_LABEL,
   CONTENT_LOAD_ERROR,
   CONTENT_TITLE,
-  CLEAR_FILTERS_LABEL,
   CREATE_FIRST_ARTICLE_LABEL,
   DELETE_CONTENT_DIALOG_TITLE,
   NEW_CONTENT_LABEL,
@@ -26,12 +24,12 @@ import {
   NO_MATCH_TITLE,
   deleteContentDialogBody,
 } from '@/lib/copy';
-import type { ContentDto } from '@/types/api/content';
 
 import { ContentFilters } from './components/ContentFilters';
 import { ContentTable } from './components/ContentTable';
 import { ContentTableSkeleton } from './components/ContentTableSkeleton';
 import { useContentList } from './useContentList';
+import { useDeleteConfirmation } from './useDeleteConfirmation';
 
 export default function Component() {
   const {
@@ -57,35 +55,18 @@ export default function Component() {
     clearDeleteError,
   } = useContentList();
   const { data: tags } = useListTagsQuery();
-  const [deleteTarget, setDeleteTarget] = useState<ContentDto | null>(null);
+  const {
+    target: deleteTarget,
+    isOpen: isDeleteDialogOpen,
+    open: openDeleteDialog,
+    close: closeDeleteDialog,
+    confirm: confirmDelete,
+  } = useDeleteConfirmation({ deleteContent, clearDeleteError });
 
   const tagOptions = [
     { value: '', label: ALL_TAGS_LABEL },
     ...(tags ?? []).map((item) => ({ value: item.name, label: item.name })),
   ];
-
-  const handleDeleteClick = (item: ContentDto) => {
-    clearDeleteError();
-    setDeleteTarget(item);
-  };
-
-  const handleConfirmDelete = async () => {
-    if (!deleteTarget) {
-      return;
-    }
-    try {
-      await deleteContent(deleteTarget.id);
-      setDeleteTarget(null);
-    } catch {
-      // `deleteError` (from useContentList) surfaces the failure inside the still-open
-      // ConfirmDialog — the admin can retry immediately or cancel.
-    }
-  };
-
-  const handleCloseDialog = () => {
-    setDeleteTarget(null);
-    clearDeleteError();
-  };
 
   return (
     <Box>
@@ -135,19 +116,19 @@ export default function Component() {
         />
       ) : null}
       {hasData && items.length > 0 ? (
-        <ContentTable items={items} onDeleteClick={handleDeleteClick} />
+        <ContentTable items={items} onDeleteClick={openDeleteDialog} />
       ) : null}
       {hasData ? (
         <Pagination page={page} pageSize={pageSize} total={total} onPageChange={setPage} />
       ) : null}
 
       <ConfirmDialog
-        open={deleteTarget !== null}
+        open={isDeleteDialogOpen}
         title={DELETE_CONTENT_DIALOG_TITLE}
         body={deleteContentDialogBody(deleteTarget?.title ?? '')}
         confirmLabel="Delete"
-        onConfirm={handleConfirmDelete}
-        onClose={handleCloseDialog}
+        onConfirm={confirmDelete}
+        onClose={closeDeleteDialog}
         isPending={isDeleting}
         errorMessage={deleteError ?? undefined}
         destructive

@@ -1,13 +1,19 @@
 // @vitest-environment jsdom
-import { render, screen, waitFor, within } from '@testing-library/react';
+import { screen, waitFor, within } from '@testing-library/react';
 import '@testing-library/jest-dom/vitest';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import Providers from '@/app/providers';
-import type { ContentDto } from '@/types/api/content';
-
-import { ContentEditorScreen } from '.';
+import {
+  draftFixture,
+  editHandler,
+  jsonResponse,
+  mockEditorFetchWith as mockFetch,
+  publishedFixture,
+  renderEdit,
+  renderNew,
+} from './testing/renderEditor';
+import type { EditorFetchHandler } from './testing/renderEditor';
 
 // Task 19 (C5, hook half): every mutation now reports through the global `useSnackbar()`
 // instead of the editor's own (now-deleted) `AppSnackbar` — this is a NEW, colocated
@@ -24,73 +30,15 @@ vi.mock('next/navigation', () => ({
   useRouter: () => ({ push: pushMock, replace: vi.fn() }),
 }));
 
-function requestUrl(input: RequestInfo | URL): string {
-  return input instanceof Request ? input.url : String(input);
-}
-
-function requestMethod(input: RequestInfo | URL, init?: RequestInit): string {
-  return input instanceof Request ? input.method : (init?.method ?? 'GET');
-}
-
-function jsonResponse(body: unknown, status = 200): Response {
-  return new Response(JSON.stringify(body), {
-    status,
-    headers: { 'Content-Type': 'application/json' },
-  });
-}
-
-const draftFixture: ContentDto = {
-  author_id: null,
-  body_md: '# Roth IRA Conversion Basics\n\nBody.',
-  created_at: '2026-01-01T12:00:00Z',
-  id: '11111111-1111-1111-1111-111111111111',
-  published_at: null,
-  slug: 'roth-ira-conversion-basics',
-  status: 'draft',
-  tags: ['tax-planning'],
-  title: 'Roth IRA Conversion Basics',
-  updated_at: '2026-03-15T12:00:00Z',
-  updated_by: null,
+const publishedHandler: EditorFetchHandler = (url, method) => {
+  if (url.pathname === `/api/v1/content/${publishedFixture.id}` && method === 'GET') {
+    return jsonResponse(publishedFixture);
+  }
+  if (url.pathname === `/api/v1/content/${publishedFixture.id}/archive` && method === 'POST') {
+    return jsonResponse({ ...publishedFixture, status: 'archived' });
+  }
+  return editHandler(url, method);
 };
-
-type Handler = (url: URL, method: string) => Response | Promise<Response>;
-
-function mockFetch(handler: Handler) {
-  const fetchMock = vi.fn<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>(
-    async (input, init) => handler(new URL(requestUrl(input)), requestMethod(input, init)),
-  );
-  global.fetch = fetchMock;
-  return fetchMock;
-}
-
-const editHandler: Handler = (url, method) => {
-  if (url.pathname === `/api/v1/content/${draftFixture.id}` && method === 'GET')
-    return jsonResponse(draftFixture);
-  if (url.pathname === `/api/v1/content/${draftFixture.id}` && method === 'PATCH')
-    return jsonResponse(draftFixture);
-  if (url.pathname === '/api/v1/tags')
-    return jsonResponse([
-      { id: 't1', name: 'retirement', count: 2 },
-      { id: 't2', name: 'tax-planning', count: 1 },
-    ]);
-  return jsonResponse({ error: { code: 'not_found', message: 'unmocked route' } }, 404);
-};
-
-function renderNew() {
-  return render(
-    <Providers>
-      <ContentEditorScreen />
-    </Providers>,
-  );
-}
-
-function renderEdit(contentId: string) {
-  return render(
-    <Providers>
-      <ContentEditorScreen contentId={contentId} />
-    </Providers>,
-  );
-}
 
 describe('ContentEditorScreen mutation feedback (global snackbar)', () => {
   afterEach(() => {
@@ -167,5 +115,32 @@ describe('ContentEditorScreen mutation feedback (global snackbar)', () => {
 
     await waitFor(() => expect(pushMock).toHaveBeenCalledWith('/content'));
     expect(await screen.findByRole('status')).toHaveTextContent('Deleted');
+  });
+
+  it('a successful Archive shows an "Archived" notice', async () => {
+    mockFetch(publishedHandler);
+    const user = userEvent.setup();
+
+    renderEdit(publishedFixture.id);
+    await user.click(await screen.findByRole('button', { name: /archive/i }));
+
+    expect(await screen.findByRole('status')).toHaveTextContent('Archived');
+  });
+
+  it('a failed Archive surfaces the envelope message as an alert and shows no success notice', async () => {
+    const ARCHIVE_FAILURE_MESSAGE = 'Could not archive while a publish is in flight.';
+    mockFetch((url, method) => {
+      if (url.pathname === `/api/v1/content/${publishedFixture.id}/archive` && method === 'POST') {
+        return jsonResponse({ error: { code: 'conflict', message: ARCHIVE_FAILURE_MESSAGE } }, 409);
+      }
+      return publishedHandler(url, method);
+    });
+    const user = userEvent.setup();
+
+    renderEdit(publishedFixture.id);
+    await user.click(await screen.findByRole('button', { name: /archive/i }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(ARCHIVE_FAILURE_MESSAGE);
+    expect(screen.queryByText('Archived')).not.toBeInTheDocument();
   });
 });

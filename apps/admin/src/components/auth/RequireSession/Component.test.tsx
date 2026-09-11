@@ -81,6 +81,9 @@ describe('RequireSession', () => {
       expect(replaceMock).toHaveBeenCalledWith('/signin');
     });
     expect(screen.queryByText('Protected content')).not.toBeInTheDocument();
+    // hygiene final B6: never a silent blank region (§9) — a spinner stays visible while the
+    // 401 redirect is in flight.
+    expect(screen.getByRole('progressbar')).toBeInTheDocument();
   });
 
   it('renders children once /auth/me succeeds with a MeResponse, without redirecting', async () => {

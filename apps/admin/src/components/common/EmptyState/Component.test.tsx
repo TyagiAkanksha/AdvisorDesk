@@ -6,7 +6,7 @@ import { describe, expect, it } from 'vitest';
 import { EmptyState } from '.';
 
 describe('EmptyState', () => {
-  it('renders title, description and the action inside the status region', () => {
+  it('renders title and description inside the status region and the action OUTSIDE it', () => {
     render(
       <EmptyState
         title="No content yet"
@@ -20,9 +20,9 @@ describe('EmptyState', () => {
     expect(
       within(status).getByText('Create your first article to get started.'),
     ).toBeInTheDocument();
-    expect(
-      within(status).getByRole('button', { name: 'Create your first article' }),
-    ).toBeInTheDocument();
+    // t23 M5: interactive controls must not live inside a polite live region.
+    expect(within(status).queryByRole('button')).toBeNull();
+    expect(screen.getByRole('button', { name: 'Create your first article' })).toBeInTheDocument();
   });
 
   it('renders the requested icon (hidden from assistive tech) instead of the default', () => {

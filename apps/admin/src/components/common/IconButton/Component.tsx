@@ -28,45 +28,33 @@ export default function Component({
   edge,
   tooltip,
 }: IconButtonProps) {
+  // phase-8 task-14 fix round 1 (Minor): the six props every branch shares, spread into each —
+  // keeps the three-way structure below (still needed for TS narrowing, see its comment) from
+  // repeating them.
+  const commonProps = {
+    'aria-label': label,
+    onClick,
+    size,
+    disabled,
+    color,
+    edge,
+  };
+
   // Three-way branch (not `href ? (internal ? A : B) : ...` collapsed into two) so TypeScript
   // narrows `href` to a plain `string` inside the two href branches — `IconButton`, unlike
   // `common/Button`, doesn't declare its own optional `href` prop, so MUI's typings only accept
   // `href` as either a REQUIRED string (no `component`) or alongside a required `component`;
   // passing `href={href}` while its type is still `string | undefined` fails both overloads.
   const button = !href ? (
-    <MuiIconButton
-      aria-label={label}
-      onClick={onClick}
-      size={size}
-      disabled={disabled}
-      color={color}
-      edge={edge}
-    >
+    <MuiIconButton {...commonProps}>
       <Icon name={name} size={size} />
     </MuiIconButton>
   ) : isInternalHref(href) ? (
-    <MuiIconButton
-      component={Link}
-      href={href}
-      aria-label={label}
-      onClick={onClick}
-      size={size}
-      disabled={disabled}
-      color={color}
-      edge={edge}
-    >
+    <MuiIconButton component={Link} href={href} {...commonProps}>
       <Icon name={name} size={size} />
     </MuiIconButton>
   ) : (
-    <MuiIconButton
-      href={href}
-      aria-label={label}
-      onClick={onClick}
-      size={size}
-      disabled={disabled}
-      color={color}
-      edge={edge}
-    >
+    <MuiIconButton href={href} {...commonProps}>
       <Icon name={name} size={size} />
     </MuiIconButton>
   );

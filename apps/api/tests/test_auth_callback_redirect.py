@@ -73,7 +73,8 @@ def test_callback_success_redirects_303_to_admin_app_url_with_cookie_set(
         "avatar_url": None,
     }
     # Phase-6 task-05: a direct (non-login_as) callback call needs a validly minted state +
-    # matching double-submit cookie, or it 403s on the state check before ever reaching here.
+    # matching double-submit cookie, or it answers a 303 to `/signin?error=state` on the state
+    # check before ever reaching here.
     state = mint_state(client.app.state.settings)  # type: ignore[attr-defined]
     client.cookies.set(_STATE_COOKIE_NAME, state)
 

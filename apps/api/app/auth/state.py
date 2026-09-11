@@ -60,8 +60,8 @@ def verify_state(value: str, settings: Settings) -> bool:
     """Return whether `value` is a validly signed, not-yet-expired state token.
 
     Never raises: a garbage string, a tampered signature, and an expired token all fail the same
-    way, since `/auth/callback` treats any failure identically (403, `ForbiddenError`) regardless
-    of which specific `itsdangerous` exception fired.
+    way, since `/auth/callback` now 303-redirects to `/signin?error=state` for any failure
+    regardless of which specific `itsdangerous` exception fired.
 
     Args:
         value: the `state` query parameter `/auth/callback` received.

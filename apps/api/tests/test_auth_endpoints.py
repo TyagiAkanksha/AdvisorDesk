@@ -175,8 +175,8 @@ def test_callback_unlisted_email_redirects_to_signin_forbidden_and_no_row_create
         "avatar_url": "https://example.com/outsider.png",
     }
     # Phase-6 task-05: a direct (non-login_as) callback call now needs a validly minted state
-    # + matching double-submit cookie, or it 403s on the state check BEFORE ever reaching the
-    # allowlist check this test actually means to exercise.
+    # + matching double-submit cookie, or it answers a 303 to `/signin?error=state` on the state
+    # check BEFORE ever reaching the allowlist check this test actually means to exercise.
     state = mint_state(client.app.state.settings)  # type: ignore[attr-defined]
     client.cookies.set(_STATE_COOKIE_NAME, state)
 

@@ -28,11 +28,12 @@ returns_enveloped_502_not_plain_text` now mints a real, signed `state` and injec
 `advisordesk_oauth_state` double-submit cookie before calling `/auth/callback` directly — the
 same fix `tests/test_auth_hardening.py`'s test-author report applied to every other direct
 (non-`login_as`) callback call across the suite, so this test reaches the `exchange_code` call
-(and its `OAuthExchangeError`) it actually means to exercise, rather than 403ing on the
-(now-checked-first) state CSRF guard. This file predates task-05's RED phase (`git log` shows
-it last touched 2026-07-30, before the task-05 RED commit) and was missed by that phase's
-caller audit — a pre-existing test broken as a mechanical side effect of the interface change,
-not a task-05-authored test; only the input construction below changed, no assertion did.
+(and its `OAuthExchangeError`) it actually means to exercise, rather than answering a 303 to
+`/signin?error=state` on the (now-checked-first) state CSRF guard. This file predates task-05's
+RED phase (`git log` shows it last touched 2026-07-30, before the task-05 RED commit) and was
+missed by that phase's caller audit — a pre-existing test broken as a mechanical side effect of
+the interface change, not a task-05-authored test; only the input construction below changed, no
+assertion did.
 """
 
 from __future__ import annotations
@@ -204,8 +205,9 @@ def test_callback_oauth_exchange_failure_returns_enveloped_502_not_plain_text(
     not FastAPI/Starlette's plain-text/traceback default for an unhandled exception."""
     client = _build_client(tmp_engine)
     # Phase-6 task-05: a direct (non-login_as) callback call needs a validly minted state +
-    # matching double-submit cookie, or it 403s on the state check before ever reaching
-    # `exchange_code` — the OAuthExchangeError -> 502 mapping this test actually exercises.
+    # matching double-submit cookie, or it answers a 303 to `/signin?error=state` on the state
+    # check before ever reaching `exchange_code` — the OAuthExchangeError -> 502 mapping this
+    # test actually exercises.
     state = mint_state(client.app.state.settings)  # type: ignore[attr-defined]
     client.cookies.set(_STATE_COOKIE_NAME, state)
 

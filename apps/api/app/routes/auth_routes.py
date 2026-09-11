@@ -12,6 +12,7 @@ error page on the API origin.
 from __future__ import annotations
 
 import logging
+from typing import Literal
 
 from fastapi import APIRouter, Depends, Request, Response
 from fastapi.responses import RedirectResponse
@@ -34,11 +35,15 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
-def _sign_in_error_redirect(settings: Settings, reason: str) -> RedirectResponse:
+def _sign_in_error_redirect(
+    settings: Settings, reason: Literal["state", "forbidden"]
+) -> RedirectResponse:
     """Phase-8 C0: land a failed callback on the admin sign-in page with a machine-readable
     reason (`state` | `forbidden`) instead of a JSON 403 on the API origin. Never carries the
-    email or the state value."""
-    return RedirectResponse(f"{settings.admin_app_url}/signin?error={reason}", status_code=303)
+    email or the state value. `admin_app_url` is rstripped of a trailing slash so a configured
+    value with one doesn't produce a doubled slash in the redirect target."""
+    admin_app_url = settings.admin_app_url.rstrip("/")
+    return RedirectResponse(f"{admin_app_url}/signin?error={reason}", status_code=303)
 
 
 @router.get("/auth/login", operation_id="auth_login")

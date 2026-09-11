@@ -119,7 +119,7 @@ export interface UseContentListResult {
 //   const [qInput, setQInput] = useState(params.q);
 //   const lastWrittenQ = useRef(params.q);
 //   useEffect(() => { if (params.q !== lastWrittenQ.current) { lastWrittenQ.current = params.q; setQInput(params.q); } }, [params.q]);
-//   const paramsRef = useRef(params); paramsRef.current = params;   // live params for the timer
+//   const paramsRef = useRef(params); useEffect(() => { paramsRef.current = params; });   // live params for the timer (an effect, not a render-time write — react-hooks/refs)
 //   useEffect(() => {
 //     if (qInput === params.q) return;
 //     const timer = setTimeout(() => { lastWrittenQ.current = qInput; write({ ...paramsRef.current, q: qInput, page: 1 }); }, SEARCH_DEBOUNCE_MS);

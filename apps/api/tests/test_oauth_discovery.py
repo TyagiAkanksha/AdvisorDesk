@@ -32,7 +32,7 @@ _DISCOVERY_ENV = ["MCP_HTTP_ENABLED", "OAUTH_ISSUER_URL"]
 
 @pytest.fixture
 def clean_discovery_env(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Strip the env vars this file's default-`Settings()` test depends on (CONVENTIONS §10).
+    """Strip the env vars this file's default-`Settings()` test depends on (CONVENTIONS §5).
 
     hygiene t08 (p8 t13 minor): `test_discovery_available_without_mcp_enabled` asserts the
     zero-env-var defaults; a developer shell exporting `MCP_HTTP_ENABLED=true` (or a custom

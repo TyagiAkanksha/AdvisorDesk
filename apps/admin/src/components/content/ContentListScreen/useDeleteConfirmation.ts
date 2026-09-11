@@ -8,7 +8,9 @@ import type { ContentDto } from '@/types/api/content';
 // `deleteError` stay in `useContentList` — this hook only decides WHICH row is pending and
 // WHEN the dialog is open, and it is handed the two callbacks it drives.
 export interface UseDeleteConfirmationArgs {
+  /** `useContentList().deleteContent` — owns the mutation, the "Deleted" notice and `deleteError`. */
   deleteContent: (id: string) => Promise<void>;
+  /** `useContentList().clearDeleteError`. */
   clearDeleteError: () => void;
 }
 
@@ -18,6 +20,8 @@ export interface UseDeleteConfirmationResult {
   isOpen: boolean;
   open: (item: ContentDto) => void;
   close: () => void;
+  /** Resolves either way: a failure is swallowed here and surfaced by `deleteError` inside the
+   *  still-open dialog (unchanged from today's `Component.tsx` catch). */
   confirm: () => Promise<void>;
 }
 

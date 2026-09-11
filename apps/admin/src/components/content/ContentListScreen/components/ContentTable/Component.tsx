@@ -12,8 +12,8 @@ import {
   TableHead,
   TableRow,
 } from '@/components/common';
-import { formatDate } from '@/lib/format';
 import { CONTENT_TABLE_LABEL, DELETE_LABEL, EDIT_LABEL } from '@/lib/copy';
+import { formatDate } from '@/lib/format';
 
 import { CONTENT_TABLE_COLUMNS } from './columns';
 import type { ContentTableProps } from './interface';

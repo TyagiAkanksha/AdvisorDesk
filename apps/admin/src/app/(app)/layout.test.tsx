@@ -32,12 +32,14 @@ function requestUrl(input: RequestInfo | URL): string {
 }
 
 function mockMe(respond: () => Promise<Response>) {
-  global.fetch = vi.fn<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>(
+  const fetchMock = vi.fn<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>(
     async (input) => {
       if (requestUrl(input).includes('/auth/me')) return respond();
       return jsonResponse({}, 404);
     },
   );
+  global.fetch = fetchMock;
+  return fetchMock;
 }
 
 function renderLayout() {
@@ -106,7 +108,7 @@ describe('(app) layout', () => {
   });
 
   it('renders the page inside main once /auth/me succeeds, with the account menu in the bar', async () => {
-    mockMe(async () => jsonResponse(meFixture, 200));
+    const fetchMock = mockMe(async () => jsonResponse(meFixture, 200));
 
     renderLayout();
 
@@ -114,5 +116,10 @@ describe('(app) layout', () => {
     expect(await within(main).findByText('Page body')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /Ada Lovelace/ })).toBeInTheDocument();
     expect(navigation.replace).not.toHaveBeenCalled();
+    // hygiene final B4: RequireSession and AppShell both call useGetMeQuery() — RTK Query must
+    // dedupe the two subscribers into a single network request.
+    expect(
+      fetchMock.mock.calls.filter(([input]) => requestUrl(input).includes('/auth/me')),
+    ).toHaveLength(1);
   });
 });

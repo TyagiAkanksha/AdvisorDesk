@@ -201,8 +201,15 @@ export function useContentEditor({ contentId }: UseContentEditorArgs): UseConten
       () => createContent({ title: trimmedTitle, body_md: body, tags }).unwrap(),
       { success: CONTENT_SAVED_MESSAGE, errorFallback: SAVE_ERROR_FALLBACK },
     );
-    if (created) {
-      router.push(`/content/${created.id}`);
+    if (created !== undefined) {
+      // hygiene final D13 (picked option B): a throwing `router.push` must not escape as an
+      // unhandled rejection — report it exactly like a save failure, since the record was in
+      // fact saved but the admin never got to see it.
+      try {
+        router.push(`/content/${created.id}`);
+      } catch {
+        notifyError(SAVE_ERROR_FALLBACK);
+      }
     }
   };
 
@@ -311,6 +318,7 @@ export function useContentEditor({ contentId }: UseContentEditorArgs): UseConten
     isTransitioning: isPublishing || isArchiving,
     onPublish,
     onArchive,
+    // hygiene t07: the six delete fields come from useDeleteDialog
     ...deleteDialog,
     previewOpen,
     togglePreview: () => setPreviewOpen((prev) => !prev),

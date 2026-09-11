@@ -33,7 +33,10 @@ export async function requestBody(input: RequestInfo | URL, init?: RequestInit):
   if (input instanceof Request) {
     return input.clone().json();
   }
-  return JSON.parse(String(init?.body));
+  if (init?.body === undefined) {
+    return undefined;
+  }
+  return JSON.parse(String(init.body));
 }
 
 export function jsonResponse(body: unknown, status = 200): Response {
@@ -86,7 +89,9 @@ export interface MockFetchOptions {
 }
 
 /** Option-per-endpoint idiom — Component.test.tsx:114-155, moved verbatim. */
-export function mockEditorFetch(options: MockFetchOptions = {}): Mock {
+export function mockEditorFetch(
+  options: MockFetchOptions = {},
+): Mock<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>> {
   const fetchMock = vi.fn<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>(
     async (input, init) => {
       const pathname = pathnameOf(input);
@@ -132,7 +137,9 @@ export function mockEditorFetch(options: MockFetchOptions = {}): Mock {
 export type EditorFetchHandler = (url: URL, method: string) => Response | Promise<Response>;
 
 /** Handler idiom — useContentEditor.test.tsx:66-72, moved verbatim. */
-export function mockEditorFetchWith(handler: EditorFetchHandler): Mock {
+export function mockEditorFetchWith(
+  handler: EditorFetchHandler,
+): Mock<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>> {
   const fetchMock = vi.fn<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>(
     async (input, init) => handler(new URL(requestUrl(input)), requestMethod(input, init)),
   );

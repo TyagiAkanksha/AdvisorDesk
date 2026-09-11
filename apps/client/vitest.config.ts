@@ -6,8 +6,9 @@ import { defineConfig } from 'vitest/config';
 // globals: false — describe/it/expect/vi are imported explicitly in every test file.
 export default defineConfig({
   plugins: [react()],
-  // hygiene t04: `@/*` from tsconfig `paths`, resolved natively by Vite 8 (replaces the
-  // deprecated vite-tsconfig-paths plugin and its start-up banner).
+  // hygiene t04: `@/*` from tsconfig `paths`, resolved natively by Vite 8
+  // (`resolve.tsconfigPaths`, still marked @experimental in Vite 8's types; replaces the
+  // deprecated vite-tsconfig-paths plugin).
   resolve: { tsconfigPaths: true },
   test: {
     environment: 'node',

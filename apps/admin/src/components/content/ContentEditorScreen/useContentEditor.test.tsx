@@ -5,7 +5,6 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import Providers from '@/app/providers';
 
-import { useContentEditor } from './useContentEditor';
 import {
   draftFixture,
   editHandler,
@@ -13,6 +12,7 @@ import {
   requestBody,
   requestMethod,
 } from './testing/renderEditor';
+import { useContentEditor } from './useContentEditor';
 
 // Task 19 (C5, hook half): `useContentEditor` gains required-title validation, an `isDirty`
 // flag that also drives a `beforeunload` guard, tag suggestions from `GET /tags`, and the

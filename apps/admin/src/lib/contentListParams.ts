@@ -73,7 +73,12 @@ export function hasActiveFilters(params: ContentListParams): boolean {
 
 // hygiene t06 M2: `true` when `search` is exactly what `buildContentListSearch` would produce for
 // the params it parses to — i.e. it carries no unknown `status`, no unusable `page`, no untrimmed
-// `tag`/`q`, no stray key and no non-canonical key order.
+// `tag`/`q`, no stray key and no non-canonical key order. The comparison is against the
+// RE-SERIALISED form on both sides (`URLSearchParams.toString()`), so e.g. a `%20`-encoded deep
+// link is still canonical when it decodes to the same params. `parseContentListParams` only
+// reads `status|tag|q|page` — any other key (a campaign/tracking param, or one a future feature
+// adds) is deliberately dropped on load: the list's query-param set is closed, so add a new key
+// here first (final-review M-3).
 export function isCanonicalContentListSearch(search: URLSearchParams): boolean {
   const raw = search.toString();
   return buildContentListSearch(parseContentListParams(search)) === (raw ? `?${raw}` : '');

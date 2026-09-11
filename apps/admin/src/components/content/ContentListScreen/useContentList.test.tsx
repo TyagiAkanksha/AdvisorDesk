@@ -224,6 +224,8 @@ describe('useContentList — URL is the filter state', () => {
     expect(navigation.search).toBe('');
     expect(result.current.status).toBe('');
     expect(result.current.hasFilters).toBe(false);
+    // hygiene final C8: the canonicalisation must be a single write, not a chain of them.
+    expect(navigation.replace).toHaveBeenCalledTimes(1);
   });
 
   it('canonicalising keeps the usable filters and drops only the unusable parts (M2)', async () => {
@@ -237,6 +239,8 @@ describe('useContentList — URL is the filter state', () => {
         scroll: false,
       }),
     );
+    // hygiene final C8: the canonicalisation must be a single write, not a chain of them.
+    expect(navigation.replace).toHaveBeenCalledTimes(1);
   });
 
   it('leaves an already-canonical URL untouched (M2)', async () => {

@@ -20,8 +20,9 @@ import type { ConnectedAppDto } from '@/types/api/connectedApps';
 // another tab's revoke invalidating the `ConnectedApps` tag while this screen is still mounted)
 // doesn't blank an already-rendered list back to a full-screen error. phase-8 task-21 (DESIGN.md
 // §2, §5 C6, closes F-5): that background-refetch failure now surfaces through the global
-// snackbar, once per failure episode (rising edge of `hasData && isError`) — same idiom as
-// `useContentList`/`useDashboard`. A successful revoke also raises a snackbar success notice.
+// snackbar via `useRisingEdgeNotice` (p8 final, F6) — same shared hook `useContentList`/
+// `useDashboard`/`useContentEditor` call for their own background-refresh notices. A successful
+// revoke also raises a snackbar success notice.
 
 export interface UseConnectedAppsResult {
   items: ConnectedAppDto[];

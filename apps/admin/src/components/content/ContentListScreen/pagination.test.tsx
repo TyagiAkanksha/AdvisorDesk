@@ -100,9 +100,11 @@ const page2Fixture: ContentListDto = {
 };
 
 // After the sole page-2 row is deleted, a real API would answer page 2 with an empty page
-// (total drops to 20 — exactly one page). `useContentList` does not itself navigate back to
-// page 1 on this shrinkage (documented, not asserted as a requirement) — the UI's job is only
-// to render that answer as an explicit EmptyState rather than a stale/blank screen.
+// (total drops to 20 — exactly one page). p8 final, F16: this comment used to say
+// `useContentList` does NOT navigate back to page 1 on its own — that was true before WR-60's
+// stranded-page clamp existed; today the hook DOES rewrite the URL to the last valid page once
+// `total` is known (see the assertion below), so this fixture's empty page 2 is only ever
+// transient — never rendered as a lasting EmptyState.
 const page2AfterDeleteFixture: ContentListDto = {
   items: [],
   page: 2,

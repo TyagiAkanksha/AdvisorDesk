@@ -21,29 +21,23 @@ import { AgentPanel } from '.';
 // hook end-to-end by mocking only `fetch` (the network edge), exactly like a user would: type a
 // command, click Send, read the rendered conversation.
 //
-// Judgment calls (test-author, flagged for controller review — mirrors
-// `apps/admin/src/components/agent/useAgentStream.test.tsx`'s own judgment calls for
-// consistency):
-// (1) `AgentPanel` takes NO props — it is the persistent island that owns `useAgentStream()`
-//     itself, mirroring `ChatScreen`'s own precedent exactly ("the client island that owns
-//     `useChatStream()` itself... a zero-prop component has no `interface.ts`",
-//     FRONTEND-CONVENTIONS.md §3). The open/closed VISUAL toggle (brief: "persistent right MUI
-//     Drawer toggled from the AppShell") is a SEPARATE concern this file does not test — see
-//     `AppShell/agentPanelToggle.test.tsx` — so `AgentPanel` here is rendered directly, with no
-//     assumption about how/whether its host wraps it in an openable Drawer.
+// This header originally recorded test-author judgment calls made against the phase-5 RED pass
+// — task-23 (DESIGN.md §5 C7) then rewrote both the component and this file's own pins, so (1)
+// and (3) below are updated (p8 final, F16) to describe the contract those pins exercise today;
+// (2) and (4) were already accurate and are unchanged:
+// (1) `AgentPanel` takes ONE prop, `onClose: () => void` (`interface.ts`) — the shell's
+//     `closeAgent`, wired to the panel's own close button. It still owns `useAgentStream()`
+//     itself; only the close affordance moved from the shell into the panel.
 // (2) Accessible names invented here (not pinned anywhere beyond the brief's prose): the command
 //     field is a textbox named "Message"; the submit control is a button named "Send"; each turn
 //     is `role="article"`, named "You" / "Assistant" — all reused verbatim from
 //     `ChatScreen/Component.test.tsx`'s own precedent (phase-4 t05) for one consistent contract
 //     across both chat-shaped UIs in this codebase.
-// (3) Tool-event rendering ("→ create_draft {…}" / "✓ create_draft — <summary>", brief's
-//     `ToolCallCard` contract) is asserted via the assistant turn's rendered TEXT content and
-//     ordering (`indexOf('→') < indexOf('✓')`), not by querying a `ToolCallCard`-specific role —
-//     the brief does not pin any distinct ARIA role/name for the card itself, and `ToolCallCard`
-//     has no test file of its own in this RED pass (Step 5's listed behaviors are all exercised
-//     end-to-end through `AgentPanel`; the brief's Files list creates `ToolCallCard`/
-//     `AgentMessage` folders for the IMPLEMENTER's Step 6, not for a test-author-authored
-//     standalone unit test).
+// (3) Tool-event rendering IS queried by role/name: each `ToolCallCard` renders as a `button`
+//     whose accessible name is its collapsed summary ("Running <tool>…" / "Ran <tool> ·
+//     <summary>") — see the scripted-exchange test below, which queries the card by
+//     `getByRole('button', { name: /^Ran create_draft/ })`. `ToolCallCard` also has its own
+//     focused unit test file (`agent/ToolCallCard/Component.test.tsx`).
 // (4) Test 9 (input disabled while streaming) uses a GATED stream fixture
 //     (`gatedStreamResponse`/`deferred`, lifted verbatim from `ChatScreen/Component.test.tsx`'s
 //     own fix — see that file's header comment for the full LESSON): a mocked `fetch`/

@@ -32,9 +32,10 @@ function jsonResponse(body: unknown, status = 200): Response {
 
 // Task-09 brief facts: `client_id: 'adkc_abc'` on the first fixture app is load-bearing —
 // revoke.test.tsx's DELETE URL assertion depends on it. `active_access_tokens` /
-// `active_refresh_tokens` are deliberately different numbers (2 vs 1) so the two counts render
-// as distinct text nodes within the row — same value for both would make `within(row).getByText`
-// ambiguous.
+// `active_refresh_tokens` are required by `ConnectedAppDto` (the endpoint still returns them)
+// but, since phase-8 task-21 (DESIGN.md §5 C6), the table itself renders neither column — the
+// token-count and expiry columns were dropped down to Client/Connected/Last used/Actions — so
+// their values here are unused filler, not asserted anywhere below.
 const appA: ConnectedAppDto = {
   active_access_tokens: 2,
   active_refresh_tokens: 1,

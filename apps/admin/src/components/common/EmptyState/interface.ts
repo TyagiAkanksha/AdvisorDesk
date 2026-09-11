@@ -4,8 +4,10 @@ import type { IconProps } from '../Icon';
 
 // mcp-oauth task-09 (docs/plans/mcp-oauth/task-09-admin-connected-apps-ui.md): added the
 // optional `title`/`description` two-line form for ConnectedAppsScreen's empty state, alongside
-// the original single-`message` form every existing call site (ContentListScreen, TagCounts)
-// still uses unchanged — at least one of `message` or `title` must be supplied by the caller.
+// the original single-`message` form other call sites still use — at least one of `message` or
+// `title` must be supplied by the caller. (phase-8 task-18/21 moved ContentListScreen and
+// ConnectedAppsScreen's own empty states onto the `title`/`description` form too — `message`
+// alone still works for any simpler caller.)
 export interface EmptyStateProps {
   message?: string;
   title?: string;

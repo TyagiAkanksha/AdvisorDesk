@@ -13,15 +13,18 @@ import {
 } from '@/components/common';
 import { useListTagsQuery } from '@/lib/api/tagsApi';
 import {
+  ALL_TAGS_LABEL,
   CONTENT_LOAD_ERROR,
   CONTENT_TITLE,
   CLEAR_FILTERS_LABEL,
   CREATE_FIRST_ARTICLE_LABEL,
+  DELETE_CONTENT_DIALOG_TITLE,
   NEW_CONTENT_LABEL,
   NO_CONTENT_DESCRIPTION,
   NO_CONTENT_TITLE,
   NO_MATCH_DESCRIPTION,
   NO_MATCH_TITLE,
+  deleteContentDialogBody,
 } from '@/lib/copy';
 import type { ContentDto } from '@/types/api/content';
 
@@ -57,7 +60,7 @@ export default function Component() {
   const [deleteTarget, setDeleteTarget] = useState<ContentDto | null>(null);
 
   const tagOptions = [
-    { value: '', label: 'All tags' },
+    { value: '', label: ALL_TAGS_LABEL },
     ...(tags ?? []).map((item) => ({ value: item.name, label: item.name })),
   ];
 
@@ -140,8 +143,8 @@ export default function Component() {
 
       <ConfirmDialog
         open={deleteTarget !== null}
-        title="Delete content"
-        body={`“${deleteTarget?.title ?? ''}” will be permanently deleted — there is no restore.`}
+        title={DELETE_CONTENT_DIALOG_TITLE}
+        body={deleteContentDialogBody(deleteTarget?.title ?? '')}
         confirmLabel="Delete"
         onConfirm={handleConfirmDelete}
         onClose={handleCloseDialog}

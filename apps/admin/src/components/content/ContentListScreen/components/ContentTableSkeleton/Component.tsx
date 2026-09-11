@@ -10,11 +10,14 @@ import {
 } from '@/components/common';
 import { LOADING_LABEL } from '@/lib/copy';
 
+import { CONTENT_TABLE_COLUMNS } from '../ContentTable/columns';
+
 const SKELETON_ROW_COUNT = 5;
-const COLUMN_COUNT = 5;
 
 // phase-8 task-18 (DESIGN.md §2, §5 C4): five skeleton rows in the same table shape as the
-// loaded state, so the first page load doesn't jump/reflow once real rows arrive.
+// loaded state, so the first page load doesn't jump/reflow once real rows arrive. p8 final, F13:
+// both the header and each row map over the shared `CONTENT_TABLE_COLUMNS` — the skeleton's cell
+// count can never drift from `ContentTable`'s own header.
 export default function Component() {
   return (
     <TableContainer<typeof Paper>
@@ -27,18 +30,18 @@ export default function Component() {
       <Table>
         <TableHead>
           <TableRow>
-            <TableCell>Title</TableCell>
-            <TableCell>Status</TableCell>
-            <TableCell>Tags</TableCell>
-            <TableCell>Updated</TableCell>
-            <TableCell align="right">Actions</TableCell>
+            {CONTENT_TABLE_COLUMNS.map((column) => (
+              <TableCell key={column.label} align={column.align}>
+                {column.label}
+              </TableCell>
+            ))}
           </TableRow>
         </TableHead>
         <TableBody>
           {Array.from({ length: SKELETON_ROW_COUNT }, (_, rowIndex) => (
             <TableRow key={rowIndex}>
-              {Array.from({ length: COLUMN_COUNT }, (_, columnIndex) => (
-                <TableCell key={columnIndex}>
+              {CONTENT_TABLE_COLUMNS.map((column) => (
+                <TableCell key={column.label}>
                   <Skeleton variant="text" />
                 </TableCell>
               ))}

@@ -10,11 +10,13 @@ import {
   useBreakpointDown,
 } from '@/components/common';
 import {
+  DELETE_CONTENT_DIALOG_TITLE,
   DELETE_LABEL,
   EDITOR_LOAD_ERROR,
   EDIT_LABEL,
   NEW_CONTENT_LABEL,
   PREVIEW_LABEL,
+  deleteContentDialogBody,
 } from '@/lib/copy';
 
 import { EditorForm } from './components/EditorForm';
@@ -87,8 +89,8 @@ export default function Component({ contentId }: ContentEditorScreenProps) {
       </Grid>
       <ConfirmDialog
         open={editor.deleteDialogOpen}
-        title="Delete content"
-        body={`“${editor.savedTitle ?? editor.title}” will be permanently deleted — there is no restore.`}
+        title={DELETE_CONTENT_DIALOG_TITLE}
+        body={deleteContentDialogBody(editor.savedTitle ?? editor.title)}
         confirmLabel={DELETE_LABEL}
         onConfirm={editor.confirmDelete}
         onClose={editor.closeDeleteDialog}

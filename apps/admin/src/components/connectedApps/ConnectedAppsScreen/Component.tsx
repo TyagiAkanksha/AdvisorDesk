@@ -9,6 +9,7 @@ import {
   NO_CONNECTED_APPS_TITLE,
   REVOKE_DIALOG_TITLE,
   REVOKE_LABEL,
+  revokeDialogBody,
 } from '@/lib/copy';
 
 import { ConnectedAppsSkeleton } from './components/ConnectedAppsSkeleton';
@@ -54,7 +55,7 @@ export default function Component() {
       <ConfirmDialog
         open={pendingRevoke !== null}
         title={REVOKE_DIALOG_TITLE}
-        body={`${pendingRevoke?.client_name ?? ''} will lose MCP access immediately. It can reconnect later by authorizing again.`}
+        body={revokeDialogBody(pendingRevoke?.client_name ?? '')}
         confirmLabel={REVOKE_LABEL}
         onConfirm={confirmRevoke}
         onClose={cancelRevoke}

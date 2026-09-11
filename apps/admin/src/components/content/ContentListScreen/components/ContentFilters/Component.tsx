@@ -1,11 +1,18 @@
 import { Button, Select, Stack, TextField } from '@/components/common';
-import { CLEAR_FILTERS_LABEL } from '@/lib/copy';
+import {
+  ALL_STATUSES_LABEL,
+  CLEAR_FILTERS_LABEL,
+  SEARCH_FILTER_LABEL,
+  SEARCH_PLACEHOLDER,
+  STATUS_FILTER_LABEL,
+  TAG_FILTER_LABEL,
+} from '@/lib/copy';
 import { CONTENT_STATUS_LABELS, ContentStatus } from '@/types/api/content';
 
 import type { ContentFiltersProps } from './interface';
 
 const STATUS_OPTIONS = [
-  { value: '', label: 'All statuses' },
+  { value: '', label: ALL_STATUSES_LABEL },
   ...Object.values(ContentStatus).map((status) => ({
     value: status,
     label: CONTENT_STATUS_LABELS[status],
@@ -33,17 +40,17 @@ export default function Component({
       sx={{ mb: 3, alignItems: { sm: 'center' } }}
     >
       <Select
-        label="Status"
+        label={STATUS_FILTER_LABEL}
         value={status}
         onChange={(value) => onStatusChange(value as ContentStatus | '')}
         options={STATUS_OPTIONS}
       />
-      <Select label="Tag" value={tag} onChange={onTagChange} options={tagOptions} />
+      <Select label={TAG_FILTER_LABEL} value={tag} onChange={onTagChange} options={tagOptions} />
       <TextField
-        label="Search"
+        label={SEARCH_FILTER_LABEL}
         value={q}
         onChange={onQChange}
-        placeholder="Search by title…"
+        placeholder={SEARCH_PLACEHOLDER}
         type="search"
       />
       {hasFilters ? (

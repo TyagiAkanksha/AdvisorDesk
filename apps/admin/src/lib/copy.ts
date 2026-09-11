@@ -64,6 +64,21 @@ export const DELETE_ERROR_FALLBACK = "Couldn't delete this item. Please try agai
 export const EDIT_LABEL = 'Edit';
 export const DELETE_LABEL = 'Delete';
 
+// p8 final, F14: filter-row field labels/placeholder + "all" option labels (`ContentFilters`,
+// `ContentListScreen`'s tag-option list) and the delete-content confirm dialog's copy — extracted
+// out of the components' own inline string literals into this one typed module (both apps' own
+// `docs/FRONTEND-CONVENTIONS.md §9` rule). Rendered text is unchanged.
+export const STATUS_FILTER_LABEL = 'Status';
+export const TAG_FILTER_LABEL = 'Tag';
+export const SEARCH_FILTER_LABEL = 'Search';
+export const SEARCH_PLACEHOLDER = 'Search by title…';
+export const ALL_STATUSES_LABEL = 'All statuses';
+export const ALL_TAGS_LABEL = 'All tags';
+export const DELETE_CONTENT_DIALOG_TITLE = 'Delete content';
+export function deleteContentDialogBody(title: string): string {
+  return `“${title}” will be permanently deleted — there is no restore.`;
+}
+
 // phase-8 task-19 (DESIGN.md §5 C5): editor hook — title validation + mutation feedback copy
 // (the four hook-local fallbacks move here too: SAVE_ERROR_FALLBACK, TRANSITION_ERROR_FALLBACK,
 // EDITOR_REFRESH_ERROR, EDITOR_LOAD_ERROR). `CONTENT_DELETED_MESSAGE`/`DELETE_ERROR_FALLBACK`
@@ -105,6 +120,10 @@ export const NO_CONNECTED_APPS_DESCRIPTION =
   'Apps that connect over MCP (like Claude) will appear here after you approve them.';
 export const REVOKE_LABEL = 'Revoke';
 export const REVOKE_DIALOG_TITLE = 'Revoke access?';
+// p8 final, F14: extracted out of ConnectedAppsScreen's own inline template literal.
+export function revokeDialogBody(name: string): string {
+  return `${name} will lose MCP access immediately. It can reconnect later by authorizing again.`;
+}
 export const ACCESS_REVOKED_MESSAGE = 'Access revoked';
 export const CONNECTED_APPS_LOAD_ERROR = "Couldn't load connected apps.";
 export const CONNECTED_APPS_REFRESH_ERROR =

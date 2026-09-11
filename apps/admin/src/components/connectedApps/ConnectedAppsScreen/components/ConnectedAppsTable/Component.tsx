@@ -12,22 +12,25 @@ import {
 import { formatOptionalDateTime } from '@/lib/format';
 import { CONNECTED_APPS_TABLE_LABEL, REVOKE_LABEL } from '@/lib/copy';
 
+import { CONNECTED_APPS_TABLE_COLUMNS } from './columns';
 import type { ConnectedAppsTableProps } from './interface';
 
 // phase-8 task-21 (DESIGN.md §2, §5 C6): a real MUI table — outlined container that scrolls
 // horizontally on phones instead of squeezing columns unreadably narrow. Reduced to what an
 // admin acts on (Client/Connected/Last used/Revoke) — token counts and expiry are dropped.
-// Mirrors ContentTable's `TableContainer<typeof Paper>` pattern (task-18).
+// Mirrors ContentTable's `TableContainer<typeof Paper>` pattern (task-18). p8 final, F13: the
+// header row maps over `CONNECTED_APPS_TABLE_COLUMNS`, shared with `ConnectedAppsSkeleton`.
 export default function Component({ items, onRevoke }: ConnectedAppsTableProps) {
   return (
     <TableContainer<typeof Paper> component={Paper} variant="outlined" sx={{ overflowX: 'auto' }}>
       <Table aria-label={CONNECTED_APPS_TABLE_LABEL}>
         <TableHead>
           <TableRow>
-            <TableCell>Client</TableCell>
-            <TableCell>Connected</TableCell>
-            <TableCell>Last used</TableCell>
-            <TableCell align="right">Actions</TableCell>
+            {CONNECTED_APPS_TABLE_COLUMNS.map((column) => (
+              <TableCell key={column.label} align={column.align}>
+                {column.label}
+              </TableCell>
+            ))}
           </TableRow>
         </TableHead>
         <TableBody>

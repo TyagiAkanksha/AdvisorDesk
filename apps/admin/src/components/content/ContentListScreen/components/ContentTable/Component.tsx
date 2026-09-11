@@ -15,21 +15,23 @@ import {
 import { formatDate } from '@/lib/format';
 import { CONTENT_TABLE_LABEL, DELETE_LABEL, EDIT_LABEL } from '@/lib/copy';
 
+import { CONTENT_TABLE_COLUMNS } from './columns';
 import type { ContentTableProps } from './interface';
 
 // phase-8 task-18 (DESIGN.md §2, §5 C4): a real MUI table — outlined container that scrolls
-// horizontally on phones instead of squeezing columns unreadably narrow.
+// horizontally on phones instead of squeezing columns unreadably narrow. p8 final, F13: the
+// header row maps over `CONTENT_TABLE_COLUMNS`, shared with `ContentTableSkeleton`.
 export default function Component({ items, onDeleteClick }: ContentTableProps) {
   return (
     <TableContainer<typeof Paper> component={Paper} variant="outlined" sx={{ overflowX: 'auto' }}>
       <Table aria-label={CONTENT_TABLE_LABEL}>
         <TableHead>
           <TableRow>
-            <TableCell>Title</TableCell>
-            <TableCell>Status</TableCell>
-            <TableCell>Tags</TableCell>
-            <TableCell>Updated</TableCell>
-            <TableCell align="right">Actions</TableCell>
+            {CONTENT_TABLE_COLUMNS.map((column) => (
+              <TableCell key={column.label} align={column.align}>
+                {column.label}
+              </TableCell>
+            ))}
           </TableRow>
         </TableHead>
         <TableBody>

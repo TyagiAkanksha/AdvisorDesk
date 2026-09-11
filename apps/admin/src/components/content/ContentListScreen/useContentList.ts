@@ -74,17 +74,26 @@ export function useContentList(): UseContentListResult {
       setQInput(params.q);
     }
   }, [params.q]);
+  // review I-1: the timer reads the LIVE params via `paramsRef`, not the params captured by the
+  // closure that scheduled it — a status/tag change made inside the debounce window must not be
+  // reverted by the pending q write. Kept in sync via its own no-deps effect (runs after every
+  // render) rather than a direct mutation during render — this repo's `react-hooks/refs` lint
+  // rule (`Cannot access refs during render`) disallows the latter; the ref is guaranteed
+  // up to date before any later-scheduled timer's callback can fire (a `setTimeout` callback is
+  // a macrotask, always ordered after the synchronous render + effect commit that preceded it).
+  const paramsRef = useRef(params);
+  useEffect(() => {
+    paramsRef.current = params;
+  });
   useEffect(() => {
     if (qInput === params.q) {
       return;
     }
     const timer = setTimeout(() => {
       lastWrittenQ.current = qInput;
-      write({ ...params, q: qInput, page: 1 });
+      write({ ...paramsRef.current, q: qInput, page: 1 });
     }, SEARCH_DEBOUNCE_MS);
     return () => clearTimeout(timer);
-    // `params`/`write` are intentionally captured from the render that scheduled this timer
-    // (brief's exact debounce/sync notes).
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [qInput, params.q]);
 

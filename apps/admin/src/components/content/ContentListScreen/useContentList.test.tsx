@@ -97,6 +97,26 @@ describe('useContentList — URL is the filter state', () => {
     expect(navigation.replace).toHaveBeenCalledTimes(1);
   });
 
+  it('a status change inside the debounce window is not reverted by the pending q write (review I-1)', async () => {
+    mockList(() => emptyPage(0, 1));
+    const { result } = renderHook(() => useContentList(), { wrapper: Wrapper });
+
+    act(() => result.current.setQ('roth'));
+    act(() => result.current.setStatus('published'));
+    expect(navigation.replace).toHaveBeenLastCalledWith('/content?status=published', {
+      scroll: false,
+    });
+
+    await waitFor(
+      () =>
+        expect(navigation.replace).toHaveBeenLastCalledWith('/content?status=published&q=roth', {
+          scroll: false,
+        }),
+      { timeout: 2000 },
+    );
+    expect(navigation.replace).toHaveBeenCalledTimes(2);
+  });
+
   it('an external URL change (back button) updates the search field', async () => {
     mockList(() => emptyPage(0, 1));
     navigation.reset('/content?q=roth');

@@ -198,9 +198,10 @@ export default function Layout({ children }: { children: ReactNode }) {
   `apps/admin/src/components/common/LoadingIndicator/Component.tsx`), query it the way its own
   test does and note the substitution in the report.
 
-- [ ] **Step 2: run RED.** `cd apps/admin && npx vitest run "src/app/(app)/layout"` → the first
-  three tests fail (no `banner`/`main` while the gate is loading / erroring, because the shell
-  is still inside the gate); the fourth passes. Paste the failure lines.
+- [ ] **Step 2: run RED.** `cd apps/admin && npx vitest run "src/app/(app)/layout"` → all four
+  tests fail (no `banner`/`main` on the first render while the shell sits inside the gate — the
+  fourth test's `getByRole('main')` is synchronous, so it fails too). Paste the failure lines.
+  *(Corrected during execution: the original text predicted 3 of 4.)*
 
 - [ ] **Step 3 (implementer, GREEN):** replace `layout.tsx` with the Interfaces version.
 

@@ -273,8 +273,9 @@ import { navigation } from '@/testing/nextNavigation';
 vi.mock('next/navigation', () => import('@/testing/nextNavigation'));
 ```
 
-and in `Component.test.tsx`'s `beforeEach` call `navigation.reset('/')` (delete the
-`mockClear` lines). The sign-out redirect assertion becomes:
+and in EACH of the three files add `beforeEach(() => { navigation.reset('/'); })` inside the
+`describe` (in `Component.test.tsx` this replaces the `mockClear` lines) — every shell test
+starts from a known URL, and the import is used in all three files (zero lint warnings). The sign-out redirect assertion becomes:
 
 ```tsx
     await waitFor(() => {

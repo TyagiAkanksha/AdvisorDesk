@@ -1,7 +1,7 @@
 'use client';
 
-import { Alert, Box, Button } from '@/components/common';
-import { RETRY_LABEL } from '@/lib/copy';
+import { Alert, Box, Button, Typography } from '@/components/common';
+import { CHAT_TITLE, RETRY_LABEL } from '@/lib/copy';
 
 import { MessageBubble } from '../MessageBubble';
 import { useChatStream } from '../useChatStream';
@@ -15,13 +15,28 @@ import { useChatComposer } from './useChatComposer';
 // rule) — with no business logic of its own. The client island: unlike the RSC `content/`
 // screens, it owns its VM hooks and takes no props (a zero-prop component has no
 // `interface.ts`, docs/FRONTEND-CONVENTIONS.md §3).
+//
+// p8 t24 (DESIGN.md §B4 carry-in): the page h1 lives here now, unconditionally — before, it lived
+// inside `ChatWelcome` and vanished once a conversation started, leaving the page headingless.
+// It renders large (`variant="h1"`) in the empty-transcript state and compact
+// (`variant="h4" component="h1"`) once there is a conversation, but stays an `h1` either way.
 export default function Component() {
   const { messages, streaming, error, send, stop, reset, retry } = useChatStream();
   const composer = useChatComposer({ disabled: streaming, onSend: send });
   const awaitingFirstToken = streaming && messages[messages.length - 1]?.role === 'user';
+  const hasConversation = messages.length > 0;
 
   return (
     <Box sx={{ display: 'flex', flexDirection: 'column', minHeight: '60vh' }}>
+      {hasConversation ? (
+        <Typography variant="h4" component="h1" sx={{ mb: 2 }}>
+          {CHAT_TITLE}
+        </Typography>
+      ) : (
+        <Typography variant="h1" component="h1">
+          {CHAT_TITLE}
+        </Typography>
+      )}
       {messages.length === 0 ? (
         <ChatWelcome onAsk={send} />
       ) : (

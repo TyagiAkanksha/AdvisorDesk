@@ -19,7 +19,7 @@ export interface UseAgentComposerResult {
   /** Trims the draft, sends it if `canSend`, then clears the draft. No-op otherwise. */
   submit: () => void;
   /** Enter -> preventDefault + submit; Shift+Enter -> left to the field (inserts a newline). */
-  onKeyDown: (event: KeyboardEvent<HTMLInputElement | HTMLTextAreaElement>) => void;
+  onKeyDown: (event: KeyboardEvent<HTMLElement>) => void;
 }
 
 export function useAgentComposer({
@@ -37,7 +37,7 @@ export function useAgentComposer({
     setDraft('');
   };
 
-  const onKeyDown = (event: KeyboardEvent<HTMLInputElement | HTMLTextAreaElement>) => {
+  const onKeyDown = (event: KeyboardEvent<HTMLElement>) => {
     // Mirrors `useChatComposer.ts`'s M-1: while an IME composition is in progress, the browser's
     // own "confirm" Enter must reach the input un-intercepted.
     if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent?.isComposing) {

@@ -3,14 +3,16 @@ import { CHAT_DESCRIPTION, CHAT_TITLE, SUGGESTED_QUESTIONS } from '@/lib/copy';
 
 import type { ChatWelcomeProps } from './interface';
 
-// phase-8 task-12 (DESIGN.md §B4). The empty-transcript state: a heading, a one-line
-// explanation of where answers come from, and four clickable suggested questions — a fresh
-// `/chat` is no longer a bare, unexplained input. `role="region"` (not `role="status"`): this is
-// page content the user reads and acts on, not a live announcement.
+// phase-8 task-12 (DESIGN.md §B4). The empty-transcript state: a one-line explanation of where
+// answers come from and four clickable suggested questions — a fresh `/chat` is no longer a
+// bare, unexplained input. `role="region"` (not `role="status"`): this is page content the user
+// reads and acts on, not a live announcement.
+//
+// p8 t24 (DESIGN.md §B4 carry-in): the page h1 now lives in `ChatScreen` (it persists across a
+// conversation) — this region renders no heading of its own.
 export default function Component({ onAsk }: ChatWelcomeProps) {
   return (
     <Box role="region" aria-label={CHAT_TITLE}>
-      <Typography variant="h1">{CHAT_TITLE}</Typography>
       <Typography variant="body1" color="text.secondary">
         {CHAT_DESCRIPTION}
       </Typography>

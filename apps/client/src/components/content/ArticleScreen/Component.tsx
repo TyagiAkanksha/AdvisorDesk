@@ -1,11 +1,11 @@
 import { Alert, Box, Button, Divider, Link, Typography } from '@/components/common';
-import { ASK_ABOUT_TOPIC_LABEL, BACK_TO_ARTICLES_LABEL, DISCLAIMER } from '@/lib/copy';
+import { ASK_ABOUT_TOPIC_LABEL, BACK_TO_ARTICLES_LINK_TEXT, DISCLAIMER } from '@/lib/copy';
 import { formatPublishedDate } from '@/lib/formatDate';
 import { stripLeadingHeading } from '@/lib/markdown';
 
 import { Markdown } from '../Markdown';
+import { TagChips } from '../TagChips';
 import { RelatedArticles } from './components/RelatedArticles';
-import { TagChips } from './components/TagChips';
 import type { ArticleScreenProps } from './interface';
 
 // PRD §2.2 (detail renders markdown) + §8 (disclaimer). Dumb, synchronous — `article` and
@@ -24,7 +24,7 @@ export default function Component({ article, related }: ArticleScreenProps) {
   return (
     <article>
       <Link href="/" underline="hover" sx={{ display: 'inline-block', mb: 2 }}>
-        ← {BACK_TO_ARTICLES_LABEL}
+        {BACK_TO_ARTICLES_LINK_TEXT}
       </Link>
       <Typography variant="h1" component="h1" gutterBottom>
         {article.title}
@@ -37,7 +37,7 @@ export default function Component({ article, related }: ArticleScreenProps) {
       </Box>
       <Divider sx={{ mb: 3 }} />
       <Markdown markdown={stripLeadingHeading(article.body_md, article.title)} headingOffset={1} />
-      <Alert severity="info" variant="outlined" sx={{ mt: 4 }}>
+      <Alert severity="info" variant="outlined" role="note" sx={{ mt: 4 }}>
         {DISCLAIMER}
       </Alert>
       <RelatedArticles items={related} />

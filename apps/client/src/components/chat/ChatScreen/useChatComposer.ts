@@ -19,7 +19,7 @@ export interface UseChatComposerResult {
   /** Trims the draft, sends it if `canSend`, then clears the draft. No-op otherwise. */
   submit: () => void;
   /** Enter -> preventDefault + submit; Shift+Enter -> left to the field (inserts a newline). */
-  onKeyDown: (event: KeyboardEvent<HTMLInputElement | HTMLTextAreaElement>) => void;
+  onKeyDown: (event: KeyboardEvent<HTMLElement>) => void;
 }
 
 export function useChatComposer({ disabled, onSend }: UseChatComposerArgs): UseChatComposerResult {
@@ -34,7 +34,7 @@ export function useChatComposer({ disabled, onSend }: UseChatComposerArgs): UseC
     setDraft('');
   };
 
-  const onKeyDown = (event: KeyboardEvent<HTMLInputElement | HTMLTextAreaElement>) => {
+  const onKeyDown = (event: KeyboardEvent<HTMLElement>) => {
     // fix round 1, M-1: while an IME composition is in progress (e.g. confirming a kanji
     // candidate), the browser's own "confirm" Enter must reach the input un-intercepted — we
     // neither preventDefault nor submit on it, exactly as if it weren't an Enter press at all.

@@ -13,10 +13,10 @@ const citations = [
 ];
 
 describe('CitationList', () => {
-  it('renders a Sources navigation with one numbered, titled link per citation in order', () => {
+  it('renders a Sources region with one numbered, titled link per citation in order', () => {
     render(<CitationList citations={citations} />);
 
-    expect(screen.getByRole('navigation', { name: 'Sources' })).toBeInTheDocument();
+    expect(screen.getByRole('region', { name: 'Sources' })).toBeInTheDocument();
     const links = screen.getAllByRole('link');
     expect(links.map((link) => link.textContent)).toEqual([
       '[1] Roth IRA Basics',
@@ -24,6 +24,7 @@ describe('CitationList', () => {
     ]);
     expect(links[0]).toHaveAttribute('href', '/content/roth-ira-basics');
     expect(links[1]).toHaveAttribute('href', '/content/traditional-ira-basics');
+    expect(screen.queryByRole('navigation')).not.toBeInTheDocument();
   });
 
   // fix round 1 (I-1): the browser's own decimal `<ol>` marker was doubling up with the `[n]`

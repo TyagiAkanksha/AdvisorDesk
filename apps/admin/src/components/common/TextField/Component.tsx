@@ -1,5 +1,5 @@
 import MuiTextField from '@mui/material/TextField';
-import type { ChangeEvent, KeyboardEvent } from 'react';
+import type { ChangeEvent } from 'react';
 
 import type { TextFieldProps } from './interface';
 
@@ -26,13 +26,6 @@ export default function Component({
     onChange(event.target.value);
   };
 
-  // MuiTextField's own onKeyDown type is bound to its root element (`KeyboardEventHandler
-  // <HTMLDivElement>`) even though the event genuinely originates on the inner
-  // input/textarea; narrow it back to the public contract's declared target types.
-  const handleKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
-    onKeyDown?.(event as unknown as KeyboardEvent<HTMLInputElement | HTMLTextAreaElement>);
-  };
-
   return (
     <MuiTextField
       label={label}
@@ -50,7 +43,7 @@ export default function Component({
       error={error}
       helperText={helperText}
       onBlur={onBlur}
-      onKeyDown={onKeyDown ? handleKeyDown : undefined}
+      onKeyDown={onKeyDown}
       // Inline style (not `sx`'s nested-selector rule) because it's deterministic under both
       // jsdom's cross-stylesheet cascade — AppRouterCacheProvider emits one `<style>` per rule,
       // which jsdom's getComputedStyle doesn't resolve for nested selectors — and real browsers.

@@ -16,3 +16,13 @@ export const MARKDOWN_TABLE_LABEL = 'Table';
 // p8 final: `PageSkeleton`'s `role="status"` label (mirrors apps/client's ChatSkeleton and
 // existing skeletons).
 export const LOADING_LABEL = 'Loading';
+
+// phase-8 task-15 (DESIGN.md §C1): AppShell nav + chrome copy. One constant per nav item — the
+// nav label IS the page title (tasks 17/18/21 reuse these as their PageHeader titles).
+export const DASHBOARD_TITLE = 'Dashboard';
+export const CONTENT_TITLE = 'Content';
+export const CONNECTED_APPS_TITLE = 'Connected apps';
+export const MAIN_NAV_LABEL = 'Main';
+export const OPEN_NAVIGATION_LABEL = 'Open navigation';
+export const AGENT_BUTTON_LABEL = 'Agent';
+export const SIGN_OUT_LABEL = 'Sign out';

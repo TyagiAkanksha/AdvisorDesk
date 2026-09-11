@@ -2,9 +2,10 @@
 import { render, screen, waitFor } from '@testing-library/react';
 import '@testing-library/jest-dom/vitest';
 import userEvent from '@testing-library/user-event';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import Providers from '@/app/providers';
+import { navigation } from '@/testing/nextNavigation';
 
 import { AppShell } from '.';
 
@@ -28,11 +29,7 @@ import { AppShell } from '.';
 // hasn't chosen yet, so it is left to the implementer/reviewer rather than pinned here). WR-66
 // (avatar `alt=""`/aria-hidden — the ride-along Minor named in the same brief section) is outside
 // this dispatch's stated deliverable list and is not tested here.
-const replaceMock = vi.fn();
-const pushMock = vi.fn();
-vi.mock('next/navigation', () => ({
-  useRouter: () => ({ replace: replaceMock, push: pushMock }),
-}));
+vi.mock('next/navigation', () => import('@/testing/nextNavigation'));
 
 const meFixture = {
   id: '11111111-1111-1111-1111-111111111111',
@@ -75,6 +72,10 @@ function renderShell() {
 }
 
 describe('AppShell trigger ARIA (WR-13)', () => {
+  beforeEach(() => {
+    navigation.reset('/');
+  });
+
   afterEach(() => {
     vi.restoreAllMocks();
   });

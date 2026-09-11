@@ -2,9 +2,10 @@
 import { render, screen } from '@testing-library/react';
 import '@testing-library/jest-dom/vitest';
 import userEvent from '@testing-library/user-event';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import Providers from '@/app/providers';
+import { navigation } from '@/testing/nextNavigation';
 
 import { AppShell } from '.';
 
@@ -39,11 +40,7 @@ import { AppShell } from '.';
 // implementer hides a closed panel) rather than the one thing the brief actually pins: clicking
 // the toggle opens it.
 
-const replaceMock = vi.fn();
-const pushMock = vi.fn();
-vi.mock('next/navigation', () => ({
-  useRouter: () => ({ replace: replaceMock, push: pushMock }),
-}));
+vi.mock('next/navigation', () => import('@/testing/nextNavigation'));
 
 const meFixture = {
   id: '11111111-1111-1111-1111-111111111111',
@@ -86,6 +83,10 @@ function renderShell() {
 }
 
 describe('AppShell agent panel toggle', () => {
+  beforeEach(() => {
+    navigation.reset('/');
+  });
+
   afterEach(() => {
     vi.restoreAllMocks();
   });

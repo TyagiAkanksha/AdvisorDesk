@@ -1,42 +1,37 @@
 'use client';
 
 import { useRouter } from 'next/navigation';
-import { useState } from 'react';
 
 import { AgentPanel } from '@/components/agent/AgentPanel';
 import {
   AppBar,
-  Avatar,
   Box,
   Button,
   Drawer,
-  Menu,
+  Icon,
+  IconButton,
+  Link,
   NavList,
   ToolbarSpacer,
 } from '@/components/common';
 import { useGetMeQuery, useLogoutMutation } from '@/lib/api/authApi';
+import { AGENT_BUTTON_LABEL, APP_NAME, MAIN_NAV_LABEL, OPEN_NAVIGATION_LABEL } from '@/lib/copy';
 
+import { AccountMenu } from './components/AccountMenu';
 import type { AppShellProps } from './interface';
+import { useAppShell } from './useAppShell';
 
 // task-04: the authenticated frame (AppBar + Drawer nav + user menu) tasks
 // 05/06 and the phase-5 panel toggle mount into via the children slot.
-const NAV_ITEMS = [
-  { label: 'Dashboard', href: '/' },
-  { label: 'Content', href: '/content' },
-  // mcp-oauth task-09: the admin "Connected apps" page (docs/plans/mcp-oauth/task-09-admin-connected-apps-ui.md).
-  { label: 'Connected apps', href: '/connected-apps' },
-];
-
+// phase-8 task-15 (DESIGN.md §C1): layout state (`isNarrow`/`navOpen`/`agentOpen`/`navItems`)
+// moved into the colocated `useAppShell` hook; the account menu extracted into its own leaf
+// (`components/AccountMenu`) — `AppShell` itself is now just the frame + the two data hooks
+// (`useGetMeQuery`/`useLogoutMutation`) and `useRouter`, per the brief's Interfaces section.
 export default function Component({ children }: AppShellProps) {
   const router = useRouter();
   const { data: me } = useGetMeQuery();
   const [logout] = useLogoutMutation();
-  const [anchorEl, setAnchorEl] = useState<HTMLElement | null>(null);
-  // phase-5 task-04: the agent panel's open/closed VISUAL state lives here, ABOVE the
-  // `children` route outlet — `AgentPanel` itself is always mounted (never conditionally
-  // rendered) so its own `useAgentStream` conversation state survives navigation between pages
-  // (brief's Interfaces section); only the wrapping Drawer's `open` toggles.
-  const [agentPanelOpen, setAgentPanelOpen] = useState(false);
+  const shell = useAppShell();
 
   const handleSignOut = () => {
     void logout().finally(() => {
@@ -44,68 +39,66 @@ export default function Component({ children }: AppShellProps) {
     });
   };
 
-  const userName = me?.name ?? me?.email ?? '';
-  const accountMenuOpen = Boolean(anchorEl);
-
   return (
-    <Box sx={{ display: 'flex' }}>
+    <Box sx={{ display: 'flex', minHeight: '100vh' }}>
       <AppBar>
+        {shell.isNarrow ? (
+          <IconButton
+            name="Menu"
+            label={OPEN_NAVIGATION_LABEL}
+            onClick={shell.openNav}
+            color="inherit"
+            edge="start"
+          />
+        ) : null}
+        <Link href="/" variant="h6" underline="none" color="inherit" sx={{ mr: 3 }}>
+          {APP_NAME}
+        </Link>
         <Box sx={{ flexGrow: 1 }} />
         {/* User checkpoint (phase-5): both AppBar buttons rendered theme-primary text on the
             primary-colored bar — present in the a11y tree, invisible to the eye. `inherit`
             picks up the AppBar's contrast text color (the standard MUI AppBar idiom). */}
         <Button
+          variant="outlined"
           color="inherit"
+          startIcon={<Icon name="SmartToy" />}
           aria-haspopup="true"
-          aria-expanded={agentPanelOpen}
+          aria-expanded={shell.agentOpen}
           aria-controls="app-shell-agent-panel"
-          onClick={() => setAgentPanelOpen((prev) => !prev)}
+          onClick={shell.toggleAgent}
         >
-          Agent
+          {AGENT_BUTTON_LABEL}
         </Button>
         {me ? (
-          <Button
-            color="inherit"
-            aria-haspopup="true"
-            aria-expanded={accountMenuOpen}
-            // Fix round 1 (review finding #2, Minor): unlike the agent panel's `Drawer`
-            // (`variant="persistent"`, always in the DOM), this `Menu` is a MUI `Popover`/`Modal`
-            // that fully unmounts while closed — a static `aria-controls` here would dangle,
-            // pointing at an id that doesn't exist most of the time. Only advertise it while the
-            // target actually resolves, mirroring `aria-expanded`'s own open/closed split.
-            aria-controls={accountMenuOpen ? 'app-shell-account-menu' : undefined}
-            onClick={(event) => setAnchorEl(event.currentTarget)}
-          >
-            {/* WR-66: decorative — the visible `userName` text right after it already carries
-                the accessible name, so the avatar itself is hidden from the a11y tree to avoid
-                announcing the name twice. */}
-            <Avatar alt="" aria-hidden src={me.avatar_url}>
-              {userName.charAt(0)}
-            </Avatar>
-            {userName}
-          </Button>
+          <AccountMenu
+            name={me.name ?? me.email}
+            avatarUrl={me.avatar_url}
+            onSignOut={handleSignOut}
+          />
         ) : null}
-        <Menu
-          id="app-shell-account-menu"
-          anchorEl={anchorEl}
-          open={accountMenuOpen}
-          onClose={() => setAnchorEl(null)}
-          options={[{ label: 'Sign out', onSelect: handleSignOut }]}
-        />
       </AppBar>
-      <Drawer>
-        <NavList items={NAV_ITEMS} />
+      <Drawer
+        variant={shell.isNarrow ? 'temporary' : 'permanent'}
+        open={shell.isNarrow ? shell.navOpen : true}
+        onClose={shell.closeNav}
+      >
+        <Box component="nav" aria-label={MAIN_NAV_LABEL}>
+          <NavList items={shell.navItems} onNavigate={shell.closeNav} />
+        </Box>
       </Drawer>
-      <Box component="main" sx={{ flexGrow: 1, p: 3 }}>
+      <Box component="main" sx={{ flexGrow: 1, minWidth: 0, p: { xs: 2, md: 3 } }}>
         <ToolbarSpacer />
         {children}
       </Box>
+      {/* phase-8 task-15: `onClose` REMOVED — a persistent drawer never fires it (the phase-6
+          "dead Drawer onClose" backlog item). The panel's own close button (task-23) and the
+          AppBar toggle above are the only close paths, both driving `agentOpen`/`closeAgent`. */}
       <Drawer
         id="app-shell-agent-panel"
         anchor="right"
         variant="persistent"
-        open={agentPanelOpen}
-        onClose={() => setAgentPanelOpen(false)}
+        open={shell.agentOpen}
+        width={shell.isNarrow ? '100vw' : 400}
       >
         <AgentPanel />
       </Drawer>

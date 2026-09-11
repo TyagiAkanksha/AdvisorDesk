@@ -51,7 +51,13 @@ export default function Component({ children }: AppShellProps) {
             edge="start"
           />
         ) : null}
-        <Link href="/" variant="h6" underline="none" color="inherit" sx={{ mr: 3 }}>
+        <Link
+          href="/"
+          variant="h6"
+          underline="none"
+          color="inherit"
+          sx={{ mr: 3, whiteSpace: 'nowrap' }}
+        >
           {APP_NAME}
         </Link>
         <Box sx={{ flexGrow: 1 }} />

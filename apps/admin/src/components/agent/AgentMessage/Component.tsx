@@ -35,11 +35,13 @@ export default function Component({ turn }: AgentMessageProps) {
   }
 
   return (
+    // p8 final, F18: outlined (not the unmandated `grey.100` fill) — token-consistent with the
+    // rest of the admin's Paper surfaces and matches the client chat's own assistant bubble.
     <Paper
       component="article"
       aria-label="Assistant"
-      elevation={0}
-      sx={{ maxWidth: '90%', px: 2, py: 1, mb: 2, bgcolor: 'grey.100' }}
+      variant="outlined"
+      sx={{ maxWidth: '90%', px: 2, py: 1, mb: 2 }}
     >
       {turnSegments(turn).map((segment, index) =>
         segment.kind === 'text' ? (

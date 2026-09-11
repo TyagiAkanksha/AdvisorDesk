@@ -17,9 +17,15 @@ export default function Component({
   return (
     <Stack
       direction="row"
-      spacing={1}
-      divider={<Divider orientation="vertical" flexItem />}
-      sx={{ alignItems: 'center', flexWrap: 'wrap' }}
+      spacing={{ xs: 1, md: 1 }}
+      // p8 final, F9: the vertical dividers between fields (Status | slug | Created | Updated |
+      // Published) read fine on one line at desktop width, but once the row wraps on a phone
+      // they land mid-line and look like stray marks — hide them below `md` and let `rowGap`
+      // keep the wrapped lines readably spaced instead.
+      divider={
+        <Divider orientation="vertical" flexItem sx={{ display: { xs: 'none', md: 'block' } }} />
+      }
+      sx={{ alignItems: 'center', flexWrap: 'wrap', rowGap: 1 }}
     >
       <StatusChip status={status} />
       <Typography variant="body2" color="text.secondary" component="span">

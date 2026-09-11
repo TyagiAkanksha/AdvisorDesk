@@ -134,7 +134,7 @@ export default function Component() {
       {hasData && items.length > 0 ? (
         <ContentTable items={items} onDeleteClick={handleDeleteClick} />
       ) : null}
-      {hasData && total > 0 ? (
+      {hasData ? (
         <Pagination page={page} pageSize={pageSize} total={total} onPageChange={setPage} />
       ) : null}
 

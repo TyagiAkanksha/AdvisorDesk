@@ -75,3 +75,4 @@ export type { TooltipProps } from './Tooltip';
 export { Typography } from './Typography';
 export type { TypographyProps } from './Typography';
 export { useBreakpointDown } from './useBreakpointDown';
+export { useRisingEdgeNotice } from './useRisingEdgeNotice';

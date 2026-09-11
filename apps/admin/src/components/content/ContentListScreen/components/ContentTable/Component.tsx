@@ -62,6 +62,7 @@ export default function Component({ items, onDeleteClick }: ContentTableProps) {
                   label={`Delete ${item.title}`}
                   onClick={() => onDeleteClick(item)}
                   size="small"
+                  color="error"
                   tooltip={DELETE_LABEL}
                 />
               </TableCell>

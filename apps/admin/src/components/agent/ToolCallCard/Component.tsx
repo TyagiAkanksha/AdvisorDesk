@@ -41,7 +41,21 @@ export default function Component({ segment }: ToolCallCardProps) {
         fullWidth
         onClick={() => setExpanded((prev) => !prev)}
         aria-expanded={expanded}
-        startIcon={<Icon name="ExpandMore" />}
+        // p8 final, F10(a): the chevron rotates 180° when expanded — a small affordance that the
+        // row toggles rather than navigates. Purely visual (`aria-hidden` on the glyph itself);
+        // `aria-expanded` above already carries the state for assistive tech.
+        startIcon={
+          <Box
+            component="span"
+            sx={{
+              display: 'inline-flex',
+              transform: expanded ? 'rotate(180deg)' : 'none',
+              transition: 'transform 150ms',
+            }}
+          >
+            <Icon name="ExpandMore" />
+          </Box>
+        }
         sx={{
           justifyContent: 'flex-start',
           textAlign: 'left',
@@ -49,19 +63,39 @@ export default function Component({ segment }: ToolCallCardProps) {
           fontSize: '0.8125rem',
         }}
       >
-        {summary}
+        {/* p8 final, F19: single-line, ellipsized when the summary (esp. an untruncated result)
+            overflows — the full text still lives in the expanded Result block below. Visual only:
+            the accessible-name computation reads this span's text content regardless of the CSS
+            truncation, so the button's pinned accessible name is unaffected. */}
+        <Box
+          component="span"
+          sx={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0 }}
+        >
+          {summary}
+        </Box>
       </Button>
       {expanded ? (
         <Box sx={{ px: 2, pb: 2 }}>
-          <Typography variant="caption" color="text.secondary" component="p">
-            {TOOL_ARGUMENTS_LABEL}
-          </Typography>
-          <Box
-            component="pre"
-            sx={{ m: 0, fontSize: '0.8125rem', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}
-          >
-            {prettyJson(segment.args)}
-          </Box>
+          {/* p8 final, F10(b): an orphan tool_result (no matching tool_call) carries no
+              arguments — `segment.args` is `''` — so there is nothing to caption or pretty-print. */}
+          {segment.args !== '' ? (
+            <>
+              <Typography variant="caption" color="text.secondary" component="p">
+                {TOOL_ARGUMENTS_LABEL}
+              </Typography>
+              <Box
+                component="pre"
+                sx={{
+                  m: 0,
+                  fontSize: '0.8125rem',
+                  whiteSpace: 'pre-wrap',
+                  wordBreak: 'break-word',
+                }}
+              >
+                {prettyJson(segment.args)}
+              </Box>
+            </>
+          ) : null}
           {segment.result !== null ? (
             <>
               <Typography variant="caption" color="text.secondary" component="p" sx={{ mt: 1 }}>

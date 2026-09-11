@@ -1,6 +1,4 @@
-import { useEffect, useRef } from 'react';
-
-import { useSnackbar } from '@/components/common';
+import { useRisingEdgeNotice, useSnackbar } from '@/components/common';
 import { useListContentQuery } from '@/lib/api/contentApi';
 import { useGetStatsQuery } from '@/lib/api/statsApi';
 import { DASHBOARD_REFRESH_ERROR } from '@/lib/copy';
@@ -45,17 +43,11 @@ export function useDashboard(): UseDashboardResult {
   // (e.g. another screen's mutation invalidating the `'Stats'` tag while this screen is still
   // mounted) failing must not blank the dashboard back to `ErrorState` — the last successfully
   // loaded counts stay visible, with the failure surfaced through the global snackbar instead.
-  // Fired once per failure episode: an effect on the rising edge of `stats !== undefined &&
-  // isError` (no dismiss state needed — the provider owns the notice's lifecycle).
+  // Fired once per failure episode via `useRisingEdgeNotice` (no dismiss state needed — the
+  // provider owns the notice's lifecycle).
   const { error: notifyError } = useSnackbar();
   const isBackgroundRefreshFailing = stats !== undefined && statsIsError;
-  const wasBackgroundRefreshFailing = useRef(false);
-  useEffect(() => {
-    if (isBackgroundRefreshFailing && !wasBackgroundRefreshFailing.current) {
-      notifyError(DASHBOARD_REFRESH_ERROR);
-    }
-    wasBackgroundRefreshFailing.current = isBackgroundRefreshFailing;
-  }, [isBackgroundRefreshFailing, notifyError]);
+  useRisingEdgeNotice(isBackgroundRefreshFailing, notifyError, DASHBOARD_REFRESH_ERROR);
 
   return {
     stats,

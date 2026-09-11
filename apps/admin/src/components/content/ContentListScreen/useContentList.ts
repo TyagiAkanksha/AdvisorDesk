@@ -1,7 +1,7 @@
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { useEffect, useRef, useState } from 'react';
 
-import { useSnackbar } from '@/components/common';
+import { useRisingEdgeNotice, useSnackbar } from '@/components/common';
 import { useDeleteContentMutation, useListContentQuery } from '@/lib/api/contentApi';
 import {
   DEFAULT_CONTENT_LIST_PARAMS,
@@ -122,17 +122,11 @@ export function useContentList(): UseContentListResult {
   // Final review, finding F8/C-4: a background refetch (e.g. another screen's mutation
   // invalidating the `'Content'` tag while this list is still mounted) failing must not blank the
   // whole list back to `ErrorState` — the last successfully loaded page stays visible, with the
-  // failure surfaced through the global snackbar instead. Fired once per failure episode (rising
-  // edge of `hasData && isError`), same idiom as `useDashboard`'s background-refresh notice.
+  // failure surfaced through the global snackbar instead. Fired once per failure episode via
+  // `useRisingEdgeNotice`, same idiom as `useDashboard`'s background-refresh notice.
   const { error: notifyError, success: notifySuccess } = useSnackbar();
   const isBackgroundRefreshFailing = hasData && isError;
-  const wasBackgroundRefreshFailing = useRef(false);
-  useEffect(() => {
-    if (isBackgroundRefreshFailing && !wasBackgroundRefreshFailing.current) {
-      notifyError(CONTENT_REFRESH_ERROR);
-    }
-    wasBackgroundRefreshFailing.current = isBackgroundRefreshFailing;
-  }, [isBackgroundRefreshFailing, notifyError]);
+  useRisingEdgeNotice(isBackgroundRefreshFailing, notifyError, CONTENT_REFRESH_ERROR);
 
   const [triggerDelete, { isLoading: isDeleting }] = useDeleteContentMutation();
   const [deleteError, setDeleteError] = useState<string | null>(null);

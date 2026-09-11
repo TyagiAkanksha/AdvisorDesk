@@ -80,6 +80,9 @@ export const EDITOR_LOAD_ERROR = "Couldn't load this item.";
 // phase-8 task-20 (DESIGN.md §5 C5): editor screen copy — header meta prefixes, form field
 // labels, action row labels, and the disabled-Publish tooltip reasons.
 export const PREVIEW_LABEL = 'Preview';
+// p8 final, F17: shown in place of the Markdown preview once the body (title heading stripped)
+// has nothing left to render — an explicit empty state (DESIGN.md §2) instead of a blank panel.
+export const PREVIEW_EMPTY_MESSAGE = 'Nothing to preview yet.';
 export const TITLE_FIELD_LABEL = 'Title';
 export const BODY_FIELD_LABEL = 'Body (Markdown)';
 export const TAGS_FIELD_LABEL = 'Tags';

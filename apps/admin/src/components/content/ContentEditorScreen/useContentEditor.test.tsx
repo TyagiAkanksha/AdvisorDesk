@@ -126,6 +126,17 @@ describe('useContentEditor', () => {
     expect(result.current.isDirty).toBe(false);
   });
 
+  // p8 final, F7: a whitespace-only title must not count as "any field has content" — it is
+  // the same "blank" the required-title validation already treats it as.
+  it('new mode: isDirty stays false when the title is whitespace only', () => {
+    mockFetch(editHandler);
+    const { result } = renderHook(() => useContentEditor({}), { wrapper: Wrapper });
+
+    act(() => result.current.setTitle('   '));
+
+    expect(result.current.isDirty).toBe(false);
+  });
+
   it('installs a beforeunload guard only while dirty', () => {
     mockFetch(editHandler);
     const { result } = renderHook(() => useContentEditor({}), { wrapper: Wrapper });

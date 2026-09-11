@@ -302,6 +302,9 @@ describe('useAgentStream', () => {
 
     await waitFor(() => expect(result.current.streaming).toBe(false));
     expect(result.current.error).toBeNull();
+    // p8 final, F12: pins the post-abort guard — frames released AFTER stop() must not append an
+    // assistant turn; only the user's own turn survives.
+    expect(result.current.turns).toHaveLength(1);
     expect(result.current.turns[0]).toEqual({ role: 'user', text: 'Q', events: [] });
   });
 

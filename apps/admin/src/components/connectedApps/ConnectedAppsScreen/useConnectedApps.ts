@@ -1,6 +1,6 @@
-import { useEffect, useRef, useState } from 'react';
+import { useState } from 'react';
 
-import { useSnackbar } from '@/components/common';
+import { useRisingEdgeNotice, useSnackbar } from '@/components/common';
 import {
   useGetConnectedAppsQuery,
   useRevokeConnectedAppMutation,
@@ -46,13 +46,7 @@ export function useConnectedApps(): UseConnectedAppsResult {
 
   const { success: notifySuccess, error: notifyError } = useSnackbar();
   const isBackgroundRefreshFailing = hasData && isError;
-  const wasBackgroundRefreshFailing = useRef(false);
-  useEffect(() => {
-    if (isBackgroundRefreshFailing && !wasBackgroundRefreshFailing.current) {
-      notifyError(CONNECTED_APPS_REFRESH_ERROR);
-    }
-    wasBackgroundRefreshFailing.current = isBackgroundRefreshFailing;
-  }, [isBackgroundRefreshFailing, notifyError]);
+  useRisingEdgeNotice(isBackgroundRefreshFailing, notifyError, CONNECTED_APPS_REFRESH_ERROR);
 
   const [pendingRevoke, setPendingRevoke] = useState<ConnectedAppDto | null>(null);
   const [triggerRevoke, { isLoading: isRevoking }] = useRevokeConnectedAppMutation();

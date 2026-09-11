@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 
-import { Avatar, Button, Menu } from '@/components/common';
+import { Avatar, Box, Button, Menu } from '@/components/common';
 import { SIGN_OUT_LABEL } from '@/lib/copy';
 
 import type { AccountMenuProps } from './interface';
@@ -17,6 +17,11 @@ export default function Component({ name, avatarUrl, onSignOut }: AccountMenuPro
     <>
       <Button
         color="inherit"
+        // p8 final, F4: the visible name hides below `sm` so the AppBar stops wrapping to two
+        // lines at 390px — `aria-label` pins the accessible name to `name` regardless, since a
+        // CSS-hidden (`display: none`) child would otherwise drop out of the accessible-name
+        // computation the ariaTriggers/Component.test.tsx pins depend on.
+        aria-label={name}
         aria-haspopup="true"
         aria-expanded={open}
         // Fix round 1 (review finding #2, Minor): unlike the agent panel's `Drawer`
@@ -33,7 +38,9 @@ export default function Component({ name, avatarUrl, onSignOut }: AccountMenuPro
         <Avatar alt="" aria-hidden src={avatarUrl}>
           {name.charAt(0)}
         </Avatar>
-        {name}
+        <Box component="span" sx={{ display: { xs: 'none', sm: 'inline' } }}>
+          {name}
+        </Box>
       </Button>
       <Menu
         id="app-shell-account-menu"

@@ -5,6 +5,7 @@ import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import Providers from '@/app/providers';
+import { PREVIEW_EMPTY_MESSAGE } from '@/lib/copy';
 import { formatDate } from '@/lib/format';
 import type { ContentDto } from '@/types/api/content';
 
@@ -433,6 +434,15 @@ describe('ContentEditorScreen', () => {
     expect(publish).toBeDisabled();
     await user.hover(publish.parentElement!);
     expect(await screen.findByRole('tooltip')).toHaveTextContent('Save first');
+  });
+
+  it('new mode: the preview region shows the empty-preview message before any content is typed', async () => {
+    mockFetch();
+
+    renderNew();
+
+    const region = await screen.findByRole('region', { name: 'Preview' });
+    expect(within(region).getByText(PREVIEW_EMPTY_MESSAGE)).toBeInTheDocument();
   });
 
   it('published: Publish is disabled with an "Already published" tooltip; Archive is enabled', async () => {

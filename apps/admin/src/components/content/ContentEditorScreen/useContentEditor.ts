@@ -1,8 +1,8 @@
 import { skipToken } from '@reduxjs/toolkit/query/react';
 import { useRouter } from 'next/navigation';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 
-import { useSnackbar } from '@/components/common';
+import { useRisingEdgeNotice, useSnackbar } from '@/components/common';
 import {
   useArchiveContentMutation,
   useCreateContentMutation,
@@ -162,9 +162,12 @@ export function useContentEditor({ contentId }: UseContentEditorArgs): UseConten
   // we've ever had something to show for this record.
   const hasContent = mode === 'edit' && content !== undefined;
 
+  // p8 final, F7: new-mode dirtiness checks the TRIMMED title — a whitespace-only title (which
+  // `onSubmit`/`titleError` already treat as blank) must not arm the `beforeunload` guard or
+  // enable Save on its own.
   const isDirty =
     mode === 'new'
-      ? title.length > 0 || body.length > 0 || tags.length > 0
+      ? trimmedTitle.length > 0 || body.length > 0 || tags.length > 0
       : content
         ? trimmedTitle !== content.title ||
           body !== content.body_md ||
@@ -324,18 +327,11 @@ export function useContentEditor({ contentId }: UseContentEditorArgs): UseConten
   // fix round 1, F3: a background refetch (e.g. the tag-invalidation-driven `getContent` refetch
   // after a successful Save/Publish/Archive elsewhere) failing while a previously loaded item is
   // still cached must not tear down the form — surfaced through the global snackbar instead.
-  // task-19: reported once per failure episode via the rising edge of `hasContent && isError`
-  // (same idiom as useDashboard/useContentList's background-refresh notices) — the
-  // SnackbarProvider owns the notice's own dismiss/auto-hide lifecycle, so no dismissal state is
-  // needed here.
+  // task-19: reported once per failure episode via `useRisingEdgeNotice` (same idiom as
+  // useDashboard/useContentList's background-refresh notices) — the SnackbarProvider owns the
+  // notice's own dismiss/auto-hide lifecycle, so no dismissal state is needed here.
   const isBackgroundRefreshFailing = mode === 'edit' && hasContent && isError;
-  const wasBackgroundRefreshFailing = useRef(false);
-  useEffect(() => {
-    if (isBackgroundRefreshFailing && !wasBackgroundRefreshFailing.current) {
-      notifyError(EDITOR_REFRESH_ERROR);
-    }
-    wasBackgroundRefreshFailing.current = isBackgroundRefreshFailing;
-  }, [isBackgroundRefreshFailing, notifyError]);
+  useRisingEdgeNotice(isBackgroundRefreshFailing, notifyError, EDITOR_REFRESH_ERROR);
 
   return {
     mode,

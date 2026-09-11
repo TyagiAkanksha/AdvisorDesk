@@ -30,12 +30,23 @@ export default function Component({
   // time) — restore focus to the message field so the user can keep typing without reaching for
   // the mouse. `wasStreamingRef` remembers the *previous* render's `streaming` so the effect can
   // detect the true -> false transition instead of firing on every render.
+  //
+  // p8 final (I-3): only restore focus when the user hasn't moved elsewhere in the meantime —
+  // either focus is still inside this form, or it's sitting on `document.body` (the field was
+  // disabled while streaming, which is where a browser parks focus). If the user has clicked into
+  // some other control (nav, another form), leave their focus alone.
   const inputRef = useRef<HTMLInputElement | HTMLTextAreaElement>(null);
+  const formRef = useRef<HTMLFormElement>(null);
   const wasStreamingRef = useRef(streaming);
 
   useEffect(() => {
-    if (wasStreamingRef.current && !streaming) {
-      inputRef.current?.focus();
+    if (
+      wasStreamingRef.current &&
+      !streaming &&
+      (document.activeElement === document.body ||
+        formRef.current?.contains(document.activeElement))
+    ) {
+      inputRef.current?.focus({ preventScroll: true });
     }
     wasStreamingRef.current = streaming;
   }, [streaming]);
@@ -47,6 +58,7 @@ export default function Component({
 
   return (
     <form
+      ref={formRef}
       onSubmit={(event) => {
         event.preventDefault();
         onSubmit();

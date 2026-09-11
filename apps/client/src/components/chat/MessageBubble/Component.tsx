@@ -37,7 +37,9 @@ export default function Component({ message }: MessageBubbleProps) {
             maxWidth: BUBBLE_MAX_WIDTH,
           }}
         >
-          <Typography component="p" sx={{ color: 'inherit' }}>
+          {/* p8 final (I-1): `pre-wrap` preserves the newlines a Shift+Enter question was typed
+              with — plain text otherwise collapses them to one line. */}
+          <Typography component="p" sx={{ color: 'inherit', whiteSpace: 'pre-wrap' }}>
             {message.text}
           </Typography>
         </Paper>

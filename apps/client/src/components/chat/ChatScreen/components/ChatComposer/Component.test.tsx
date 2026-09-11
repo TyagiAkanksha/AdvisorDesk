@@ -65,6 +65,30 @@ describe('ChatComposer', () => {
     expect(document.activeElement).toBe(screen.getByRole('textbox', { name: 'Message' }));
   });
 
+  // p8 final (I-3): if the user has clicked into some other control while streaming (nav,
+  // another form) the composer must not yank focus away from it once the stream finishes.
+  it('does not refocus the message field when focus moved outside the form while streaming', () => {
+    const { rerender } = render(
+      <>
+        <button type="button">Outside</button>
+        <ChatComposer {...base} streaming />
+      </>,
+    );
+
+    const outsideButton = screen.getByRole('button', { name: 'Outside' });
+    outsideButton.focus();
+    expect(document.activeElement).toBe(outsideButton);
+
+    rerender(
+      <>
+        <button type="button">Outside</button>
+        <ChatComposer {...base} streaming={false} />
+      </>,
+    );
+
+    expect(document.activeElement).not.toBe(screen.getByRole('textbox', { name: 'Message' }));
+  });
+
   it('refocuses the message field after New conversation is clicked', async () => {
     const onNewConversation = vi.fn();
     render(<ChatComposer {...base} showNewConversation onNewConversation={onNewConversation} />);

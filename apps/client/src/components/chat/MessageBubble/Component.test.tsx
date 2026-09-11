@@ -127,4 +127,17 @@ describe('MessageBubble', () => {
     expect(status.className).toContain('MuiAlert-outlined');
     expect(status.className).toContain('MuiAlert-colorWarning');
   });
+
+  // p8 final (I-1): a question typed with Shift+Enter carries real newlines — plain text (no
+  // `white-space` override) collapses them to one line, so a multi-line question would render as
+  // a single run-on sentence.
+  it('preserves newlines in a multi-line user message', () => {
+    const message: ChatMessage = { role: 'user', text: 'Line one\nLine two' };
+
+    render(<MessageBubble message={message} />);
+
+    const paragraph = screen.getByText(/Line one\s+Line two/);
+    expect(paragraph).toHaveStyle({ whiteSpace: 'pre-wrap' });
+    expect(paragraph).toHaveTextContent(/Line one\s+Line two/);
+  });
 });

@@ -11,6 +11,7 @@ describe('error route', () => {
     const reset = vi.fn();
     render(<Error reset={reset} />);
 
+    expect(screen.getByRole('main')).toBeInTheDocument();
     expect(screen.getByRole('alert')).toHaveTextContent('Something went wrong loading this page.');
     await userEvent.click(screen.getByRole('button', { name: 'Try again' }));
 

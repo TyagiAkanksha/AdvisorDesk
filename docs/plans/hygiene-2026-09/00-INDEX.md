@@ -95,9 +95,12 @@ the admin tasks so the shared-harness work in 07 sees the final `EmptyState`).
       747 passed / 1 skipped.
 - [x] One fix wave (`e63a3b8`, 15 of 16 items; B7 "gate the Agent button on `me`" rides — three
       pre-existing shell tests query it pre-session) + one scoped Opus re-review: CLEAR TO MERGE.
-- [ ] PR → merge → `push_ecr.sh` all three images → SSM rollout → live checks (healthz, public
-      content, one grounded `/api/v1/public/chat` stream, admin `/signin?error=state`) →
-      compose bump PR.
+- [x] PR #36 merged → main `387af39`; `push_ecr.sh` pushed api/admin/client:387af39; SSM
+      rollout on the box (backup `docker-compose.yml.bak-bda5084`, alembic no-op, `up -d`);
+      live-verified over HTTPS (healthz, 27 public items, callback bad state → 303, admin
+      /signin copy + /content prerender carries the shell with one `<main>` + 404, client / +
+      /chat + ?tag=, welcome region "Suggested questions", grounded chat SSE 91 tokens +
+      citations + done). Compose bump PR follows. **PROD == MAIN at 387af39.**
 
 ## Ride list after this batch (ledger `.superpowers/sdd/hygiene-2026-09/progress.md`)
 

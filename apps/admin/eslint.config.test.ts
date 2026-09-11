@@ -35,3 +35,54 @@ describe('MUI import boundary (FRONTEND-CONVENTIONS §4)', () => {
     expect(await ruleIdsFor('src/app/providers.tsx')).not.toContain('no-restricted-imports');
   }, 20000);
 });
+
+const TESTING_IMPORT =
+  "import { navigation } from '@/testing/nextNavigation';\nexport const x = navigation;\n";
+
+async function ruleIdsForText(text: string, filePath: string): Promise<string[]> {
+  const [result] = await eslint.lintText(text, { filePath });
+  return (result?.messages ?? []).map((message) => message.ruleId ?? '');
+}
+
+describe('test-seam import boundary (hygiene t09)', () => {
+  it('rejects an @/testing import in a screen component', async () => {
+    expect(
+      await ruleIdsForText(TESTING_IMPORT, 'src/components/content/Fake/Component.tsx'),
+    ).toContain('no-restricted-imports');
+  }, 20000);
+
+  it('rejects an @/testing import in a common primitive, a hook and a lib module', async () => {
+    expect(
+      await ruleIdsForText(TESTING_IMPORT, 'src/components/common/Fake/Component.tsx'),
+    ).toContain('no-restricted-imports');
+    expect(
+      await ruleIdsForText(TESTING_IMPORT, 'src/components/content/Fake/useFake.ts'),
+    ).toContain('no-restricted-imports');
+    expect(await ruleIdsForText(TESTING_IMPORT, 'src/lib/fake.ts')).toContain(
+      'no-restricted-imports',
+    );
+  }, 20000);
+
+  it('allows @/testing imports from test files anywhere and from src/testing itself', async () => {
+    expect(
+      await ruleIdsForText(TESTING_IMPORT, 'src/components/content/Fake/Component.test.tsx'),
+    ).not.toContain('no-restricted-imports');
+    expect(
+      await ruleIdsForText(TESTING_IMPORT, 'src/components/common/Fake/Component.test.tsx'),
+    ).not.toContain('no-restricted-imports');
+    expect(await ruleIdsForText(TESTING_IMPORT, 'src/testing/other.test.tsx')).not.toContain(
+      'no-restricted-imports',
+    );
+    // Colocated test-support folders (e.g. ContentEditorScreen/testing/renderEditor.tsx).
+    expect(
+      await ruleIdsForText(TESTING_IMPORT, 'src/components/content/Fake/testing/renderFake.tsx'),
+    ).not.toContain('no-restricted-imports');
+  }, 20000);
+
+  // The composition must not drop the MUI boundary for any file class it re-configures.
+  it('keeps the MUI boundary in place for test files outside common', async () => {
+    expect(
+      await ruleIdsForText(MUI_IMPORT, 'src/components/content/Fake/Component.test.tsx'),
+    ).toContain('no-restricted-imports');
+  }, 20000);
+});

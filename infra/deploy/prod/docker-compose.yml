@@ -34,10 +34,14 @@ services:
       RATE_LIMIT_PER_MIN: "10"
       RATE_LIMIT_PER_DAY: "50"
       SESSION_CREATE_PER_DAY: "20"
-      # api is never published to the host — only Caddy (same network) reaches it,
-      # and Caddy overwrites X-Forwarded-For with the real client IP (see Caddyfile),
-      # so trusting the forwarded header here is safe and spoof-proof.
-      FORWARDED_ALLOW_IPS: "*"
+      # api is never published to the host — only Caddy, on the compose bridge
+      # network (advisordesk_default, 172.18.0.0/16 — `docker network inspect`),
+      # can reach uvicorn. Caddy already overwrites X-Forwarded-For with the real
+      # client IP (see Caddyfile) before proxying, so this scoped allowlist is
+      # defence in depth rather than the only thing preventing XFF spoofing — the
+      # spoof test (VERIFY.md §2b, recorded 2026-09-11) confirmed Caddy sanitises
+      # untrusted XFF even while this was still "*".
+      FORWARDED_ALLOW_IPS: "172.18.0.0/16"
     expose:
       - "8000"
     logging: *default-logging

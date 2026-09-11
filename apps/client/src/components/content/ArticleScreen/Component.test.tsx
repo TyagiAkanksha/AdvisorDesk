@@ -112,7 +112,7 @@ describe('ArticleScreen', () => {
     ).toBeInTheDocument();
   });
 
-  it('renders the back link, tag links to the filter, the disclaimer as an info alert, and the chat CTA', () => {
+  it('renders the back link, tag links to the filter, the disclaimer as an info note, and the chat CTA', () => {
     render(<ArticleScreen article={article} related={[]} />);
 
     expect(screen.getByRole('link', { name: /Back to articles/ })).toHaveAttribute('href', '/');

@@ -6,9 +6,11 @@ import { formatPublishedDate } from '@/lib/formatDate';
 import { TagChips } from '../TagChips';
 import type { ArticleCardProps } from './interface';
 
-// phase-8 task-09 (DESIGN.md §B2): one article summary card, equal height in a grid. A client
-// leaf because the tag chips render through `common/Link` (next/link) as `component` — a
-// function prop that cannot cross the RSC boundary from a Server Component parent.
+// phase-8 task-09 (DESIGN.md §B2): one article summary card, equal height in a grid. The tag
+// chips are the shared `TagChips` client leaf (p8 t24); the title link is `common/Link`, a
+// `'use client'` module whose export is a client reference — this card stays a client leaf
+// because it uses next/link's client-side routing, not because a prop cannot cross the RSC
+// boundary (see `ArticleScreen/Component.tsx`'s header comment for the corrected rule).
 //
 // p8 t24: `titleAs` (default 'h2') lets `RelatedArticles` render the card title as an h3 under
 // its own section h2, instead of a second competing h2 on the page. The Typography keeps

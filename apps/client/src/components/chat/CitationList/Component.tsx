@@ -15,8 +15,8 @@ import type { CitationListProps } from './interface';
 // just the marker; `pl: 0` removes the indent that marker used to occupy.
 //
 // p8 t24 (DESIGN.md §B4 carry-in): a `<section>` (ARIA `region`), not a `<nav>` — `nav` is for
-// site navigation landmarks; this is one message's citation list, and a transcript with several
-// answers would otherwise stack multiple same-named `navigation` landmarks.
+// site navigation; one message's citation list is content, so it is a named region (one per
+// answer, which is fine for a region).
 export default function Component({ citations }: CitationListProps) {
   if (citations.length === 0) {
     return null;

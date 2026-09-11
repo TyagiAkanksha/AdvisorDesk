@@ -1,45 +1,53 @@
-import { Box, Typography } from '@/components/common';
+import { Paper } from '@/components/common';
+import { MarkdownPreview } from '@/components/content/MarkdownPreview';
+import { turnSegments } from '@/lib/agentTurnSegments';
 
 import { ToolCallCard } from '../ToolCallCard';
 import type { AgentMessageProps } from './interface';
 
-// phase-5 task-04. Dumb, one purpose: render one turn. `role="article"` named "You"/"Assistant"
-// per turn (test-author judgment call, `p5-t04-test-author.md`) — a `Box component="article"`
-// carries that role implicitly, same as `apps/client`'s `MessageBubble` precedent for the
-// equivalent chat-shaped UI. Tool events render below the turn's text, in arrival order
-// (`turn.events` is append-only — index-as-key is safe, same rationale as `ChatScreen`'s own
-// message list).
+// phase-8 task-23 (DESIGN.md §5 C7). Dumb, one purpose: render one turn. `role="article"` named
+// "You"/"Assistant" per turn (test-author judgment call carried over from phase-5 task-04). A
+// user turn is a right-aligned navy `Paper` bubble; an assistant turn is `turnSegments(turn)`
+// mapped onto Markdown text runs and `ToolCallCard`s, INTERLEAVED in arrival order (`turn.events`
+// is append-only — index-as-key is safe, same rationale as `ChatScreen`'s own message list).
 export default function Component({ turn }: AgentMessageProps) {
-  const label = turn.role === 'user' ? 'You' : 'Assistant';
-
-  return (
-    <Box
-      component="article"
-      aria-label={label}
-      sx={{
-        display: 'flex',
-        flexDirection: 'column',
-        alignItems: turn.role === 'user' ? 'flex-end' : 'flex-start',
-        mb: 2,
-      }}
-    >
-      <Box
+  if (turn.role === 'user') {
+    return (
+      <Paper
+        component="article"
+        aria-label="You"
+        elevation={0}
         sx={{
+          ml: 'auto',
           maxWidth: '90%',
-          bgcolor: turn.role === 'user' ? 'primary.main' : 'grey.100',
-          color: turn.role === 'user' ? 'primary.contrastText' : 'text.primary',
-          borderRadius: 2,
+          width: 'fit-content',
+          bgcolor: 'primary.main',
+          color: 'primary.contrastText',
           px: 2,
           py: 1,
+          mb: 2,
+          whiteSpace: 'pre-wrap',
         }}
       >
-        <Typography component="p" sx={{ color: 'inherit', whiteSpace: 'pre-wrap' }}>
-          {turn.text}
-        </Typography>
-        {turn.events.map((event, index) => (
-          <ToolCallCard key={index} event={event} />
-        ))}
-      </Box>
-    </Box>
+        {turn.text}
+      </Paper>
+    );
+  }
+
+  return (
+    <Paper
+      component="article"
+      aria-label="Assistant"
+      elevation={0}
+      sx={{ maxWidth: '90%', px: 2, py: 1, mb: 2, bgcolor: 'grey.100' }}
+    >
+      {turnSegments(turn).map((segment, index) =>
+        segment.kind === 'text' ? (
+          <MarkdownPreview key={index} markdown={segment.text} variant="chat" />
+        ) : (
+          <ToolCallCard key={index} segment={segment} />
+        ),
+      )}
+    </Paper>
   );
 }

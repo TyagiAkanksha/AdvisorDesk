@@ -107,3 +107,26 @@ export const CONNECTED_APPS_LOAD_ERROR = "Couldn't load connected apps.";
 export const CONNECTED_APPS_REFRESH_ERROR =
   "Couldn't refresh connected apps — showing the last loaded list.";
 export const REVOKE_ERROR_FALLBACK = "Couldn't revoke this app. Please try again.";
+
+// phase-8 task-23 (DESIGN.md §5 C7): agent panel — header, empty-state suggestions, composer
+// helper line, and ToolCallCard's collapsed-row copy.
+export const AGENT_PANEL_TITLE = 'Agent';
+export const AGENT_CLEAR_LABEL = 'Clear';
+export const AGENT_CLOSE_LABEL = 'Close agent panel';
+export const AGENT_EMPTY_TITLE = 'Ask the agent to work on your content';
+export const AGENT_EMPTY_DESCRIPTION =
+  'It can draft, tag, publish and search articles. Try one of these:';
+export const AGENT_SUGGESTED_COMMANDS = [
+  'Draft an article on Roth IRA conversion basics and tag it retirement.',
+  'List the drafts tagged estate-planning.',
+  'How many published articles do we have on tax planning?',
+] as const;
+export const AGENT_WORKING_LABEL = 'Working…';
+export const AGENT_MESSAGE_LABEL = 'Message';
+export const AGENT_SEND_LABEL = 'Send';
+export const AGENT_STOP_LABEL = 'Stop';
+export const AGENT_HELPER_TEXT = 'Enter to send · Shift+Enter for a new line';
+export const TOOL_RUNNING_PREFIX = 'Running';
+export const TOOL_RAN_PREFIX = 'Ran';
+export const TOOL_ARGUMENTS_LABEL = 'Arguments';
+export const TOOL_RESULT_LABEL = 'Result';

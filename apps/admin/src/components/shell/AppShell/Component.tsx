@@ -100,7 +100,7 @@ export default function Component({ children }: AppShellProps) {
         open={shell.agentOpen}
         width={shell.isNarrow ? '100vw' : 400}
       >
-        <AgentPanel />
+        <AgentPanel onClose={shell.closeAgent} />
       </Drawer>
     </Box>
   );

@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import '@testing-library/jest-dom/vitest';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -112,10 +112,10 @@ async function askAgent(user: ReturnType<typeof userEvent.setup>, text: string):
   await user.click(screen.getByRole('button', { name: 'Send' }));
 }
 
-function renderPanel() {
+function renderPanel(onClose = vi.fn()) {
   return render(
     <Providers>
-      <AgentPanel />
+      <AgentPanel onClose={onClose} />
     </Providers>,
   );
 }
@@ -166,18 +166,23 @@ describe('AgentPanel', () => {
     const assistant = await screen.findByRole('article', { name: 'Assistant' });
     await waitFor(() => expect(assistant).toHaveTextContent('Done — draft created.'));
 
-    const text = assistant.textContent ?? '';
-    expect(text).toMatch(/→\s*create_draft/);
     // `resultSummary` must be escaped before interpolation — it contains regex metacharacters
     // (parens, a trailing period) that must match LITERALLY, since the pin requires
     // `result_summary` rendered verbatim (mirrors useAgentStream.test.tsx test 1's own verbatim
     // pin on the same string).
     const escapedResultSummary = resultSummary.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    expect(text).toMatch(new RegExp(`✓\\s*create_draft.*${escapedResultSummary}`));
-    const callIndex = text.indexOf('→');
-    const resultIndex = text.indexOf('✓');
-    expect(callIndex).toBeGreaterThanOrEqual(0);
-    expect(resultIndex).toBeGreaterThan(callIndex);
+    const card = within(assistant).getByRole('button', {
+      name: new RegExp(`^Ran create_draft · ${escapedResultSummary}$`),
+    });
+    expect(card).toHaveAttribute('aria-expanded', 'false');
+    const text = assistant.textContent ?? '';
+    expect(text.indexOf('Creating the draft.')).toBeLessThan(text.indexOf('Ran create_draft'));
+    expect(text.indexOf('Ran create_draft')).toBeLessThan(text.indexOf('Done — draft created.'));
+
+    await user.click(card);
+    expect(
+      within(assistant).getByText(/"title": "Roth IRA Conversion Basics"/),
+    ).toBeInTheDocument();
   });
 
   it('renders a §6 cap-report final message as a normal assistant message, not an error', async () => {
@@ -202,7 +207,7 @@ describe('AgentPanel', () => {
     expect(screen.queryByRole('alert')).not.toBeInTheDocument();
   });
 
-  it('disables the message input and Send while streaming, and re-enables both once the stream completes', async () => {
+  it('Send is gated on a draft; while streaming the field is disabled and Stop replaces Send; both restore after', async () => {
     const { response, release } = gatedStreamResponse([
       { event: 'token', data: { text: 'Working on it.' } },
       { event: 'done', data: { tool_calls: [] } },
@@ -212,20 +217,137 @@ describe('AgentPanel', () => {
 
     renderPanel();
     const input = screen.getByRole('textbox', { name: 'Message' });
-    const sendButton = screen.getByRole('button', { name: 'Send' });
-    expect(input).toBeEnabled();
-    expect(sendButton).toBeEnabled();
-
-    await askAgent(user, 'How many published pieces do we have on tax planning?');
-
-    // The stream is held open (no frames released yet) — `streaming` is stably `true`, not a
-    // narrow race window (see judgment call 4 above).
-    await waitFor(() => expect(input).toBeDisabled());
     expect(screen.getByRole('button', { name: 'Send' })).toBeDisabled();
+    await user.type(input, 'How many published pieces do we have on tax planning?');
+    expect(screen.getByRole('button', { name: 'Send' })).toBeEnabled();
+    await user.click(screen.getByRole('button', { name: 'Send' }));
+
+    await waitFor(() => expect(input).toBeDisabled());
+    expect(screen.getByRole('button', { name: 'Stop' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Send' })).not.toBeInTheDocument();
+    expect(screen.getByRole('status', { name: 'Working…' })).toBeInTheDocument();
 
     release();
 
     await waitFor(() => expect(input).toBeEnabled());
-    expect(screen.getByRole('button', { name: 'Send' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: 'Send' })).toBeInTheDocument();
+    expect(screen.queryByRole('status', { name: 'Working…' })).not.toBeInTheDocument();
+  });
+
+  it('header: an h2 "Agent", Clear resets the conversation, the close button calls onClose', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(
+        streamResponse([
+          { event: 'token', data: { text: 'Hi' } },
+          { event: 'done', data: { tool_calls: [] } },
+        ]),
+      ),
+    );
+    const onClose = vi.fn();
+    const user = userEvent.setup();
+
+    renderPanel(onClose);
+    expect(screen.getByRole('heading', { level: 2, name: 'Agent' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Clear' })).toBeDisabled();
+
+    await askAgent(user, 'Hello');
+    await screen.findByRole('article', { name: 'Assistant' });
+    await user.click(screen.getByRole('button', { name: 'Clear' }));
+    expect(screen.queryByRole('article')).not.toBeInTheDocument();
+    expect(screen.getByRole('status')).toHaveTextContent('Ask the agent to work on your content');
+
+    await user.click(screen.getByRole('button', { name: 'Close agent panel' }));
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it('the empty state offers three suggested commands and clicking one sends it', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      streamResponse([
+        { event: 'token', data: { text: 'Sure.' } },
+        { event: 'done', data: { tool_calls: [] } },
+      ]),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+    const user = userEvent.setup();
+
+    renderPanel();
+    const status = screen.getByRole('status');
+    const suggestions = within(status).getAllByRole('button');
+    expect(suggestions).toHaveLength(3);
+
+    await user.click(suggestions[1]!);
+
+    await screen.findByRole('article', { name: 'You' });
+    const body = JSON.parse((fetchMock.mock.calls[0]?.[1] as RequestInit).body as string) as {
+      messages: { content: string }[];
+    };
+    expect(body.messages[0]?.content).toBe('List the drafts tagged estate-planning.');
+  });
+
+  it('Stop aborts the stream and keeps what arrived, with no error', async () => {
+    const { response, release } = gatedStreamResponse([
+      { event: 'token', data: { text: 'Never shown' } },
+      { event: 'done', data: { tool_calls: [] } },
+    ]);
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(response));
+    const user = userEvent.setup();
+
+    renderPanel();
+    await askAgent(user, 'Q');
+    await user.click(await screen.findByRole('button', { name: 'Stop' }));
+    release();
+
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Send' })).toBeInTheDocument());
+    expect(screen.getByRole('article', { name: 'You' })).toHaveTextContent('Q');
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+  });
+
+  it('Enter sends the draft; Shift+Enter inserts a newline instead', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      streamResponse([
+        { event: 'token', data: { text: 'Ok' } },
+        { event: 'done', data: { tool_calls: [] } },
+      ]),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+    const user = userEvent.setup();
+
+    renderPanel();
+    const input = screen.getByRole('textbox', { name: 'Message' });
+    await user.type(input, 'first{Shift>}{Enter}{/Shift}second');
+    expect(input).toHaveValue('first\nsecond');
+    expect(fetchMock).not.toHaveBeenCalled();
+
+    await user.type(input, '{Enter}');
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    expect(input).toHaveValue('');
+  });
+
+  it('an `error` event renders an inline error alert', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(
+        streamResponse([
+          {
+            event: 'error',
+            data: { error: { code: 'agent_failed', message: 'The agent hit a wall.' } },
+          },
+        ]),
+      ),
+    );
+    const user = userEvent.setup();
+
+    renderPanel();
+    await askAgent(user, 'Q');
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('The agent hit a wall.');
+  });
+
+  it('renders the helper line under the composer', () => {
+    renderPanel();
+
+    expect(screen.getByText('Enter to send · Shift+Enter for a new line')).toBeInTheDocument();
   });
 });

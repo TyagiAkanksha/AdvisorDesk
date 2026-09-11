@@ -1,7 +1,7 @@
-import type { ToolEvent } from '../useAgentStream';
+import type { ToolSegment } from '@/lib/agentTurnSegments';
 
-/** Renders one tool-call or tool-result event, in the order it arrived (PRD §5.4/§2.2: "renders
- * each tool call live as it happens"). */
+/** Renders one tool-call segment (PRD §5.4/§2.2: "renders each tool call live as it happens") as
+ * a collapsible card — collapsed to a one-line summary, expanding to arguments + result. */
 export interface ToolCallCardProps {
-  event: ToolEvent;
+  segment: ToolSegment;
 }

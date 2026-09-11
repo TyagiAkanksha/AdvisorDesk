@@ -4,6 +4,7 @@ import {
   DEFAULT_CONTENT_LIST_PARAMS,
   buildContentListSearch,
   hasActiveFilters,
+  isCanonicalContentListSearch,
   parseContentListParams,
 } from './contentListParams';
 
@@ -49,5 +50,26 @@ describe('contentListParams', () => {
   it('hasActiveFilters ignores the page', () => {
     expect(hasActiveFilters({ ...DEFAULT_CONTENT_LIST_PARAMS, page: 3 })).toBe(false);
     expect(hasActiveFilters({ ...DEFAULT_CONTENT_LIST_PARAMS, q: 'x' })).toBe(true);
+  });
+
+  it('never writes a whitespace-only tag or q into the search string (hygiene t06 M1)', () => {
+    expect(buildContentListSearch({ status: '', tag: '   ', q: '   ', page: 1 })).toBe('');
+    expect(buildContentListSearch({ status: '', tag: ' retirement ', q: ' roth ', page: 1 })).toBe(
+      '?tag=retirement&q=roth',
+    );
+  });
+
+  it('recognises a canonical search string (hygiene t06 M2)', () => {
+    expect(isCanonicalContentListSearch(new URLSearchParams(''))).toBe(true);
+    expect(isCanonicalContentListSearch(new URLSearchParams('status=draft&tag=a&q=b&page=2'))).toBe(
+      true,
+    );
+    expect(isCanonicalContentListSearch(new URLSearchParams('status=bogus'))).toBe(false);
+    expect(isCanonicalContentListSearch(new URLSearchParams('page=0'))).toBe(false);
+    expect(isCanonicalContentListSearch(new URLSearchParams('page=abc'))).toBe(false);
+    expect(isCanonicalContentListSearch(new URLSearchParams('page=1'))).toBe(false);
+    expect(isCanonicalContentListSearch(new URLSearchParams('tag=%20%20'))).toBe(false);
+    expect(isCanonicalContentListSearch(new URLSearchParams('q=roth&status=draft'))).toBe(false);
+    expect(isCanonicalContentListSearch(new URLSearchParams('sort=title'))).toBe(false);
   });
 });

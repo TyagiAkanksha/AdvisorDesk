@@ -160,4 +160,92 @@ describe('useContentList — URL is the filter state', () => {
     await waitFor(() => expect(result.current.hasData).toBe(true));
     expect(navigation.replace).not.toHaveBeenCalled();
   });
+
+  it('never writes a whitespace-only search term to the URL or the request (M1)', async () => {
+    const fetchMock = mockList(() => emptyPage(0, 1));
+    const { result } = renderHook(() => useContentList(), { wrapper: Wrapper });
+
+    act(() => result.current.setQ('   '));
+
+    // Real timers: wait past the hook's 300 ms debounce and prove nothing was ever written.
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 600));
+    });
+
+    expect(navigation.replace).not.toHaveBeenCalled();
+    expect(navigation.search).toBe('');
+    expect(result.current.q).toBe('   ');
+    expect(
+      fetchMock.mock.calls.every(
+        ([input]) => new URL(requestUrl(input)).searchParams.get('q') === null,
+      ),
+    ).toBe(true);
+  });
+
+  it('trims the search term before writing it to the URL and leaves the field as typed (M1)', async () => {
+    mockList(() => emptyPage(0, 1));
+    const { result } = renderHook(() => useContentList(), { wrapper: Wrapper });
+
+    act(() => result.current.setQ('  roth  '));
+
+    await waitFor(
+      () =>
+        expect(navigation.replace).toHaveBeenLastCalledWith('/content?q=roth', { scroll: false }),
+      { timeout: 2000 },
+    );
+    expect(navigation.replace).toHaveBeenCalledTimes(1);
+    expect(result.current.q).toBe('  roth  ');
+  });
+
+  it('blanking a term with whitespace clears the q param instead of writing blanks (M1)', async () => {
+    mockList(() => emptyPage(0, 1));
+    navigation.reset('/content?q=roth');
+    const { result } = renderHook(() => useContentList(), { wrapper: Wrapper });
+
+    act(() => result.current.setQ('   '));
+
+    await waitFor(
+      () => expect(navigation.replace).toHaveBeenLastCalledWith('/content', { scroll: false }),
+      { timeout: 2000 },
+    );
+    expect(navigation.search).toBe('');
+    expect(result.current.hasFilters).toBe(false);
+  });
+
+  it('canonicalises an unknown status out of the URL on first parse (M2)', async () => {
+    navigation.reset('/content?status=bogus');
+    mockList(() => emptyPage(0, 1));
+
+    const { result } = renderHook(() => useContentList(), { wrapper: Wrapper });
+
+    await waitFor(() =>
+      expect(navigation.replace).toHaveBeenCalledWith('/content', { scroll: false }),
+    );
+    expect(navigation.search).toBe('');
+    expect(result.current.status).toBe('');
+    expect(result.current.hasFilters).toBe(false);
+  });
+
+  it('canonicalising keeps the usable filters and drops only the unusable parts (M2)', async () => {
+    navigation.reset('/content?q=roth&status=bogus&tag=retirement&page=0');
+    mockList(() => emptyPage(0, 1));
+
+    renderHook(() => useContentList(), { wrapper: Wrapper });
+
+    await waitFor(() =>
+      expect(navigation.replace).toHaveBeenCalledWith('/content?tag=retirement&q=roth', {
+        scroll: false,
+      }),
+    );
+  });
+
+  it('leaves an already-canonical URL untouched (M2)', async () => {
+    navigation.reset('/content?status=published&tag=retirement&q=roth&page=2');
+    mockList((url) => emptyPage(100, Number(url.searchParams.get('page') ?? 1)));
+
+    const { result } = renderHook(() => useContentList(), { wrapper: Wrapper });
+
+    await waitFor(() => expect(result.current.hasData).toBe(true));
+    expect(navigation.replace).not.toHaveBeenCalled();
+  });
 });

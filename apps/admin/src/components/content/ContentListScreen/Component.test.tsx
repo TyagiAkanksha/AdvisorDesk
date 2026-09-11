@@ -344,7 +344,11 @@ describe('ContentListScreen', () => {
       return element;
     });
     expect(within(status).queryByRole('button')).toBeNull();
-    await user.click(screen.getByRole('button', { name: 'Clear filters' }));
+    // The filters toolbar renders its own "Clear filters" whenever a filter is active, so the
+    // empty state's button (its sibling right after the live region) is the LAST one by name.
+    const clearButtons = screen.getAllByRole('button', { name: 'Clear filters' });
+    expect(clearButtons).toHaveLength(2);
+    await user.click(clearButtons[1]!);
     expect(navigation.replace).toHaveBeenLastCalledWith('/content', { scroll: false });
   });
 

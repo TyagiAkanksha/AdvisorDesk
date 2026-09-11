@@ -1,0 +1,64 @@
+name: prod-probe
+
+# Functional uptime probe for the deployed stack (desktop closeout 2026-09-11).
+#
+# Why a scheduled workflow and not a third-party pinger: the only outage that has actually
+# happened (the LLM-provider incident, phase 7) left `/healthz` green while `/public/chat`
+# failed — so the probe must drive a real grounded chat request through the whole path
+# (Caddy → api → Postgres/pgvector → OpenAI → SSE), not just ping a health endpoint.
+#
+# Budget: every 6 h = 4 chat requests/day from GitHub's runner IPs, far under the public
+# per-IP limits (`RATE_LIMIT_PER_DAY: 50`, `SESSION_CREATE_PER_DAY: 20`). A failed run emails
+# the repository owner (GitHub's default notification for failed scheduled workflows goes to
+# the last committer of the workflow file).
+
+on:
+  schedule:
+    - cron: "17 */6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  API: https://api.advisordesk.tyagiakanksha.com
+  ADMIN: https://admin.advisordesk.tyagiakanksha.com
+  CLIENT: https://advisordesk.tyagiakanksha.com
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: healthz
+        run: |
+          body=$(curl -fsS --max-time 15 "$API/api/v1/healthz")
+          echo "$body"
+          test "$body" = '{"status":"ok"}'
+
+      - name: public content (at least one published item)
+        run: |
+          count=$(curl -fsS --max-time 15 "$API/api/v1/public/content" | python3 -c 'import sys,json; d=json.load(sys.stdin); print(len(d) if isinstance(d,list) else len(d.get("items",[])))')
+          echo "published items: $count"
+          test "$count" -ge 1
+
+      - name: client + admin pages respond
+        run: |
+          for u in "$CLIENT/" "$CLIENT/chat" "$ADMIN/signin"; do
+            code=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 20 "$u")
+            echo "$u -> $code"
+            test "$code" = "200"
+          done
+
+      - name: grounded chat stream (token + citations + done, no error)
+        run: |
+          curl -sS -N --max-time 90 \
+            -H 'Content-Type: application/json' -H 'Accept: text/event-stream' \
+            -d '{"message":"What is the difference between a traditional IRA and a Roth IRA?"}' \
+            "$API/api/v1/public/chat" > stream.txt || true
+          echo "--- event histogram ---"
+          grep -o '^event: [a-z_]*' stream.txt | sort | uniq -c || true
+          grep -q '^event: token' stream.txt
+          grep -q '^event: citations' stream.txt
+          grep -q '^event: done' stream.txt
+          ! grep -q '^event: error' stream.txt

@@ -324,10 +324,11 @@ describe('ContentListScreen', () => {
       expect(element).toHaveTextContent('No content yet');
       return element;
     });
-    expect(within(status).getByRole('link', { name: 'Create your first article' })).toHaveAttribute(
+    expect(screen.getByRole('link', { name: 'Create your first article' })).toHaveAttribute(
       'href',
       '/content/new',
     );
+    expect(within(status).queryByRole('link')).toBeNull();
   });
 
   it('renders the "no match" empty state with a Clear filters button when filters exclude everything', async () => {
@@ -342,7 +343,8 @@ describe('ContentListScreen', () => {
       expect(element).toHaveTextContent('No content matches these filters');
       return element;
     });
-    await user.click(within(status).getByRole('button', { name: 'Clear filters' }));
+    expect(within(status).queryByRole('button')).toBeNull();
+    await user.click(screen.getByRole('button', { name: 'Clear filters' }));
     expect(navigation.replace).toHaveBeenLastCalledWith('/content', { scroll: false });
   });
 

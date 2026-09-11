@@ -2,7 +2,7 @@
 id: p8-t21
 phase: phase-8-ui-polish
 depends_on: [p8-t18]
-status: pending
+status: done
 spec: docs/plans/phase-8-ui-polish/DESIGN.md
 review: sonnet
 ---

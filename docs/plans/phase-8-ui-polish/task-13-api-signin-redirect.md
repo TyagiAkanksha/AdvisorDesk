@@ -2,7 +2,7 @@
 id: p8-t13
 phase: phase-8-ui-polish
 depends_on: []
-status: pending
+status: done
 spec: docs/plans/phase-8-ui-polish/DESIGN.md
 review: opus
 ---

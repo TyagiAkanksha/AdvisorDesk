@@ -65,20 +65,30 @@ export const SUGGESTED_QUESTIONS_LABEL = 'Suggested questions';
   Keep every other assertion in that test verbatim (no heading, description text, four buttons,
   click sends the first suggested question).
 
-- [ ] **Step 2 (test-author, RED): pin the single-expression rule in ChatScreen.** Append to
-  `ChatScreen/Component.test.tsx` a source-level pin (the behaviour is already covered by the
-  existing h1/welcome/new-conversation tests; this pins the tidy itself):
+- [ ] **Step 2 (test-author, RED): pin the single-expression rule in ChatScreen.** Create
+  `ChatScreen/source.test.ts` (a **node-environment** file — not inside the jsdom
+  `Component.test.tsx`: Vite rewrites the literal `new URL('./x', import.meta.url)` pattern
+  into an asset URL, so resolve the path with `fileURLToPath` instead):
 
   ```ts
   import { readFileSync } from 'node:fs';
-  // …
-  it('derives the conversation state once (t24 M4: no inline messages.length checks)', () => {
-    const source = readFileSync(new URL('./Component.tsx', import.meta.url), 'utf8');
-    expect(source).toContain('const hasConversation = messages.length > 0;');
-    expect(source).not.toMatch(/messages\.length === 0/);
-    expect(source).not.toMatch(/showNewConversation=\{messages\.length > 0\}/);
+  import { dirname, join } from 'node:path';
+  import { fileURLToPath } from 'node:url';
+  import { describe, expect, it } from 'vitest';
+
+  const SOURCE = readFileSync(join(dirname(fileURLToPath(import.meta.url)), 'Component.tsx'), 'utf8');
+
+  describe('ChatScreen source', () => {
+    it('derives the conversation state once (no inline messages.length checks)', () => {
+      expect(SOURCE).toContain('const hasConversation = messages.length > 0;');
+      expect(SOURCE).not.toMatch(/messages\.length === 0/);
+      expect(SOURCE).not.toMatch(/showNewConversation=\{messages\.length > 0\}/);
+    });
   });
   ```
+
+  *(Controller amendment during execution: the original step put this pin inside the jsdom
+  test file with `new URL(...)`, which throws `The URL must be of scheme file`.)*
 
 - [ ] **Step 3: run RED.** `cd apps/client && npx vitest run ChatWelcome ChatScreen` → the
   rewritten region test fails on `name: 'Suggested questions'`; the source pin fails on

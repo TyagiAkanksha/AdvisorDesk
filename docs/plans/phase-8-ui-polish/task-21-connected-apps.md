@@ -128,7 +128,8 @@ pin below moves accordingly).
       screen.getByText(/Apps authorised to use AdvisorDesk over MCP/),
     ).toBeInTheDocument();
 
-    const table = screen.getByRole('table', { name: 'Connected apps' });
+    // The header renders in every state — wait for the TABLE (the loaded state), not the heading.
+    const table = await screen.findByRole('table', { name: 'Connected apps' });
     const headers = within(table).getAllByRole('columnheader').map((cell) => cell.textContent);
     expect(headers).toEqual(['Client', 'Connected', 'Last used', 'Actions']);
 

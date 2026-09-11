@@ -459,7 +459,7 @@ Append:
 
   it('an `error` event renders an inline error alert', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(streamResponse([
-      { event: 'error', data: { code: 'agent_failed', message: 'The agent hit a wall.' } },
+      { event: 'error', data: { error: { code: 'agent_failed', message: 'The agent hit a wall.' } } },
     ])));
     const user = userEvent.setup();
 

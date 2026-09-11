@@ -20,6 +20,7 @@ export default function Component({
   helperText,
   onBlur,
   onKeyDown,
+  monospace,
 }: TextFieldProps) {
   const handleChange = (event: ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
     onChange(event.target.value);
@@ -50,6 +51,7 @@ export default function Component({
       helperText={helperText}
       onBlur={onBlur}
       onKeyDown={onKeyDown ? handleKeyDown : undefined}
+      sx={monospace ? { '& .MuiInputBase-input': { fontFamily: 'monospace' } } : undefined}
     />
   );
 }

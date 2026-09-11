@@ -19,4 +19,12 @@ describe('Icon', () => {
     expect(svg).toHaveAttribute('aria-hidden', 'true');
     expect(svg).not.toHaveAttribute('aria-label');
   });
+
+  it('registers the sub-phase C glyphs', () => {
+    for (const name of ['SmartToy', 'Link', 'ExpandMore', 'Send', 'Stop'] as const) {
+      const { unmount } = render(<Icon name={name} label={name} />);
+      expect(screen.getByRole('img', { name })).toBeInTheDocument();
+      unmount();
+    }
+  });
 });

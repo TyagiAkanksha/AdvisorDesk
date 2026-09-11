@@ -7,10 +7,16 @@ import type { EmptyStateProps } from './interface';
 // mcp-oauth task-09: `title`/`description` render as two separate paragraphs (not concatenated)
 // so each is independently queryable by exact text; `message` (the original, single-line form)
 // is unaffected for every pre-existing call site.
-export default function Component({ message, title, description }: EmptyStateProps) {
+export default function Component({
+  message,
+  title,
+  description,
+  icon = 'Article',
+  action,
+}: EmptyStateProps) {
   return (
     <Box role="status" sx={{ textAlign: 'center', color: 'text.secondary', py: 6 }}>
-      <Icon name="Article" size="large" />
+      <Icon name={icon} size="large" />
       {title ? (
         <Box component="p" sx={{ mt: 1, fontWeight: 'medium' }}>
           {title}
@@ -26,6 +32,7 @@ export default function Component({ message, title, description }: EmptyStatePro
           {message}
         </Box>
       ) : null}
+      {action ? <Box sx={{ mt: 2 }}>{action}</Box> : null}
     </Box>
   );
 }

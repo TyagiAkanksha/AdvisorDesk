@@ -1,5 +1,7 @@
 // Shared, friendly UI copy (docs/FRONTEND-CONVENTIONS.md §9: placeholder and user-facing strings
 // come from one typed module per app). Mirrors apps/client/src/lib/copy.ts. phase-8 task-07.
+// phase-8 task-14: APP_NAME owns the wordmark text used by AppShell and SignInScreen.
+export const APP_NAME = 'AdvisorDesk Admin';
 export const GENERIC_ERROR_MESSAGE = 'Something went wrong. Please try again.';
 export const NOT_FOUND_TITLE = 'Page not found';
 export const NOT_FOUND_MESSAGE = 'The page you’re looking for doesn’t exist or has been removed.';

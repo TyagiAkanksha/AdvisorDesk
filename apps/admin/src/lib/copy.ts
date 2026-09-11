@@ -90,3 +90,20 @@ export const PUBLISH_ALREADY_TOOLTIP = 'Already published';
 export const META_CREATED_PREFIX = 'Created';
 export const META_UPDATED_PREFIX = 'Updated';
 export const META_PUBLISHED_PREFIX = 'Published';
+
+// phase-8 task-21 (DESIGN.md §2, §5 C6): connected-apps screen copy — header description, table
+// label, empty state, and revoke/refresh feedback. `CONNECTED_APPS_TITLE` already exists above
+// (task-15 — nav label = page title).
+export const CONNECTED_APPS_DESCRIPTION =
+  'Apps authorised to use AdvisorDesk over MCP (for example Claude). Revoking removes their access immediately.';
+export const CONNECTED_APPS_TABLE_LABEL = 'Connected apps';
+export const NO_CONNECTED_APPS_TITLE = 'No connected apps';
+export const NO_CONNECTED_APPS_DESCRIPTION =
+  'Apps that connect over MCP (like Claude) will appear here after you approve them.';
+export const REVOKE_LABEL = 'Revoke';
+export const REVOKE_DIALOG_TITLE = 'Revoke access?';
+export const ACCESS_REVOKED_MESSAGE = 'Access revoked';
+export const CONNECTED_APPS_LOAD_ERROR = "Couldn't load connected apps.";
+export const CONNECTED_APPS_REFRESH_ERROR =
+  "Couldn't refresh connected apps — showing the last loaded list.";
+export const REVOKE_ERROR_FALLBACK = "Couldn't revoke this app. Please try again.";

@@ -1,79 +1,63 @@
-import { Box, Button } from '@/components/common';
+import {
+  Button,
+  Paper,
+  Table,
+  TableBody,
+  TableCell,
+  TableContainer,
+  TableHead,
+  TableRow,
+  Typography,
+} from '@/components/common';
+import { formatOptionalDateTime } from '@/lib/format';
+import { CONNECTED_APPS_TABLE_LABEL, REVOKE_LABEL } from '@/lib/copy';
 
 import type { ConnectedAppsTableProps } from './interface';
 
-// docs/plans/mcp-oauth/task-09-admin-connected-apps-ui.md — dumb per
-// docs/FRONTEND-CONVENTIONS.md §3 (rows in, one click callback out); mirrors ContentTable's
-// `Box component="table"` pattern (content/ContentListScreen/components/ContentTable/Component.tsx).
-function formatDate(iso: string | null): string {
-  return iso === null ? '—' : new Date(iso).toLocaleString();
-}
-
+// phase-8 task-21 (DESIGN.md §2, §5 C6): a real MUI table — outlined container that scrolls
+// horizontally on phones instead of squeezing columns unreadably narrow. Reduced to what an
+// admin acts on (Client/Connected/Last used/Revoke) — token counts and expiry are dropped.
+// Mirrors ContentTable's `TableContainer<typeof Paper>` pattern (task-18).
 export default function Component({ items, onRevoke }: ConnectedAppsTableProps) {
   return (
-    <Box component="table" sx={{ width: '100%', borderCollapse: 'collapse' }}>
-      <Box component="thead">
-        <Box component="tr">
-          <Box component="th" sx={{ textAlign: 'left', p: 1 }}>
-            App
-          </Box>
-          <Box component="th" sx={{ textAlign: 'left', p: 1 }}>
-            Approved
-          </Box>
-          <Box component="th" sx={{ textAlign: 'left', p: 1 }}>
-            Access tokens
-          </Box>
-          <Box component="th" sx={{ textAlign: 'left', p: 1 }}>
-            Refresh tokens
-          </Box>
-          <Box component="th" sx={{ textAlign: 'left', p: 1 }}>
-            Last used
-          </Box>
-          <Box component="th" sx={{ textAlign: 'left', p: 1 }}>
-            Expires
-          </Box>
-          {/* Unlabeled actions column, per the brief's Screen-behaviour section. */}
-          <Box component="th" sx={{ p: 1 }} />
-        </Box>
-      </Box>
-      <Box component="tbody">
-        {items.map((item) => (
-          <Box
-            component="tr"
-            key={item.client_id}
-            data-testid={`connected-app-${item.client_id}`}
-            sx={{ borderTop: '1px solid', borderColor: 'divider' }}
-          >
-            <Box component="td" sx={{ p: 1 }}>
-              {item.client_name}
-            </Box>
-            <Box component="td" sx={{ p: 1 }}>
-              {formatDate(item.consent_granted_at)}
-            </Box>
-            <Box component="td" sx={{ p: 1 }}>
-              {item.active_access_tokens}
-            </Box>
-            <Box component="td" sx={{ p: 1 }}>
-              {item.active_refresh_tokens}
-            </Box>
-            <Box component="td" sx={{ p: 1 }}>
-              {formatDate(item.last_used_at)}
-            </Box>
-            <Box component="td" sx={{ p: 1 }}>
-              {formatDate(item.latest_expires_at)}
-            </Box>
-            <Box component="td" sx={{ p: 1 }}>
-              <Button
-                size="small"
-                aria-label={`Revoke ${item.client_name}`}
-                onClick={() => onRevoke(item)}
-              >
-                Revoke
-              </Button>
-            </Box>
-          </Box>
-        ))}
-      </Box>
-    </Box>
+    <TableContainer<typeof Paper> component={Paper} variant="outlined" sx={{ overflowX: 'auto' }}>
+      <Table aria-label={CONNECTED_APPS_TABLE_LABEL}>
+        <TableHead>
+          <TableRow>
+            <TableCell>Client</TableCell>
+            <TableCell>Connected</TableCell>
+            <TableCell>Last used</TableCell>
+            <TableCell align="right">Actions</TableCell>
+          </TableRow>
+        </TableHead>
+        <TableBody>
+          {items.map((item) => (
+            <TableRow hover key={item.client_id} data-testid={`connected-app-${item.client_id}`}>
+              <TableCell>
+                <Typography variant="body2" component="div">
+                  {item.client_name}
+                </Typography>
+                <Typography variant="caption" color="text.secondary" component="div">
+                  {item.client_id.slice(0, 12)}
+                </Typography>
+              </TableCell>
+              <TableCell>{formatOptionalDateTime(item.consent_granted_at)}</TableCell>
+              <TableCell>{formatOptionalDateTime(item.last_used_at)}</TableCell>
+              <TableCell align="right">
+                <Button
+                  variant="outlined"
+                  color="error"
+                  size="small"
+                  aria-label={`Revoke ${item.client_name}`}
+                  onClick={() => onRevoke(item)}
+                >
+                  {REVOKE_LABEL}
+                </Button>
+              </TableCell>
+            </TableRow>
+          ))}
+        </TableBody>
+      </Table>
+    </TableContainer>
   );
 }

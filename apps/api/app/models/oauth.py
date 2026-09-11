@@ -126,8 +126,10 @@ class OAuthConsent(Base, TimestampMixin):
     """One row per `(user, client)` pair — records that a user has already granted a client
     access, so the authorize flow can skip re-prompting for consent on a later authorization.
 
-    `revoked_at` lets a later "revoke this app's access" action retract consent without deleting
-    the audit row (mirrors `OAuthRefreshToken.revoked_at`'s own soft-revocation shape).
+    Consent revocation does not exist (chore-2026-09 closeout item 2): the admin "Disconnect"
+    action deletes the `OAuthClient` outright, cascading this row away with it
+    (`app.services.oauth_clients.delete_client`) — there is no partial-revoke state to represent,
+    so this row's mere existence for a `(user, client)` pair IS "consent granted".
     """
 
     __tablename__ = "oauth_consents"
@@ -143,4 +145,3 @@ class OAuthConsent(Base, TimestampMixin):
         Text, ForeignKey("oauth_clients.client_id", ondelete="CASCADE"), nullable=False
     )
     scope: Mapped[str] = mapped_column(Text, nullable=False)
-    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

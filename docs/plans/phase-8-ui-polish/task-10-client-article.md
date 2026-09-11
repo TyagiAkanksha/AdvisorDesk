@@ -140,10 +140,13 @@ export default function Component({ article, related }: ArticleScreenProps) {
 }
 ```
 
-(Tag chips here use `component="a"` — plain anchors — because `ArticleScreen` is a Server
-Component and `common/Link` is a function it cannot pass across the RSC boundary; a tag click
-from an article is a full navigation to the filtered list, which is fine. `ArticleCard` — a
-client leaf — keeps next/link.)
+(`common/Link` is a `'use client'` module, so its export is a client reference and may be passed
+as `component=` from a Server Component; the leaves are client components because they *use* the
+browser (hooks/handlers), not because of the prop. A bare function imported from a server module
+is what cannot cross the boundary (task-04 F1). **p8 final (I-2):** this original code block's
+plain-anchor tag chips were superseded by a `TagChips` client leaf — same `common/Link`-as-
+`component` pattern as `ArticleCard`/`TagFilter` — so a tag click from an article now navigates
+client-side too; see `ArticleScreen/components/TagChips/Component.tsx`.)
 
 **`RelatedArticles/Component.tsx` — exact:**
 

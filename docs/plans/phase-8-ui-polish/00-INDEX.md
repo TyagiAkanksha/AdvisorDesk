@@ -126,8 +126,11 @@ surface with a welcome state, titled sources, and a proper composer (DESIGN.md �
 
 **Additional constraints for B** (on top of Global Constraints above):
 - **Client islands only where the browser is needed:** `SiteNav` (`usePathname`),
-  `ArticleCard`/`TagFilter` (pass `common/Link` as `component` — a function cannot cross the
-  RSC boundary), `ChatScreen` and its leaves. Everything else stays a Server Component.
+  `ArticleCard`/`TagFilter`/`TagChips` (next/link's client-side routing needs the browser —
+  `common/Link` is a `'use client'` module, so its export is a client reference and may be passed
+  as `component=` from a Server Component; a bare function imported from a server module is what
+  cannot cross the boundary, task-04 F1), `ChatScreen` and its leaves. Everything else stays a
+  Server Component.
 - **Screenshot method:** the sandbox cannot resize Chrome windows — serve a local page with
   `<iframe width="1440" height="900">` / `<iframe width="390" height="844">` pointing at the dev
   server and capture that (headless Chrome `--screenshot` works; `--window-size` is clamped to

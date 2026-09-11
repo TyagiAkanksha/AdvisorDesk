@@ -245,6 +245,9 @@ layout work.
 - CTA: `Button variant="outlined" href="/chat"` "Ask a question about this topic".
 - `getContentBySlug` wrapped in React `cache()` in `lib/publicApi.ts` so `generateMetadata` and
   the page share one fetch. Missing slug → branded `not-found.tsx`.
+- **p8 final (I-2):** the meta line's tag chips render through a `TagChips` client leaf
+  (`common/Link` as `component=`, same pattern as `ArticleCard`/`TagFilter`) instead of a plain
+  `<a>` chip, so a tag click from an article navigates client-side like every other tag chip.
 
 ### B4 Chat `/chat` — `ChatScreen`
 

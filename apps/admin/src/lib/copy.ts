@@ -34,3 +34,14 @@ export const SIGN_IN_BUTTON_LABEL = 'Sign in with Google';
 export const SIGN_IN_FINE_PRINT = 'Access is limited to allowlisted admin accounts.';
 export const SIGN_IN_ERROR_FORBIDDEN = "This Google account isn't on the admin allowlist.";
 export const SIGN_IN_ERROR_STATE = 'Sign-in expired or was tampered with. Please try again.';
+
+// phase-8 task-17 (DESIGN.md §2, §5 C3): dashboard panel titles, empty/error copy.
+// `DASHBOARD_TITLE` already exists above (task-15 — nav label = page title).
+export const CONTENT_BY_TAG_TITLE = 'Content by tag';
+export const RECENT_CONTENT_TITLE = 'Recent content';
+export const NO_TAGS_MESSAGE = 'No tags yet.';
+export const NO_RECENT_CONTENT_MESSAGE = 'No content yet.';
+export const DASHBOARD_LOAD_ERROR = "Couldn't load the dashboard stats.";
+export const DASHBOARD_REFRESH_ERROR =
+  "Couldn't refresh the dashboard — showing the last loaded data.";
+export const RECENT_CONTENT_LOAD_ERROR = "Couldn't load recent content.";

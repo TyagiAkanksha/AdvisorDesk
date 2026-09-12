@@ -391,15 +391,30 @@ def _load_eval_questions() -> list[dict[str, Any]]:
     return data
 
 
-def test_eval_questions_yaml_parses_as_a_list_of_dicts_with_exactly_the_three_keys() -> None:
+_REQUIRED_EVAL_KEYS = {"question", "expected_slugs", "answerable"}
+_OPTIONAL_EVAL_KEYS = {"class", "persona", "expected_chunks", "reference_answer"}
+_EVAL_CLASSES = {
+    "answerable",
+    "multi_source",
+    "near_miss",
+    "off_domain",
+    "threshold",
+    "stale_number",
+}
+
+
+def test_eval_questions_yaml_items_carry_the_required_keys_and_only_known_optional_ones() -> None:
+    """Phase-9 DESIGN §B2: v2 widens the shape from "exactly three keys" to
+    REQUIRED ⊆ keys ⊆ REQUIRED ∪ OPTIONAL, with class membership and an
+    `off_domain ⇒ not answerable` rule."""
     items = _load_eval_questions()
     assert items, "eval_questions.yaml is empty"
-    expected_keys = {"question", "expected_slugs", "answerable"}
     for item in items:
         assert isinstance(item, dict), f"item is not a mapping: {item!r}"
-        assert set(item.keys()) == expected_keys, (
-            f"item has keys {set(item.keys())}, expected exactly {expected_keys}"
-        )
+        keys = set(item.keys())
+        assert _REQUIRED_EVAL_KEYS <= keys, f"item is missing required keys: {item!r}"
+        unknown = keys - _REQUIRED_EVAL_KEYS - _OPTIONAL_EVAL_KEYS
+        assert not unknown, f"item has unknown keys {unknown}: {item!r}"
         assert isinstance(item["question"], str) and item["question"].strip(), (
             f"item has a blank/non-string question: {item!r}"
         )
@@ -407,6 +422,23 @@ def test_eval_questions_yaml_parses_as_a_list_of_dicts_with_exactly_the_three_ke
             f"item's expected_slugs is not a list: {item!r}"
         )
         assert isinstance(item["answerable"], bool), f"item's answerable is not a bool: {item!r}"
+        question_class = item.get("class", "answerable" if item["answerable"] else "off_domain")
+        assert question_class in _EVAL_CLASSES, (
+            f"item's class {question_class!r} is not one of {_EVAL_CLASSES}: {item!r}"
+        )
+        if question_class == "off_domain":
+            assert item["answerable"] is False, f"off_domain question marked answerable: {item!r}"
+        for ref in item.get("expected_chunks", []):
+            assert isinstance(ref, str) and "#" in ref, (
+                f"expected_chunks entry is not '<slug>#<heading-slug>': {ref!r}"
+            )
+            assert ref.split("#", 1)[0] in item["expected_slugs"], (
+                f"expected_chunks entry {ref!r} names a slug outside expected_slugs: {item!r}"
+            )
+        if "persona" in item:
+            assert isinstance(item["persona"], str) and item["persona"].strip()
+        if "reference_answer" in item:
+            assert isinstance(item["reference_answer"], str) and item["reference_answer"].strip()
 
 
 def test_eval_questions_answerable_entries_expected_slugs_all_exist_in_published_seed_corpus() -> (

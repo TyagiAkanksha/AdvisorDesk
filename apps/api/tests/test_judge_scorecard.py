@@ -10,6 +10,8 @@ from pathlib import Path
 
 import pytest
 import yaml
+from sqlalchemy.orm import Session
+
 from app.eval.judge_scorecard import (
     JudgeLabel,
     cohen_kappa,
@@ -20,8 +22,6 @@ from app.eval.judge_scorecard import (
     score_judge,
     self_consistency,
 )
-from sqlalchemy.orm import Session
-
 from app.models import Chunk, Content, EvalResult, EvalRun
 
 _REPO_ROOT = Path(__file__).resolve().parents[3]

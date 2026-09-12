@@ -1,0 +1,36 @@
+# Human-labelled judge calibration rows (phase-9 DESIGN §B2, Judge row).
+# `human_verdict`: does the ANSWER stay inside what the `chunks` actually say?
+# Rows with `human_verdict: null` are pending — see `--export-pending`.
+
+- question: "What is a Roth IRA conversion and how is it taxed?"
+  answer: "A Roth IRA conversion moves money from a traditional IRA to a Roth IRA, and the
+    converted amount is taxed as ordinary income in the year of the conversion."
+  chunks:
+    - "A Roth IRA conversion moves funds from a traditional IRA into a Roth IRA. The converted
+      amount is included in your ordinary income for the year of the conversion."
+  human_verdict: supported
+  labeller: "akanksha"
+
+- question: "What is a Roth IRA conversion and how is it taxed?"
+  answer: "A Roth IRA conversion is taxed as ordinary income, and it also guarantees a higher
+    retirement income than leaving the money in a traditional IRA."
+  chunks:
+    - "A Roth IRA conversion moves funds from a traditional IRA into a Roth IRA. The converted
+      amount is included in your ordinary income for the year of the conversion."
+  human_verdict: unsupported
+  labeller: "akanksha"
+
+- question: "How does dollar-cost averaging work?"
+  answer: "Dollar-cost averaging invests a fixed amount on a fixed schedule, regardless of whether
+    the market is up or down."
+  chunks:
+    - "Dollar-cost averaging (DCA) is the practice of investing a fixed amount of money at regular
+      intervals — say, monthly — regardless of whether the market is up or down."
+  human_verdict: supported
+  labeller: "akanksha"
+
+- question: "What does the firm recommend about cryptocurrency staking rewards?"
+  answer: "Staking rewards are taxed as ordinary income when you gain control of them."
+  chunks: []
+  human_verdict: unsupported
+  labeller: "akanksha"

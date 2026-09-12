@@ -24,3 +24,7 @@ coverage/
 .coverage
 .coverage.*
 htmlcov/
+
+# phase-9 judge scorecard: the labelling-session worksheet is a generated scratch artifact,
+# never committed (seed/judge_labels.yaml — the real, hand-labelled seed — is tracked as usual)
+seed/judge_labels.pending.yaml

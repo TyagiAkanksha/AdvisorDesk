@@ -14,18 +14,19 @@ pattern `app.services.chat.RetrievedChunkLike`/`RetrievalResultLike` use for `ap
 
 from __future__ import annotations
 
+import copy
 import hashlib
 import uuid
 from collections.abc import Sequence
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Protocol
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.models import Chunk, Content, EvalResult, EvalRun
-from app.services.errors import NotFoundError
+from app.services.errors import ConflictError, NotFoundError
 from app.services.queries import active_select
 
 
@@ -137,7 +138,13 @@ def corpus_fingerprint(session: Session) -> CorpusFingerprint:
     else:
         chunk_count = 0
 
-    digest_source = "\n".join(f"{row.slug}\t{row.updated_at.isoformat()}" for row in published)
+    # Fix round 1, M7: `.astimezone(UTC)` before `.isoformat()` — the un-normalized text of an
+    # aware datetime depends on the DB session's `TimeZone` setting, so a server/role configured
+    # to a different zone would hash a different string for the SAME instant, producing a false
+    # "corpus changed" digest for an unchanged corpus.
+    digest_source = "\n".join(
+        f"{row.slug}\t{row.updated_at.astimezone(UTC).isoformat()}" for row in published
+    )
     digest = hashlib.sha256(digest_source.encode("utf-8")).hexdigest()[:16]
 
     return CorpusFingerprint(
@@ -168,6 +175,14 @@ def record_run(
     describes the corpus AT RECORD TIME. Flushes only; never commits (CONVENTIONS.md §3 — the
     CLI, not this service function, owns the transaction boundary).
 
+    Fix round 1, C1: `created_at` is stamped app-side (`datetime.now(UTC)`), not left to the
+    column's `now()` server default. Postgres' `now()` is the *transaction* timestamp — every run
+    of one `--runs N` invocation shares one transaction, so they would otherwise all carry the
+    IDENTICAL `created_at` and `latest_runs`' declared `created_at DESC, id DESC` order would tie
+    on a random UUID, not on recency. A Python-side value is distinct per call at microsecond
+    resolution, needs no DDL change (the column keeps its `server_default` for any other writer),
+    and makes both `latest_runs` and `--compare-to latest` genuinely newest-first.
+
     Args:
         session: the caller's `Session`.
         report: the run's outcome (real `EvalReport` or anything `EvalReportLike`-shaped).
@@ -185,6 +200,7 @@ def record_run(
     """
     fingerprint = corpus_fingerprint(session)
     run = EvalRun(
+        created_at=datetime.now(UTC),
         kind=kind,
         label=label,
         git_sha=git_sha,
@@ -224,8 +240,11 @@ def record_run(
                 # `EvalResult.metrics` is plain JSONB (no `MutableDict`) — always a freshly built
                 # dict, never an alias to the caller's own `row.metrics` object, so nothing later
                 # mutates this column's value in place (SQLAlchemy would never notice such a
-                # mutation without `MutableDict`).
-                metrics=dict(row.metrics) if row.metrics is not None else None,
+                # mutation without `MutableDict`). Fix round 1, M9: a DEEP copy — `row.metrics`
+                # may hold nested dicts/lists (tasks 05/06's recall@k/rubric-score payloads), and
+                # a shallow `dict(...)` would leave those inner containers aliased to the
+                # caller's own object.
+                metrics=copy.deepcopy(row.metrics) if row.metrics is not None else None,
             )
         )
     session.flush()
@@ -237,9 +256,11 @@ def latest_runs(
 ) -> list[EvalRun]:
     """The `limit` most recent `EvalRun`s of `kind` (optionally filtered further by `label`).
 
-    Orders `created_at DESC, id DESC` — `created_at` is Postgres' transaction timestamp, so
-    several runs written in one transaction (e.g. `--runs 3`) tie on it; the `id` tiebreaker keeps
-    ordering deterministic instead of depending on incidental row-fetch order.
+    Orders `created_at DESC, id DESC`. `created_at` is stamped app-side by `record_run` (fix
+    round 1, C1) rather than left to Postgres' `now()` transaction timestamp, so several runs
+    written in one transaction (e.g. `--runs 3`) are still strictly ordered by actual insertion
+    time; `id` (a random UUID) is a deterministic, but not recency-meaningful, final tiebreaker
+    for the one-in-a-microsecond case two calls land on the identical instant.
 
     Args:
         session: the caller's `Session`.
@@ -274,6 +295,9 @@ def compare_runs(session: Session, before_id: uuid.UUID, after_id: uuid.UUID) ->
 
     Raises:
         NotFoundError: `before_id` or `after_id` names no `EvalRun` row.
+        ConflictError: `before`/`after` have different `kind`s (fix round 1, M3) — an `"answer"`
+            run and an `"agent"` run share no comparable question set, so diffing across `kind`
+            (probe P5 in the task-03 review) is a caller error, not a valid comparison.
     """
     before = session.get(EvalRun, before_id)
     if before is None:
@@ -281,6 +305,8 @@ def compare_runs(session: Session, before_id: uuid.UUID, after_id: uuid.UUID) ->
     after = session.get(EvalRun, after_id)
     if after is None:
         raise NotFoundError(f"No eval run {after_id}.")
+    if before.kind != after.kind:
+        raise ConflictError(f"Cannot compare a {before.kind!r} run to a {after.kind!r} run.")
 
     before_verdicts = {
         result.question: result.verdict

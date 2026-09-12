@@ -61,6 +61,7 @@ set, and are skipped by fixture name otherwise (`tests/conftest.py::pytest_colle
 from __future__ import annotations
 
 import math
+import re
 import uuid
 from collections.abc import Iterator, Sequence
 from dataclasses import dataclass, field
@@ -68,6 +69,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Literal
 
+import pytest
 import yaml
 from sqlalchemy.orm import Session
 
@@ -626,3 +628,39 @@ def test_report_arithmetic_matches_rows(db_session: Session, tmp_path: Path) -> 
     assert report.pct_fully_supported == expected_pct == 50.0
     assert report.refusal_total == len(uncovered_rows) == 2
     assert report.refusal_correct == expected_refusal_correct == 1
+
+
+def test_run_eval_rejects_duplicate_question_text_before_any_retrieval_or_answering(
+    db_session: Session, tmp_path: Path
+) -> None:
+    """Fix round 1, I2: two questions sharing the same text would collide on the
+    `(run_id, question)` unique constraint (`app/models/eval.py`) at `record_run`'s final
+    `flush()` — discarding every row of a run that already paid for its embedder/chat/judge
+    calls. `_load_questions` must catch this up front, naming the offending question, before
+    `run_eval` embeds/answers/judges a single one of them.
+    """
+    question = "What is a Roth IRA conversion and how is it taxed?"
+    questions_path = _write_questions_yaml(
+        tmp_path,
+        [
+            {"question": question, "expected_slugs": ["a"], "answerable": True},
+            {"question": question, "expected_slugs": ["b"], "answerable": True},
+        ],
+    )
+    embedder = ScriptedEmbedder(vectors={})
+    chat_llm = ScriptedChatLLM(answers={})
+    judge = ScriptedJudge()
+
+    with pytest.raises(ValueError, match=re.escape(question)):
+        run_eval(
+            db_session,
+            embedder=embedder,
+            chat_llm=chat_llm,
+            judge=judge,
+            questions_path=questions_path,
+        )
+
+    # The duplicate was caught before any seam was ever called.
+    assert embedder.calls == []
+    assert chat_llm.calls == []
+    assert judge.calls == []

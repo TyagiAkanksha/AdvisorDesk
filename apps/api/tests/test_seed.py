@@ -437,3 +437,16 @@ def test_eval_questions_unanswerable_entries_have_empty_expected_slugs() -> None
             f"question {item['question']!r} is unanswerable but expected_slugs="
             f"{item['expected_slugs']!r}, expected []"
         )
+
+
+def test_eval_questions_have_no_duplicate_question_text() -> None:
+    """Fix round 1, I2: `app.eval.groundedness._load_questions` now rejects a duplicate
+    `question` string with a `ValueError` naming it (the `(run_id, question)` unique constraint
+    would otherwise reject the whole run at `record_run`'s final flush). This pins the real
+    `seed/eval_questions.yaml` corpus itself — clean today (21/21 unique) — as DESIGN §B2 grows
+    it to 80 hand-authored questions across six classes.
+    """
+    items = _load_eval_questions()
+    questions = [item["question"] for item in items]
+    duplicates = {question for question in questions if questions.count(question) > 1}
+    assert not duplicates, f"eval_questions.yaml has duplicate questions: {duplicates}"

@@ -33,7 +33,7 @@ import argparse
 import re
 import subprocess
 import uuid
-from collections.abc import Iterable, Sequence
+from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
@@ -73,6 +73,12 @@ _DEFAULT_QUESTIONS_PATH: Path = seed_data_dir() / "eval_questions.yaml"
 # by MARKER CONTENT, never by call count/order, so no test depends on this regex's exact behavior
 # beyond "splits on sentence-ending punctuation."
 _SENTENCE_BOUNDARY_RE = re.compile(r"(?<=[.!?])\s+")
+
+# Fix round 1, M4: named once so `_evaluate_question`'s `retrieve()` call and `_run_from_cli`'s
+# `record_run(..., retrieval_k=...)` can never silently drift apart — before this constant,
+# `_evaluate_question` relied on `retrieve()`'s own default `k` while `_run_from_cli` recorded a
+# separate hard-coded `6`; the two agreed only by coincidence.
+_RETRIEVAL_K = 6
 
 
 @dataclass(frozen=True)
@@ -223,13 +229,18 @@ def _load_questions(questions_path: Path) -> list[_EvalQuestion]:
 
     Raises:
         ValueError: `questions_path` does not parse to a top-level list, or an item is not a
-            mapping, or is missing/mistypes one of the three required keys.
+            mapping, or is missing/mistypes one of the three required keys, or two items share
+            the same `question` text (fix round 1, reviewer finding I2 — the `(run_id, question)`
+            unique constraint (`app/models/eval.py`) would otherwise reject the whole run at
+            `record_run`'s final `flush()`, discarding every row after the run already paid for
+            its embedder/chat/judge calls).
     """
     raw = yaml.safe_load(questions_path.read_text(encoding="utf-8"))
     if not isinstance(raw, list):
         raise ValueError(f"{questions_path}: eval questions file must parse to a top-level list")
 
     questions: list[_EvalQuestion] = []
+    seen_questions: set[str] = set()
     for index, item in enumerate(raw):
         if not isinstance(item, dict):
             raise ValueError(f"{questions_path}[{index}]: item is not a mapping: {item!r}")
@@ -238,6 +249,9 @@ def _load_questions(questions_path: Path) -> list[_EvalQuestion]:
         answerable = item.get("answerable")
         if not isinstance(question, str) or not question.strip():
             raise ValueError(f"{questions_path}[{index}]: 'question' must be a non-blank string")
+        if question in seen_questions:
+            raise ValueError(f"{questions_path}[{index}]: duplicate question: {question!r}")
+        seen_questions.add(question)
         if not isinstance(expected_slugs, list):
             raise ValueError(f"{questions_path}[{index}]: 'expected_slugs' must be a list")
         if not isinstance(answerable, bool):
@@ -265,7 +279,11 @@ def _evaluate_question(
     docstring, rulings I.1-I.4).
     """
     retrieval = retrieve(
-        session, embedder, question.question, threshold=settings.similarity_threshold
+        session,
+        embedder,
+        question.question,
+        k=_RETRIEVAL_K,
+        threshold=settings.similarity_threshold,
     )
     retrieval_found = bool(retrieval.chunks)
 
@@ -400,11 +418,20 @@ def _git_sha() -> str:
     """The current commit's full SHA, or `""` when it can't be determined (phase-9 task-03).
 
     Never raises: `check=False` means a non-zero exit (e.g. a container/tarball checkout with no
-    `.git`) is reported via `returncode`, not an exception — the caller gets `""` back instead.
+    `.git`) is reported via `returncode`, not an exception. Fix round 1, I1: `check=False` alone
+    does NOT stop `subprocess.run` from raising `FileNotFoundError` when the `git` binary itself
+    is absent (exactly the "container … with no `.git`" case this function's own docstring
+    names — slim Python images ship no git at all) or `subprocess.TimeoutExpired` past the 5s
+    budget; both are now caught here too, alongside any other `OSError`, so a genuinely
+    never-raises contract holds even after `run_eval` has already spent the whole question set on
+    real API calls.
     """
-    result = subprocess.run(
-        ["git", "rev-parse", "HEAD"], capture_output=True, text=True, timeout=5, check=False
-    )
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "HEAD"], capture_output=True, text=True, timeout=5, check=False
+        )
+    except (OSError, subprocess.SubprocessError):
+        return ""
     return result.stdout.strip() if result.returncode == 0 else ""
 
 
@@ -413,6 +440,13 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
 
     `--runs` doesn't use `choices=range(1, 11)` — it just validates `>= 1` itself via
     `parser.error` (an explicit, un-numerically-capped floor beats an arbitrary ceiling).
+
+    Note (fix round 1, M1 — deliberately NOT fixed here): `--no-persist` together with
+    `--compare-to` parses cleanly and is left to `_run_from_cli` to silently skip the comparison
+    (`last_run` stays `None`) — the authored test `test_parse_args_accepts_every_flag`
+    (`tests/test_groundedness_cli.py`) pins EXACTLY this flag combination succeeding at parse
+    time, so rejecting it here would break an authored test. Ledgered for the whole-branch review
+    instead (see the fix-round-1 report).
     """
     parser = argparse.ArgumentParser(
         description="Run seed/eval_questions.yaml through the real retrieval + synthesis path."
@@ -459,14 +493,21 @@ def _print_stability(reports: Sequence[EvalReport], *, label: str) -> None:
 
     `mean` is the arithmetic mean formatted `.1f` for both rows; `spread` is `max - min`,
     formatted `.1f` for the percentage row and left as a plain `int` for the count row.
+
+    Fix round 1, I4: the printed PER-RUN `pct_fully_supported` values are rounded to one decimal
+    (`round(value, 1)`) — a real run's raw float (e.g. `76.47058823529412`, `100 * 13 / 17`) is
+    otherwise printed at full precision, which is illegible on the phase's headline stability
+    line. `mean`/`spread` were already `.1f`-formatted and are unaffected; the count row's values
+    are exact integers, so no rounding applies there.
     """
     print(f"stability over {len(reports)} runs (label={label}):")
 
     pct_values = [report.pct_fully_supported for report in reports]
     pct_mean = sum(pct_values) / len(pct_values)
     pct_spread = max(pct_values) - min(pct_values)
+    pct_display = [round(value, 1) for value in pct_values]
     print(
-        f"  {'pct_fully_supported':<21}mean {pct_mean:.1f}  spread {pct_spread:.1f}  {pct_values}"
+        f"  {'pct_fully_supported':<21}mean {pct_mean:.1f}  spread {pct_spread:.1f}  {pct_display}"
     )
 
     refusal_values = [report.refusal_correct for report in reports]
@@ -478,26 +519,45 @@ def _print_stability(reports: Sequence[EvalReport], *, label: str) -> None:
     )
 
 
-def _run_from_cli() -> None:
+def _run_from_cli(
+    argv: list[str] | None = None,
+    *,
+    run_eval_fn: Callable[..., EvalReport] = run_eval,
+    session_factory: Callable[[], Session] | None = None,
+) -> None:
     """`python -m app.eval.groundedness`: wire the REAL embedder/chat LLM/judge from `Settings`,
     run `args.runs` real recorded eval(s) against the seeded local-db stack, persist by default,
     and optionally print a stability block and a `compare_runs` diff (phase-9 task-03).
 
-    Builds its own engine/session (mirrors `app/seed.py::_run_from_cli`'s same self-contained CLI
+    Fix round 1, I3: `argv`/`run_eval_fn`/`session_factory` are injectable seams (reviewer finding
+    I3 — this orchestration, the task's headline behaviour, had zero test coverage because it
+    built its own seams internally). Defaults reproduce the exact previous behaviour byte for
+    byte: `argv=None` parses `sys.argv` as before, `run_eval_fn` defaults to the real `run_eval`,
+    and a `None` `session_factory` builds the real engine/session from `Settings()` exactly as
+    this function always has (mirrors `app/seed.py::_run_from_cli`'s same self-contained CLI
     wiring pattern — `app.eval` is a standalone script, not a FastAPI route, so it has no
-    `app.state` to read `app.routes.deps.get_session`/`get_embedder`/`get_chat_llm` from).
+    `app.state` to read `app.routes.deps.get_session`/`get_embedder`/`get_chat_llm` from). Tests
+    inject a canned `run_eval_fn` (no network) and a `session_factory` returning the `db_session`
+    fixture; ownership follows who built the session — this function only closes/disposes the
+    session/engine it built itself, never a caller-supplied one.
 
     `--compare-to latest` resolves to the most recent `kind="answer"` run EXCLUDING the run(s)
     this invocation is about to write — resolved once, up front, before any `record_run` call in
-    this invocation can appear in `latest_runs`' own result.
+    this invocation can appear in `latest_runs`' own result. `_git_sha()` is computed ONCE, before
+    the run loop (fix round 1, I1/M8 — one subprocess call and one value for the whole family,
+    not one per run).
     """
-    args = _parse_args()
+    args = _parse_args(argv)
     settings = Settings()
-    engine = make_engine(settings.database_url.get_secret_value())
-    session_factory = make_session_factory(engine)
     embedder = OpenAICompatibleEmbedder.from_settings(settings)
     chat_llm = OpenAICompatibleChatLLM.from_settings(settings)
     judge = OpenAIJudge.from_settings(settings)
+
+    owns_session = session_factory is None
+    engine = None
+    if session_factory is None:
+        engine = make_engine(settings.database_url.get_secret_value())
+        session_factory = make_session_factory(engine)
 
     session = session_factory()
     try:
@@ -511,10 +571,12 @@ def _run_from_cli() -> None:
         elif args.compare_to is not None:
             before_id = uuid.UUID(args.compare_to)
 
+        git_sha = _git_sha()
+
         reports: list[EvalReport] = []
         last_run: EvalRun | None = None
         for _ in range(args.runs):
-            report = run_eval(
+            report = run_eval_fn(
                 session,
                 embedder=embedder,
                 chat_llm=chat_llm,
@@ -532,8 +594,8 @@ def _run_from_cli() -> None:
                     chat_model=settings.chat_model,
                     judge_model=settings.chat_model,
                     similarity_threshold=settings.similarity_threshold,
-                    retrieval_k=6,
-                    git_sha=_git_sha(),
+                    retrieval_k=_RETRIEVAL_K,
+                    git_sha=git_sha,
                 )
 
         if not args.no_persist:
@@ -556,8 +618,10 @@ def _run_from_cli() -> None:
             for question in diff.regressions:
                 print(f"  regression: {question}")
     finally:
-        session.close()
-    engine.dispose()
+        if owns_session:
+            session.close()
+    if engine is not None:
+        engine.dispose()
 
 
 if __name__ == "__main__":

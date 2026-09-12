@@ -150,6 +150,27 @@ def test_latest_runs_is_newest_first_and_filters_by_kind_and_label(db_session: S
     assert [run.id for run in latest_runs(db_session, label="a")] == [first.id]
 
 
+def test_latest_runs_orders_newest_first_within_one_transaction_by_insertion_order(
+    db_session: Session,
+) -> None:
+    """Fix round 1, C1: `EvalRun.created_at`'s server default is Postgres' TRANSACTION
+    timestamp, so three runs recorded in one transaction (as this test's three `_record` calls,
+    and any real `--runs 3` invocation, are) previously carried an IDENTICAL `created_at` and
+    `latest_runs` fell back to a random-UUID tiebreaker — deterministic, but not newest-first
+    (task-03 review, Critical C1). `record_run` now stamps `created_at` app-side
+    (`datetime.now(UTC)`), which is distinct per call, so ordering must reflect actual insertion
+    order regardless of how many runs share one transaction.
+    """
+    first = _record(db_session, FakeReport(rows=[FakeRow(question="q")]), label="family")
+    second = _record(db_session, FakeReport(rows=[FakeRow(question="q")]), label="family")
+    third = _record(db_session, FakeReport(rows=[FakeRow(question="q")]), label="family")
+
+    ids = [run.id for run in latest_runs(db_session, label="family")]
+
+    assert ids == [third.id, second.id, first.id]
+    assert latest_runs(db_session, label="family", limit=1)[0].id == third.id
+
+
 def test_compare_runs_classifies_regressions_improvements_added_and_removed(
     db_session: Session,
 ) -> None:

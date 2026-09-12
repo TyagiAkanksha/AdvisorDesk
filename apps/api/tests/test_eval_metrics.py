@@ -382,3 +382,42 @@ def test_report_counts_expected_chunks_refs_that_fail_to_resolve(
     assert unresolvable_metrics is not None
     assert resolvable_metrics["retrieval_mode"] == "chunk"
     assert unresolvable_metrics["retrieval_mode"] == "slug"
+
+
+# --- controller addition: task-06 failure taxonomy integration pin ----------
+
+
+def test_run_eval_stores_a_failure_cause_on_every_failed_row(
+    db_session: Session, tmp_path: Path
+) -> None:
+    """A question the corpus cannot answer at all is recorded as a `corpus_gap`."""
+    question = "How is crypto compensation taxed?"
+    path = tmp_path / "eval_questions.yaml"
+    path.write_text(
+        yaml.safe_dump(
+            [
+                {
+                    "question": question,
+                    "expected_slugs": ["crypto-compensation"],
+                    "answerable": True,
+                    "class": "near_miss",
+                }
+            ],
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+
+    report = run_eval(
+        db_session,
+        embedder=ScriptedEmbedder(vectors={question: _unit_vector(0)}),
+        chat_llm=ScriptedChatLLM(answers={question: "No published guidance covers this."}),
+        judge=FakeMetricsJudge(),
+        questions_path=path,
+    )
+
+    row = report.rows[0]
+    assert row.verdict == "FAIL"
+    assert row.metrics is not None
+    assert row.metrics["failure_cause"] == "corpus_gap"
+    assert report.failure_causes == {"corpus_gap": 1}

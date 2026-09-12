@@ -88,9 +88,10 @@ class MetricsJudge(Protocol):
 
     Fix round 1 (Opus review, Cost ruling): `rank_chunk_relevance` batches what used to be one
     `is_chunk_relevant` call per retrieved chunk into ONE call over all of them, returning one
-    verdict per chunk. `is_chunk_relevant` itself is KEPT (not removed) only because `context_
-    precision` below (the OLD, non-rank-aware formula) still calls it — see that function's
-    docstring for why it survives unused by the real per-row computation.
+    verdict per chunk — this is what `app.eval.groundedness._evaluate_question` actually calls.
+    `is_chunk_relevant` itself is KEPT (not removed) because `context_precision` below still calls
+    it once per chunk (both paths feed the SAME `ragas_context_precision` formula; only the call
+    count differs).
     """
 
     def is_supported(self, claim_text: str, chunk_texts: Sequence[str]) -> bool: ...
@@ -161,34 +162,30 @@ def retrieval_metrics(
 def context_precision(
     judge: MetricsJudge, question: str, chunk_texts: Sequence[str]
 ) -> float | None:
-    """Fraction of RETRIEVED chunks the judge deems relevant to `question`. `None` if none were
-    retrieved.
+    """RAGAS-style, rank-aware context precision (round 1b, controller amendment to fix round 1
+    I3): judges each of `chunk_texts` individually via `judge.is_chunk_relevant` (one call per
+    chunk, in retrieval order) and delegates the resulting verdicts to `ragas_context_precision`
+    (below) for the actual formula. `None` if nothing was retrieved (`chunk_texts` empty).
 
-    Fix round 1 (Opus review, I3): this plain, non-rank-aware fraction is NOT the metric recorded
-    under `EvalRow.metrics["context_precision"]` as of this fix round — `ragas_context_precision`
-    (below) is, per the controller's ruling to use the RAGAS rank-aware formula. This function is
-    kept, byte-for-byte, ONLY because `tests/test_eval_metrics.py::
-    test_context_precision_is_the_fraction_of_relevant_retrieved_chunks` pins its exact
-    non-rank-aware value (`2/3`) for a mixed-relevance fixture that the rank-aware formula scores
-    differently (`5/6` for the equivalent `[True, False, True]` pattern) — an authored test may
-    not be modified without controller approval, and this is flagged explicitly as such in the
-    fix-round-1 implementer report rather than silently reconciled.
+    This is a one-call-per-chunk convenience wrapper around the same formula
+    `app.eval.groundedness._evaluate_question` scores from a SINGLE batched
+    `MetricsJudge.rank_chunk_relevance` call (the Cost ruling) — both paths score identically for
+    the same relevance verdicts; only the number of judge calls differs.
     """
     if not chunk_texts:
         return None
-    relevant = sum(1 for text in chunk_texts if judge.is_chunk_relevant(question, text))
-    return relevant / len(chunk_texts)
+    relevant = [judge.is_chunk_relevant(question, text) for text in chunk_texts]
+    return ragas_context_precision(relevant)
 
 
 def ragas_context_precision(relevant: Sequence[bool]) -> float | None:
-    """RAGAS-style, rank-aware context precision (fix round 1, Opus review I3):
-    `Σ_i precision@i · rel_i / |relevant chunks|`, where `relevant[i]` is one relevance verdict
-    per RETRIEVED chunk (0-based, in retrieval order — from `MetricsJudge.rank_chunk_relevance`,
-    the batched call the Cost ruling asks for) and `precision@i` is the fraction of relevant
-    chunks among the first `i + 1` retrieved. This IS the metric recorded under
-    `EvalRow.metrics["context_precision"]` as of this fix round (see `context_precision` above
-    for the older, non-rank-aware fraction this module still exposes for an authored test's own
-    pin — the two deliberately disagree on a mixed-relevance input).
+    """RAGAS-style, rank-aware context precision: `Σ_i precision@i · rel_i / |relevant chunks|`,
+    where `relevant[i]` is one relevance verdict per RETRIEVED chunk (0-based, in retrieval
+    order) and `precision@i` is the fraction of relevant chunks among the first `i + 1` retrieved.
+    This is the formula BOTH `context_precision` (above, one `is_chunk_relevant` call per chunk)
+    and `app.eval.groundedness._evaluate_question` (via the batched `MetricsJudge.
+    rank_chunk_relevance` call, the Cost ruling) use to score `EvalRow.metrics["context_
+    precision"]` — there is exactly one "context precision" metric as of round 1b, not two.
 
     `None` when nothing was retrieved (`relevant` empty — no signal to score). `0.0` when chunks
     WERE retrieved but the judge found none of them relevant (an explicit floor, not a

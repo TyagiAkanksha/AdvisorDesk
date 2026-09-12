@@ -526,15 +526,11 @@ def _evaluate_question(
             "mrr": scored_mrr,
             "expected_chunk_hits": ir_metrics.hits,
             "retrieved_chunk_ids": retrieved_chunk_ids,
-            # Fix round 1 (Opus review, I3): renamed to `answer_relevance_rubric` everywhere
-            # (RAGAS's own "answer relevancy" names a different metric — see `ClassRollup`'s
-            # docstring). `answer_relevance` is kept, DUPLICATED under the old key, ONLY because
-            # `tests/test_eval_metrics.py::test_run_eval_records_chunk_level_metrics_and_class_
-            # rollups` accesses `row.metrics["answer_relevance"]` by `[]` (not `.get`) — dropping
-            # the old key would raise `KeyError` in that authored, unmodifiable test. Flagged
-            # explicitly in the fix-round-1 implementer report as a literal ruling/authored-test
-            # conflict, resolved by ADDING the new key rather than replacing the old one.
-            "answer_relevance": answer_relevance_rubric,
+            # Fix round 1 (Opus review, I3), made the sole key in round 1b (controller amendment
+            # commit b63a9eb re-pinned the authored test onto this name): RAGAS's own "answer
+            # relevancy" names a different metric (mean cosine similarity between the question and
+            # back-generated questions) — this is a YES/NO rubric verdict, not that — so the old
+            # `answer_relevance` key is gone; `answer_relevance_rubric` is the only key.
             "answer_relevance_rubric": answer_relevance_rubric,
             "context_precision": context_precision_value,
             "context_recall": context_recall_value,

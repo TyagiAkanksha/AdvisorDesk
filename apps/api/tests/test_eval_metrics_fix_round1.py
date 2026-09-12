@@ -6,14 +6,22 @@ slug), I1 (answer-relevance rubric skipped for refused rows), I3 (RAGAS rank-awa
 I7 (`_run_from_cli` actually builds the judge from `settings.judge_model` and forwards it as
 BOTH `judge` and `metrics_judge`).
 
+Round 1b (controller amendment, commit `b63a9eb`): `tests/test_eval_metrics.py` was itself
+amended to re-pin `context_precision(judge, question, chunks)` onto the RAGAS rank-aware formula
+(`5/6`, not the old plain fraction `2/3`) and `answer_relevance_rubric` as the ONLY metrics key
+(`answer_relevance` dropped). The implementation's two round-1 legacy-compat shims (the old
+non-rank-aware `context_precision` behaviour, the dual `answer_relevance`/`answer_relevance_
+rubric` keys) were removed to match — this file's tests below were updated in lockstep (see each
+test's own docstring for what changed).
+
 Written by the implementer during fix round 1 (not the original task-05 test-author) per the
 controller's explicit instruction: "you may ADD tests". Every test in `tests/test_eval_metrics.py`
-stays green and byte-for-byte unmodified except for one additive method on its `FakeMetricsJudge`
-(`rank_chunk_relevance` — required so that fake keeps satisfying `MetricsJudge` after
-`_evaluate_question` switched to the Cost ruling's batched call; see that file's own comment and
-the fix-round-1 implementer report for the full rationale). Fakes here are defined locally (no
-cross-test-file imports), per this codebase's established convention
-(`tests/test_groundedness.py`'s own module docstring).
+stays green, and — apart from the controller's own round-1b amendment (`b63a9eb`) — byte-for-byte
+unmodified except for one additive method on its `FakeMetricsJudge` (`rank_chunk_relevance` —
+required so that fake keeps satisfying `MetricsJudge` after `_evaluate_question` switched to the
+Cost ruling's batched call; see that file's own comment and the fix-round-1 implementer report for
+the full rationale). Fakes here are defined locally (no cross-test-file imports), per this
+codebase's established convention (`tests/test_groundedness.py`'s own module docstring).
 """
 
 from __future__ import annotations
@@ -57,9 +65,9 @@ def test_ragas_context_precision_is_zero_when_nothing_relevant_was_retrieved() -
 
 
 def test_ragas_context_precision_is_one_for_a_single_relevant_chunk() -> None:
-    """Sanity check the formula agrees with `context_precision`'s plain fraction at n=1 — this is
-    exactly why the pre-existing single-chunk end-to-end tests in `tests/test_eval_metrics.py`
-    don't need touching: both formulas agree when only one chunk was retrieved.
+    """The n=1 case: one relevant chunk out of one retrieved scores `1.0` — this is exactly why
+    the pre-existing single-chunk end-to-end tests in `tests/test_eval_metrics.py` needed no
+    numeric change when `context_precision` started delegating to this same formula (round 1b).
     """
     assert ragas_context_precision([True]) == pytest.approx(1.0)
 
@@ -303,10 +311,10 @@ def test_answer_relevance_rubric_is_none_and_unjudged_for_a_refused_row(
 def test_answer_relevance_metric_key_and_rollup_field_are_renamed_to_rubric(
     db_session: Session, tmp_path: Path
 ) -> None:
-    """`EvalRow.metrics["answer_relevance_rubric"]` is the canonical key going forward, and
-    `ClassRollup.mean_answer_relevance_rubric` is its class/overall aggregate (I6). (The OLD
-    `"answer_relevance"` key is ALSO still present, purely for `tests/test_eval_metrics.py`'s own
-    unmodifiable pin — see that file and the fix-round-1 implementer report.)
+    """`EvalRow.metrics["answer_relevance_rubric"]` is the ONLY key (round 1b: the controller
+    re-pinned `tests/test_eval_metrics.py` onto this name and the legacy `"answer_relevance"` key
+    was dropped — see `_evaluate_question`'s `EvalRow(...)` construction), and `ClassRollup.
+    mean_answer_relevance_rubric` is its class/overall aggregate (I6).
     """
     question = "What happens to my RSUs when they vest?"
     content = Content(
@@ -351,6 +359,7 @@ def test_answer_relevance_metric_key_and_rollup_field_are_renamed_to_rubric(
     row = report.rows[0]
     assert row.metrics is not None
     assert row.metrics["answer_relevance_rubric"] is True
+    assert "answer_relevance" not in row.metrics
     assert report.overall.mean_answer_relevance_rubric == pytest.approx(1.0)
 
 

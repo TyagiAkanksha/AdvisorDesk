@@ -39,6 +39,7 @@ calls, and the CLI.
 from __future__ import annotations
 
 import argparse
+import json
 import logging
 import subprocess
 import uuid
@@ -54,8 +55,8 @@ from app.db import make_engine, make_session_factory
 from app.eval.metrics import (
     GroundednessJudge,
     MetricsJudge,
-    context_precision,
     context_recall,
+    ragas_context_precision,
     retrieval_metrics,
     split_sentences,
 )
@@ -95,13 +96,43 @@ _RETRIEVAL_K = 6
 
 @dataclass(frozen=True)
 class ClassRollup:
-    """One `EvalQuestion.question_class`'s rollup over a run's rows (task-05 Interfaces)."""
+    """One `question_class`'s rollup over a run's rows (task-05 Interfaces), or — as
+    `EvalReport.overall` — the whole run's rollup across every class. Fix round 1 (Opus review
+    I6) widens this from two metrics to every metric this task records, each a mean over
+    APPLICABLE rows, `None` when a rollup has zero applicable rows for that metric (fix round 1
+    I4 — printed as `-`, never a false `0.0`).
+    """
 
     question_class: str
     count: int
     passed: int
-    pct_fully_supported: float  # over that class's answerable rows; 0.0 if none
-    mean_recall_at_k: float | None  # mean over rows whose recall_at_k is not None
+    # fix round 1 I4: `None` (not `0.0`) when this rollup has no ANSWERABLE rows — a class of all
+    # refusals has nothing to say about faithfulness, which reads very differently from "measured
+    # 0%".
+    pct_fully_supported: float | None
+    # fix round 1 C1: the pre-existing per-row `slugs_hit` rate (always applicable — every row has
+    # a `slugs_hit` bool) — the coarse "did retrieval surface the right ARTICLE" signal, kept
+    # separate from chunk-level recall/precision/MRR so the two granularities never blend.
+    doc_hit_rate: float | None
+    # fix round 1 C1: chunk-mode rows ONLY (≥1 resolved `expected_chunks` ref) — a slug-mode or
+    # unresolved-ref row's per-row `recall_at_k`/`mrr` is `None` (see `_evaluate_question`) and so
+    # never enters this mean; a slug-level number is a different metric on a different scale and
+    # must never blend into the same corpus-wide mean as a chunk-mode one (Opus review C1).
+    mean_recall_at_k: float | None
+    mean_mrr: float | None
+    # fix round 1 I2: retained (task-05's own "keep it in the metrics JSON"), but deliberately NOT
+    # part of the printed HEADLINE rollup — see `retrieval_metrics`'s docstring for the |E|=1 cap
+    # that makes it read as a false floor next to recall@k/MRR.
+    mean_precision_at_k: float | None
+    # fix round 1 I1/I3: was `mean_answer_relevance`; renamed because RAGAS's own
+    # "answer relevancy" names a different metric (mean cosine similarity between the question and
+    # back-generated questions) — this is a YES/NO rubric verdict, not that (I3). Answered
+    # (non-refused) rows only (I1) — see `_evaluate_question`.
+    mean_answer_relevance_rubric: float | None
+    # fix round 1 I3: backed by `ragas_context_precision` (the RAGAS rank-aware formula) as of
+    # this fix round.
+    mean_context_precision: float | None
+    mean_context_recall: float | None
 
 
 @dataclass(frozen=True)
@@ -146,6 +177,10 @@ class EvalReport:
     # (task-04's own documented decision); this counts those refs, across every row, instead of
     # only falling back to slug-level scoring with no trace.
     unresolved_expected_chunks: int = 0
+    # Fix round 1 (Opus review, I6): the whole run's rollup — every `by_class` metric, aggregated
+    # once more over EVERY row regardless of class. Defaulted (an empty rollup over zero rows) so
+    # task-03's four-argument `EvalReport(...)` constructions keep working unchanged.
+    overall: ClassRollup = field(default_factory=lambda: _rollup("overall", []))
 
 
 # The judge's own system prompt — deliberately separate from `app.rag.synthesis.SYSTEM_PROMPT`
@@ -175,6 +210,19 @@ _CONTEXT_PRECISION_PROMPT = (
 _CONTEXT_RECALL_PROMPT = (
     "You judge whether one CLAIM from a reference answer is covered by the SOURCE passages. "
     "Covered means the sources state it or directly entail it. " + _YES_NO_SUFFIX
+)
+
+# Fix round 1 (Opus review, Cost ruling): batches what used to be one `is_chunk_relevant` call
+# per retrieved chunk into ONE call judging every retrieved chunk at once, replying with a JSON
+# array (`OpenAIJudge._parse_chunk_relevance` parses it) rather than the YES/NO + reason format
+# the other rubric prompts use. `_CONTEXT_PRECISION_PROMPT` above is untouched and still backs
+# `is_chunk_relevant` (kept only for `app.eval.metrics.context_precision`'s own authored-test
+# pin — see that function's docstring).
+_CONTEXT_PRECISION_BATCH_PROMPT = (
+    "You judge whether each SOURCE passage is relevant to answering the QUESTION. Relevant means "
+    "a correct answer would plausibly draw on it. Reply with ONLY a JSON array, one object per "
+    'SOURCE in the SAME order given, each shaped exactly {"index": <0-based source number>, '
+    '"relevant": <true or false>} — no prose, no markdown fences, nothing else.'
 )
 
 
@@ -244,6 +292,11 @@ class OpenAIJudge:
     def _ask_yes_no(self, system: str, user: str) -> bool:
         """Call `_ask`, parse its first line as the YES/NO verdict, and log the reason line at
         DEBUG (no schema stores it — DESIGN does not ask for one).
+
+        M5 (Opus review, ledgered as a ride item): a reply that doesn't start with "YES" — a
+        genuinely malformed one included — is treated as NO, never raised. Low risk with an
+        explicit format instruction and gpt-4o, but this silently biases toward NO with no counter
+        for how often a reply is actually malformed versus a real "NO".
         """
         content = self._ask(system, user)
         first_line, _, rest = content.partition("\n")
@@ -271,6 +324,63 @@ class OpenAIJudge:
         )
         user_message = f"SOURCES:\n{sources}\n\nCLAIM: {claim_text}\n\nIs the claim covered?"
         return self._ask_yes_no(_CONTEXT_RECALL_PROMPT, user_message)
+
+    def rank_chunk_relevance(self, question: str, chunk_texts: Sequence[str]) -> list[bool]:
+        """One relevance verdict per `chunk_texts`, in order — a SINGLE judge call over every
+        retrieved chunk (fix round 1, Cost ruling) rather than the one-call-per-chunk
+        `is_chunk_relevant` this replaces operationally. Feeds
+        `app.eval.metrics.ragas_context_precision`. Returns `[]` without a call when
+        `chunk_texts` is empty (nothing to judge).
+        """
+        if not chunk_texts:
+            return []
+        sources = "\n\n".join(f"[{i}] {text}" for i, text in enumerate(chunk_texts))
+        user_message = (
+            f"QUESTION: {question}\n\nSOURCES:\n{sources}\n\nJudge all {len(chunk_texts)} sources."
+        )
+        content = self._ask(_CONTEXT_PRECISION_BATCH_PROMPT, user_message)
+        return self._parse_chunk_relevance(content, len(chunk_texts))
+
+    def _parse_chunk_relevance(self, content: str, expected_count: int) -> list[bool]:
+        """Strictly parse `rank_chunk_relevance`'s `[{"index": int, "relevant": bool}, ...]`
+        reply (fix round 1, Cost ruling). ANYTHING unexpected — invalid JSON, not a list, the
+        wrong length, a missing/duplicate/out-of-range `index`, a non-bool `relevant` — falls back
+        to "every source irrelevant" (a conservative floor for context precision, never an
+        inflated score) plus a WARNING log naming the raw reply, so a real malformed-output rate
+        is visible in logs without ever aborting a whole eval run over one bad reply.
+        """
+        fallback = [False] * expected_count
+        try:
+            parsed = json.loads(content)
+        except json.JSONDecodeError:
+            logger.warning("context-precision judge returned unparseable JSON: %r", content)
+            return fallback
+        if not isinstance(parsed, list) or len(parsed) != expected_count:
+            logger.warning("context-precision judge returned malformed verdicts: %r", content)
+            return fallback
+
+        verdicts: list[bool | None] = [None] * expected_count
+        for entry in parsed:
+            if not isinstance(entry, dict):
+                logger.warning("context-precision judge returned malformed verdicts: %r", content)
+                return fallback
+            index = entry.get("index")
+            relevant = entry.get("relevant")
+            if not isinstance(index, int) or isinstance(index, bool):
+                logger.warning("context-precision judge returned malformed verdicts: %r", content)
+                return fallback
+            if not isinstance(relevant, bool):
+                logger.warning("context-precision judge returned malformed verdicts: %r", content)
+                return fallback
+            if not (0 <= index < expected_count) or verdicts[index] is not None:
+                logger.warning("context-precision judge returned malformed verdicts: %r", content)
+                return fallback
+            verdicts[index] = relevant
+
+        if any(verdict is None for verdict in verdicts):
+            logger.warning("context-precision judge returned malformed verdicts: %r", content)
+            return fallback
+        return [bool(verdict) for verdict in verdicts]
 
 
 def _dedupe_preserve_order(texts: Iterable[str]) -> list[str]:
@@ -339,7 +449,11 @@ def _evaluate_question(
 
     # Task-05: recall@k/precision@k/MRR, preferring `expected_chunks` (resolved against the LIVE
     # corpus) over the coarser slug-level fallback whenever a resolvable ref exists (task file
-    # Interfaces, mode-selection rule).
+    # Interfaces, mode-selection rule). M2 (Opus review, ledgered as a ride item, captioned here):
+    # a PARTIALLY-resolved question (2 of 3 refs resolve) still counts as `mode="chunk"` with a
+    # SHRUNKEN expected set (`len(resolved_chunk_ids)`, not the authored `len(expected_chunks)`)
+    # — recall's denominator is the resolved refs, not the authored ones, which can read as
+    # inflated recall for a corpus with gaps.
     resolved_chunk_ids = resolve_expected_chunks(session, question.expected_chunks)
     retrieved_chunk_ids = [str(chunk.chunk_id) for chunk in retrieval.chunks]
     if question.expected_chunks and resolved_chunk_ids:
@@ -351,16 +465,45 @@ def _evaluate_question(
         ir_metrics = retrieval_metrics(question.expected_slugs, cited_slugs, mode=retrieval_mode)
     unresolved = max(0, len(question.expected_chunks) - len(resolved_chunk_ids))
 
-    # Task-05: the three rubric judges, only when a `metrics_judge` was supplied — `None` leaves
-    # all three `None` so pure retrieval metrics still land without ever reaching an LLM (this is
-    # what keeps `tests/test_groundedness.py`'s `ScriptedJudge`-only tests green: it implements
-    # only `is_supported`, never `MetricsJudge`'s three extra methods).
-    answer_relevance: bool | None = None
+    # Fix round 1 (Opus review, C1): recall@k/precision@k/MRR are corpus-comparable ONLY at chunk
+    # granularity — a slug-mode value mixes 1-2 slugs against ~6 chunk ids, a different metric on
+    # a different scale, and the OLD behaviour of silently falling back to a slug-level number
+    # blended chunk-mode and slug-mode rows into one unlabelled rollup column. A slug-mode (or
+    # unresolved-`expected_chunks`) row now scores `None` for all three here — excluded from the
+    # class/overall means (`_rollup` below), never downgraded into them. `ir_metrics.hits`/
+    # `retrieved_chunk_ids` are UNCHANGED (still computed above) since C1 names only
+    # recall/precision/MRR; `expected_chunk_hits` holding a slug-level count in slug mode (M4) is
+    # a separate, already-forward-flagged concern for task 06, not touched here.
+    scored_recall = ir_metrics.recall_at_k if retrieval_mode == "chunk" else None
+    scored_precision = ir_metrics.precision_at_k if retrieval_mode == "chunk" else None
+    # M3 (Opus review, ledgered as a ride item, captioned here): this per-ROW value is a
+    # reciprocal rank, not a mean — "MRR" (Mean Reciprocal Rank) is that value's corpus-wide
+    # average (`ClassRollup.mean_mrr`, below), never this single row's own number.
+    scored_mrr = ir_metrics.mrr if retrieval_mode == "chunk" else None
+
+    # Fix round 1 (Opus review, I1 + I3 + Cost): the rubric judges, only when a `metrics_judge`
+    # was supplied — `None` leaves every one of them `None` so pure retrieval metrics still land
+    # without ever reaching an LLM (this is what keeps `tests/test_groundedness.py`'s
+    # `ScriptedJudge`-only tests green: it implements only `is_supported`, never `MetricsJudge`'s
+    # other methods).
+    answer_relevance_rubric: bool | None = None
     context_precision_value: float | None = None
     context_recall_value: float | None = None
     if metrics_judge is not None:
-        answer_relevance = metrics_judge.is_answer_relevant(question.question, answer_text)
-        context_precision_value = context_precision(metrics_judge, question.question, chunk_texts)
+        # I1: judged only when the row was ANSWERED (retrieval found content, the model did not
+        # refuse) — a refusal has no "does this answer address the question" claim to score, and
+        # the rubric prompt's own "answer NO to a refusal asked in good faith" instruction would
+        # otherwise misscore a CORRECT refusal as failing relevance. No judge call at all for a
+        # refused row.
+        if not refused:
+            answer_relevance_rubric = metrics_judge.is_answer_relevant(
+                question.question, answer_text
+            )
+        # I3 + Cost: ONE batched call over every retrieved chunk (`rank_chunk_relevance`) feeds
+        # the RAGAS rank-aware `ragas_context_precision` formula — replaces what used to be one
+        # `is_chunk_relevant` call per chunk.
+        chunk_relevance = metrics_judge.rank_chunk_relevance(question.question, chunk_texts)
+        context_precision_value = ragas_context_precision(chunk_relevance)
         context_recall_value = context_recall(metrics_judge, question.reference_answer, chunk_texts)
 
     row = EvalRow(
@@ -377,13 +520,22 @@ def _evaluate_question(
         question_class=question.question_class,
         persona=question.persona,
         metrics={
-            "retrieval_mode": ir_metrics.mode,
-            "recall_at_k": ir_metrics.recall_at_k,
-            "precision_at_k": ir_metrics.precision_at_k,
-            "mrr": ir_metrics.mrr,
+            "retrieval_mode": retrieval_mode,
+            "recall_at_k": scored_recall,
+            "precision_at_k": scored_precision,
+            "mrr": scored_mrr,
             "expected_chunk_hits": ir_metrics.hits,
             "retrieved_chunk_ids": retrieved_chunk_ids,
-            "answer_relevance": answer_relevance,
+            # Fix round 1 (Opus review, I3): renamed to `answer_relevance_rubric` everywhere
+            # (RAGAS's own "answer relevancy" names a different metric — see `ClassRollup`'s
+            # docstring). `answer_relevance` is kept, DUPLICATED under the old key, ONLY because
+            # `tests/test_eval_metrics.py::test_run_eval_records_chunk_level_metrics_and_class_
+            # rollups` accesses `row.metrics["answer_relevance"]` by `[]` (not `.get`) — dropping
+            # the old key would raise `KeyError` in that authored, unmodifiable test. Flagged
+            # explicitly in the fix-round-1 implementer report as a literal ruling/authored-test
+            # conflict, resolved by ADDING the new key rather than replacing the old one.
+            "answer_relevance": answer_relevance_rubric,
+            "answer_relevance_rubric": answer_relevance_rubric,
             "context_precision": context_precision_value,
             "context_recall": context_recall_value,
         },
@@ -391,45 +543,74 @@ def _evaluate_question(
     return row, unresolved
 
 
-def _class_rollup(question_class: str, rows: Sequence[EvalRow]) -> ClassRollup:
-    """One class's rollup (task-05 Interfaces): `passed` counts `verdict == "PASS"` rows;
-    `pct_fully_supported` is computed over the class's ANSWERABLE rows only (mirroring `_build_
-    report`'s corpus-wide I.3 split), `0.0` when the class has none; `mean_recall_at_k` averages
-    `metrics["recall_at_k"]` over rows where it is not `None`, else `None`.
+def _as_float(value: object | None) -> float | None:
+    """Narrow one `EvalRow.metrics` value (an open `dict[str, object]`-shaped JSONB bucket, per
+    `app.models.eval.EvalResult.metrics`'s own docstring) to a `float` for averaging. A bool
+    verdict (e.g. `answer_relevance_rubric`) becomes `1.0`/`0.0` so its class mean reads as the
+    fraction judged true. Anything else — including `None` — is "not applicable" for this row.
     """
-    class_rows = [row for row in rows if row.question_class == question_class]
-    passed = sum(1 for row in class_rows if row.verdict == "PASS")
+    if isinstance(value, bool):
+        return 1.0 if value else 0.0
+    if isinstance(value, int | float):
+        return float(value)
+    return None
 
-    answerable_rows = [row for row in class_rows if row.answerable]
+
+def _mean_metric(rows: Sequence[EvalRow], key: str) -> float | None:
+    """Mean of `row.metrics[key]` over rows where that key is present and applicable (fix round
+    1, I6) — `None` (printed as `-`, I4) when no row in `rows` has an applicable value.
+    """
+    values: list[float] = []
+    for row in rows:
+        if row.metrics is None:
+            continue
+        parsed = _as_float(row.metrics.get(key))
+        if parsed is not None:
+            values.append(parsed)
+    return sum(values) / len(values) if values else None
+
+
+def _rollup(label: str, rows: Sequence[EvalRow]) -> ClassRollup:
+    """One label's rollup — `label` is a `question_class` for a `by_class` entry, or `"overall"`
+    for `EvalReport.overall` (fix round 1, I6: every metric this task records, aggregated once
+    per class AND once over the whole run). `passed` counts `verdict == "PASS"` rows;
+    `pct_fully_supported`/`doc_hit_rate`/every `mean_*` field is `None` (fix round 1, I4 — printed
+    as `-`) when `rows` has zero applicable entries for that particular metric.
+    """
+    passed = sum(1 for row in rows if row.verdict == "PASS")
+
+    answerable_rows = [row for row in rows if row.answerable]
     pct_fully_supported = (
         100.0 * sum(1 for row in answerable_rows if row.fully_supported) / len(answerable_rows)
         if answerable_rows
-        else 0.0
+        else None
     )
-
-    # `EvalRow.metrics` is a `dict[str, object] | None` (an open JSONB-shaped bucket, per
-    # `app.models.eval.EvalResult.metrics`'s own docstring) — narrow each `recall_at_k` value to
-    # `float` explicitly rather than trusting the dict's value type, so mypy strict can verify the
-    # `sum(...)` below.
-    recall_values: list[float] = []
-    for row in class_rows:
-        recall_at_k = row.metrics.get("recall_at_k") if row.metrics is not None else None
-        if isinstance(recall_at_k, int | float):
-            recall_values.append(float(recall_at_k))
-    mean_recall_at_k = sum(recall_values) / len(recall_values) if recall_values else None
+    doc_hit_rate = sum(1 for row in rows if row.slugs_hit) / len(rows) if rows else None
 
     return ClassRollup(
-        question_class=question_class,
-        count=len(class_rows),
+        question_class=label,
+        count=len(rows),
         passed=passed,
         pct_fully_supported=pct_fully_supported,
-        mean_recall_at_k=mean_recall_at_k,
+        doc_hit_rate=doc_hit_rate,
+        mean_recall_at_k=_mean_metric(rows, "recall_at_k"),
+        mean_mrr=_mean_metric(rows, "mrr"),
+        mean_precision_at_k=_mean_metric(rows, "precision_at_k"),
+        mean_answer_relevance_rubric=_mean_metric(rows, "answer_relevance_rubric"),
+        mean_context_precision=_mean_metric(rows, "context_precision"),
+        mean_context_recall=_mean_metric(rows, "context_recall"),
     )
 
 
 def _build_report(rows: list[EvalRow], *, unresolved_expected_chunks: int = 0) -> EvalReport:
     """Aggregate `rows` into the §9.1/§10 summary numbers (I.3: split by `answerable`) plus the
-    task-05 per-class rollups.
+    task-05 per-class rollups and (fix round 1, I6) the whole-run `overall` rollup.
+
+    NOTE: this function's own `pct_fully_supported` (the top-level, phase-7 summary number) stays
+    `0.0` when there are no answerable rows — UNCHANGED, since the phase-7 "groundedness: X% fully
+    supported" line must stay byte-identical. Fix round 1's I4 ("`-` instead of `0.0`") applies
+    only to `ClassRollup.pct_fully_supported` (the per-class/overall rollup), never to this
+    report-level field.
     """
     answerable_rows = [row for row in rows if row.answerable]
     uncovered_rows = [row for row in rows if not row.answerable]
@@ -448,7 +629,11 @@ def _build_report(rows: list[EvalRow], *, unresolved_expected_chunks: int = 0) -
     class_names = dict.fromkeys(
         row.question_class for row in rows if row.question_class is not None
     )
-    by_class = {name: _class_rollup(name, rows) for name in class_names}
+    by_class = {
+        name: _rollup(name, [row for row in rows if row.question_class == name])
+        for name in class_names
+    }
+    overall = _rollup("overall", rows)
 
     return EvalReport(
         rows=rows,
@@ -457,6 +642,7 @@ def _build_report(rows: list[EvalRow], *, unresolved_expected_chunks: int = 0) -
         refusal_total=refusal_total,
         by_class=by_class,
         unresolved_expected_chunks=unresolved_expected_chunks,
+        overall=overall,
     )
 
 
@@ -595,24 +781,87 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     return args
 
 
-def _print_class_rollups(by_class: dict[str, ClassRollup]) -> None:
-    """Print the task-05 per-class rollup block (task file Interfaces, exact format)."""
+def _fmt_pct(value: float | None, *, already_pct: bool = False) -> str:
+    """Render a percentage cell at one decimal, or `-` when the metric has zero applicable rows
+    (fix round 1, I4). `value` is a 0-1 fraction by default (scaled here to 0-100); pass
+    `already_pct=True` for a value already on the 0-100 scale (`pct_fully_supported`).
+    """
+    if value is None:
+        return "-"
+    return f"{value:.1f}" if already_pct else f"{value * 100:.1f}"
+
+
+def _fmt_score(value: float | None) -> str:
+    """Render a 0-1 IR score (recall@k / MRR / precision@k) at two decimals, or `-` when the
+    metric has zero applicable rows (fix round 1, I4)."""
+    return "-" if value is None else f"{value:.2f}"
+
+
+def _print_headline_rollup_row(rollup: ClassRollup) -> None:
+    """One row of the "by class" headline table (fix round 1: C1's `doc_hit%` column, I2's
+    precision@k exclusion, I4's `-` cells)."""
+    print(
+        f"  {rollup.question_class:<14} {rollup.count:>3} {rollup.passed:>5} "
+        f"{_fmt_pct(rollup.pct_fully_supported, already_pct=True):>11} "
+        f"{_fmt_pct(rollup.doc_hit_rate):>9} "
+        f"{_fmt_score(rollup.mean_recall_at_k):>9} "
+        f"{_fmt_score(rollup.mean_mrr):>6}"
+    )
+
+
+def _print_judge_metrics_rollup_row(rollup: ClassRollup) -> None:
+    """One row of the "judge metrics" table (fix round 1, I6): precision@k (I2: not a headline
+    number, but still aggregated+printed here) plus the three rubric-judge means.
+    """
+    print(
+        f"  {rollup.question_class:<14} {rollup.count:>3} "
+        f"{_fmt_score(rollup.mean_precision_at_k):>11} "
+        f"{_fmt_pct(rollup.mean_answer_relevance_rubric):>11} "
+        f"{_fmt_pct(rollup.mean_context_precision):>14} "
+        f"{_fmt_pct(rollup.mean_context_recall):>11}"
+    )
+
+
+def _print_class_rollups(report: EvalReport) -> None:
+    """Print the task-05 per-class rollup blocks, widened by fix round 1 (Opus review):
+
+    - C1: retrieval recall@k/MRR are chunk-mode-only means (rows with a resolved
+      `expected_chunks` ref); slug-level coverage is reported separately as `doc_hit%` (the
+      pre-existing `slugs_hit` rate) so the two granularities are never blended into one column.
+    - I2: precision@k is NOT a headline retrieval number (see `retrieval_metrics`'s docstring for
+      why) — it appears only in the second, "judge metrics" block, alongside the three
+      rubric-judge means (I6).
+    - I4: every cell prints `-`, never `0.0`, when its class/overall rollup has zero applicable
+      rows for that metric.
+    - I6: both blocks end with an `overall` row (`report.overall`) — every metric aggregated once
+      more across the WHOLE run, not only per class.
+    """
     print("by class:")
-    print(f"  {'class':<14} {'n':>3} {'pass':>5} {'supported%':>11} {'recall@k':>9}")
-    for rollup in by_class.values():
-        recall = "-" if rollup.mean_recall_at_k is None else f"{rollup.mean_recall_at_k:.2f}"
-        print(
-            f"  {rollup.question_class:<14} {rollup.count:>3} {rollup.passed:>5} "
-            f"{rollup.pct_fully_supported:>11.1f} {recall:>9}"
-        )
+    print(
+        f"  {'class':<14} {'n':>3} {'pass':>5} {'supported%':>11} {'doc_hit%':>9} "
+        f"{'recall@k':>9} {'mrr':>6}"
+    )
+    for rollup in report.by_class.values():
+        _print_headline_rollup_row(rollup)
+    _print_headline_rollup_row(report.overall)
+
+    print("judge metrics by class:")
+    print(
+        f"  {'class':<14} {'n':>3} {'precision@k':>11} {'rel_rubric%':>11} "
+        f"{'ctx_precision%':>14} {'ctx_recall%':>11}"
+    )
+    for rollup in report.by_class.values():
+        _print_judge_metrics_rollup_row(rollup)
+    _print_judge_metrics_rollup_row(report.overall)
 
 
 def _print_report(report: EvalReport) -> None:
     """Print one run's per-question table plus the phase-7 summary line (byte-identical to the
     phase-7 stdout — `docs/plans/phase-7-evaluation/verification-record.md` §1 and task-09 both
-    depend on this exact line), then the task-05 per-class rollup block when `report.by_class` is
-    non-empty (a pre-task-05 `EvalReport(...)` construction — `tests/test_groundedness_cli.py`'s
-    `_row`/`_report` helpers — defaults it to `{}`, so nothing extra prints for those).
+    depend on this exact line), then the task-05 per-class rollup blocks (widened by fix round 1
+    — see `_print_class_rollups`) when `report.by_class` is non-empty (a pre-task-05
+    `EvalReport(...)` construction — `tests/test_groundedness_cli.py`'s `_row`/`_report` helpers —
+    defaults it to `{}`, so nothing extra prints for those).
     """
     _print_table(report.rows)
     print(
@@ -620,7 +869,7 @@ def _print_report(report: EvalReport) -> None:
         f"refusals {report.refusal_correct}/{report.refusal_total} correct"
     )
     if report.by_class:
-        _print_class_rollups(report.by_class)
+        _print_class_rollups(report)
 
 
 def _print_stability(reports: Sequence[EvalReport], *, label: str) -> None:

@@ -83,14 +83,21 @@ class GroundednessJudge(Protocol):
 
 
 class MetricsJudge(Protocol):
-    """The four rubric judges (DESIGN "Generation" row). `is_supported` is the existing
-    faithfulness judge, restated here so one object can satisfy the whole seam.
+    """The rubric judges (DESIGN "Generation" row). `is_supported` is the existing faithfulness
+    judge, restated here so one object can satisfy the whole seam.
+
+    Fix round 1 (Opus review, Cost ruling): `rank_chunk_relevance` batches what used to be one
+    `is_chunk_relevant` call per retrieved chunk into ONE call over all of them, returning one
+    verdict per chunk. `is_chunk_relevant` itself is KEPT (not removed) only because `context_
+    precision` below (the OLD, non-rank-aware formula) still calls it — see that function's
+    docstring for why it survives unused by the real per-row computation.
     """
 
     def is_supported(self, claim_text: str, chunk_texts: Sequence[str]) -> bool: ...
     def is_answer_relevant(self, question: str, answer_text: str) -> bool: ...
     def is_chunk_relevant(self, question: str, chunk_text: str) -> bool: ...
     def is_claim_covered(self, claim_text: str, chunk_texts: Sequence[str]) -> bool: ...
+    def rank_chunk_relevance(self, question: str, chunk_texts: Sequence[str]) -> list[bool]: ...
 
 
 @dataclass(frozen=True)
@@ -111,14 +118,20 @@ def retrieval_metrics(
 
     - `recall_at_k`  = |E ∩ R| / |E|
     - `precision_at_k` = |E ∩ R| / |R|, and `0.0` when `R` is empty (a refusal retrieves nothing,
-      which is zero precision, not undefined)
-    - `mrr` = 1 / (1-based position of the first element of `R` that is in `E`), else `0.0`
+      which is zero precision, not undefined). Fix round 1 (Opus review, I2): with |E|=1 (today's
+      authored `expected_chunks` refs are single headings), `precision_at_k` is mathematically
+      capped at `1/|R|` regardless of retrieval quality — this is why the caller
+      (`groundedness._evaluate_question`) keeps it in `EvalRow.metrics` but the printed rollup
+      does not treat it as a headline retrieval number alongside recall@k/MRR.
+    - `mrr` = 1 / (1-based position of the first element of `R` that is in `E`), else `0.0`.
+      Note: deduping `R` (below) shifts these ranks — `[a, a, b]` against `E={b}` scores rank 2
+      (`R` dedupes to `[a, b]`), not rank 3.
     - `E` empty (an off-domain question) ⇒ every metric is `None` and `hits` is `0`: there is
       nothing to recall, and scoring it 0.0 would drag the corpus-wide means down for questions
       that are *supposed* to retrieve nothing.
 
     `R` is deduped preserving order before scoring (a content item with two retrieved chunks must
-    not inflate precision's denominator twice at slug level).
+    not inflate precision's denominator twice at slug level, and shifts MRR's ranks the same way).
     """
     if not expected:
         return RetrievalMetrics(mode=mode, recall_at_k=None, precision_at_k=None, mrr=None, hits=0)
@@ -150,11 +163,50 @@ def context_precision(
 ) -> float | None:
     """Fraction of RETRIEVED chunks the judge deems relevant to `question`. `None` if none were
     retrieved.
+
+    Fix round 1 (Opus review, I3): this plain, non-rank-aware fraction is NOT the metric recorded
+    under `EvalRow.metrics["context_precision"]` as of this fix round — `ragas_context_precision`
+    (below) is, per the controller's ruling to use the RAGAS rank-aware formula. This function is
+    kept, byte-for-byte, ONLY because `tests/test_eval_metrics.py::
+    test_context_precision_is_the_fraction_of_relevant_retrieved_chunks` pins its exact
+    non-rank-aware value (`2/3`) for a mixed-relevance fixture that the rank-aware formula scores
+    differently (`5/6` for the equivalent `[True, False, True]` pattern) — an authored test may
+    not be modified without controller approval, and this is flagged explicitly as such in the
+    fix-round-1 implementer report rather than silently reconciled.
     """
     if not chunk_texts:
         return None
     relevant = sum(1 for text in chunk_texts if judge.is_chunk_relevant(question, text))
     return relevant / len(chunk_texts)
+
+
+def ragas_context_precision(relevant: Sequence[bool]) -> float | None:
+    """RAGAS-style, rank-aware context precision (fix round 1, Opus review I3):
+    `Σ_i precision@i · rel_i / |relevant chunks|`, where `relevant[i]` is one relevance verdict
+    per RETRIEVED chunk (0-based, in retrieval order — from `MetricsJudge.rank_chunk_relevance`,
+    the batched call the Cost ruling asks for) and `precision@i` is the fraction of relevant
+    chunks among the first `i + 1` retrieved. This IS the metric recorded under
+    `EvalRow.metrics["context_precision"]` as of this fix round (see `context_precision` above
+    for the older, non-rank-aware fraction this module still exposes for an authored test's own
+    pin — the two deliberately disagree on a mixed-relevance input).
+
+    `None` when nothing was retrieved (`relevant` empty — no signal to score). `0.0` when chunks
+    WERE retrieved but the judge found none of them relevant (an explicit floor, not a
+    `ZeroDivisionError` from an empty "relevant chunks" denominator).
+    """
+    if not relevant:
+        return None
+    num_relevant = sum(1 for is_relevant in relevant if is_relevant)
+    if num_relevant == 0:
+        return 0.0
+
+    running_relevant = 0
+    total = 0.0
+    for position, is_relevant in enumerate(relevant, start=1):
+        if is_relevant:
+            running_relevant += 1
+            total += running_relevant / position
+    return total / num_relevant
 
 
 def context_recall(

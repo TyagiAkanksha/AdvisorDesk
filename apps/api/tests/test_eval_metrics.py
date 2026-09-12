@@ -114,6 +114,19 @@ class FakeMetricsJudge:
         self.calls.append(("is_chunk_relevant", chunk_text))
         return not any(m in chunk_text for m in self.irrelevant_chunk_markers)
 
+    def rank_chunk_relevance(self, question: str, chunk_texts: Sequence[str]) -> list[bool]:
+        # Fix round 1 (Opus review, Cost ruling): additive method, added by the implementer (not
+        # the test-author) so this fake keeps satisfying `MetricsJudge` after `_evaluate_question`
+        # switched from one `is_chunk_relevant` call per chunk to one batched
+        # `rank_chunk_relevance` call. No existing method/marker/assertion above is touched;
+        # reuses `is_chunk_relevant`'s own marker logic per-chunk, so every ALREADY-AUTHORED
+        # end-to-end assertion that exercises `run_eval(..., metrics_judge=...)` scores IDENTICALLY
+        # (a single-chunk retrieval's RAGAS-rank-aware precision and the old plain-fraction
+        # precision agree at n=1: both are 1.0 for one relevant chunk). See the fix-round-1
+        # implementer report for why this addition was necessary rather than optional.
+        self.calls.append(("rank_chunk_relevance", "|".join(chunk_texts)))
+        return [self.is_chunk_relevant(question, text) for text in chunk_texts]
+
     def is_claim_covered(self, claim_text: str, chunk_texts: Sequence[str]) -> bool:
         self.calls.append(("is_claim_covered", claim_text))
         return not any(m in claim_text for m in self.uncovered_markers)

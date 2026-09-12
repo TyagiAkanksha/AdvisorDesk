@@ -163,6 +163,8 @@ def _generate_chat_stream(
     embedder: Embedder,
     settings: Settings,
     body: ChatRequest,
+    *,
+    started_at: float,
 ) -> Iterator[str]:
     """Yield the §5.3 SSE body for one `/public/chat` exchange (PRD §7.6-§7.7, §4).
 
@@ -218,6 +220,14 @@ def _generate_chat_stream(
     health of a connection that just failed, so the rollback is now purely a best-effort cleanup
     AFTER the response body is already complete: it runs inside its own `try/except`, logs on
     failure, and never raises into the stream.
+
+    `started_at` (phase-9 DESIGN §A) is `public_chat`'s own `_start = time.monotonic()`, threaded
+    in keyword-only so this stays a required, explicit argument rather than a second silent clock
+    read: `latency_ms = int((time.monotonic() - started_at) * 1000)` is computed immediately
+    before `record_assistant_message`, giving whole-answer latency (deliberately not
+    time-to-first-token, which `_on_first_event` already tracks separately) — populated on every
+    successful exchange and left `NULL` on the error path, since no assistant row is ever written
+    there.
     """
     chat_session_id: uuid.UUID | None = None
     tokens: list[str] = []
@@ -240,8 +250,11 @@ def _generate_chat_stream(
             yield sse_event("token", {"text": token})
 
         answer_text = "".join(tokens)
+        # Phase-9 DESIGN §A: whole-answer latency, deliberately not time-to-first-token (which
+        # `_on_first_event` already tracks separately under the "public_chat" metric key).
+        latency_ms = int((time.monotonic() - started_at) * 1000)
         assistant_message = record_assistant_message(
-            session, chat_session.id, answer_text, retrieval
+            session, chat_session.id, answer_text, retrieval, latency_ms=latency_ms
         )
         session.commit()
 
@@ -410,6 +423,6 @@ def public_chat(
         rate_limiter.reserve_session_create(client_ip)
 
     return sse_response(
-        _generate_chat_stream(session, chat_llm, embedder, settings, body),
+        _generate_chat_stream(session, chat_llm, embedder, settings, body, started_at=_start),
         on_first_event=_on_first_event,
     )

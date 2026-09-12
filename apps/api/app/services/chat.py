@@ -45,6 +45,8 @@ class RetrievedChunkLike(Protocol):
     def title(self) -> str: ...
     @property
     def slug(self) -> str: ...
+    @property
+    def similarity(self) -> float: ...
 
 
 class RetrievalResultLike(Protocol):
@@ -105,7 +107,12 @@ def record_user_message(session: Session, chat_session_id: uuid.UUID, text: str)
 
 
 def record_assistant_message(
-    session: Session, chat_session_id: uuid.UUID, text: str, retrieval: RetrievalResultLike
+    session: Session,
+    chat_session_id: uuid.UUID,
+    text: str,
+    retrieval: RetrievalResultLike,
+    *,
+    latency_ms: int | None = None,
 ) -> ChatMessage:
     """Persist one `role="assistant"` turn with its retrieval outcome (PRD §7.4, §7.7, §4).
 
@@ -120,12 +127,19 @@ def record_assistant_message(
     exactly when `app.rag.retrieval.retrieve()` says so (its own docstring's None-iff-empty-index
     semantics), never recomputed here.
 
+    Phase-9 DESIGN §A: each chunk-level citation entry also carries the retriever's own
+    `similarity`, rounded to 4 dp — so every stored answer doubles as a retrieval trace. Readers
+    must use `.get("similarity")` (pre-0009 rows have none). `latency_ms` is keyword-only and
+    defaults to `None` so every existing call site keeps working unchanged.
+
     Args:
         session: the caller's `Session`.
         chat_session_id: the owning `ChatSession.id`.
         text: the assistant's full answer text (already accumulated from the token stream).
         retrieval: the `RetrievalResult` (or any structurally-compatible `RetrievalResultLike`)
             this answer was grounded in.
+        latency_ms: the route's own whole-answer `time.monotonic()` measurement, or `None` when
+            the caller has none to report.
 
     Returns:
         The newly created (and flushed) `ChatMessage` row.
@@ -138,6 +152,7 @@ def record_assistant_message(
             "title": chunk.title,
             "slug": chunk.slug,
             "chunk_id": str(chunk.chunk_id),
+            "similarity": round(chunk.similarity, 4),
         }
         for chunk in retrieval.chunks
     ]
@@ -148,6 +163,7 @@ def record_assistant_message(
         citations=citations,
         retrieval_found=bool(retrieval.chunks),
         top_similarity=retrieval.top_similarity,
+        latency_ms=latency_ms,
     )
     session.add(message)
     session.flush()

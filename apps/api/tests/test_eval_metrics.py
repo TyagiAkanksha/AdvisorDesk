@@ -132,12 +132,15 @@ class FakeMetricsJudge:
         return not any(m in claim_text for m in self.uncovered_markers)
 
 
-def test_context_precision_is_the_fraction_of_relevant_retrieved_chunks() -> None:
+def test_context_precision_is_the_ragas_rank_aware_precision() -> None:
+    # Controller amendment (task-05 review I3): the metric named `context_precision` must be the
+    # RAGAS definition — Σ_i precision@i · rel_i / |relevant| — not the plain relevant fraction.
+    # Verdicts [True, False, True] → (1/1 · 1 + 1/2 · 0 + 2/3 · 1) / 2 = 5/6.
     judge = FakeMetricsJudge(irrelevant_chunk_markers=("OFF_TOPIC",))
 
     value = context_precision(judge, "q?", ["relevant one", "OFF_TOPIC filler", "relevant two"])
 
-    assert value == pytest.approx(2 / 3)
+    assert value == pytest.approx(5 / 6)
 
 
 def test_context_precision_is_none_when_nothing_was_retrieved() -> None:
@@ -248,7 +251,7 @@ def test_run_eval_records_chunk_level_metrics_and_class_rollups(
     assert row.metrics["mrr"] == pytest.approx(1.0)
     assert row.metrics["expected_chunk_hits"] == 1
     assert row.metrics["retrieved_chunk_ids"] == [str(target.id)]
-    assert row.metrics["answer_relevance"] is True
+    assert row.metrics["answer_relevance_rubric"] is True
     assert row.metrics["context_precision"] == pytest.approx(1.0)
     assert row.metrics["context_recall"] == pytest.approx(1.0)
 
@@ -280,7 +283,7 @@ def test_metrics_judge_is_optional_so_the_pure_retrieval_metrics_still_land(
     metrics = report.rows[0].metrics
     assert metrics is not None
     assert metrics["recall_at_k"] is None
-    assert metrics["answer_relevance"] is None
+    assert metrics["answer_relevance_rubric"] is None
     assert metrics["context_precision"] is None
 
 

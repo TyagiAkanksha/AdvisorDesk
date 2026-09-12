@@ -38,12 +38,12 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
 
-import yaml
 from openai import OpenAI
 from sqlalchemy.orm import Session
 
 from app.config import Settings
 from app.db import make_engine, make_session_factory
+from app.eval.questions import EvalQuestion, load_questions
 from app.models import EvalRun
 from app.rag.embeddings import Embedder, OpenAICompatibleEmbedder
 from app.rag.retrieval import retrieve
@@ -112,15 +112,6 @@ class EvalReport:
     pct_fully_supported: float
     refusal_correct: int
     refusal_total: int
-
-
-@dataclass(frozen=True)
-class _EvalQuestion:
-    """One parsed, validated `seed/eval_questions.yaml` record (PRD §8.1)."""
-
-    question: str
-    expected_slugs: list[str]
-    answerable: bool
 
 
 class GroundednessJudge(Protocol):
@@ -220,52 +211,6 @@ def _dedupe_preserve_order(texts: Iterable[str]) -> list[str]:
     return list(dict.fromkeys(texts))
 
 
-def _load_questions(questions_path: Path) -> list[_EvalQuestion]:
-    """Load and validate `questions_path` against the PRD §8.1 shape (task-02 brief Step 1: "YAML
-    loading validates the §8.1 shape").
-
-    Mirrors `tests/test_seed.py`'s own §8.1 shape checks: a top-level list of mappings, each with
-    exactly `question` (non-blank str), `expected_slugs` (list), `answerable` (bool).
-
-    Raises:
-        ValueError: `questions_path` does not parse to a top-level list, or an item is not a
-            mapping, or is missing/mistypes one of the three required keys, or two items share
-            the same `question` text (fix round 1, reviewer finding I2 — the `(run_id, question)`
-            unique constraint (`app/models/eval.py`) would otherwise reject the whole run at
-            `record_run`'s final `flush()`, discarding every row after the run already paid for
-            its embedder/chat/judge calls).
-    """
-    raw = yaml.safe_load(questions_path.read_text(encoding="utf-8"))
-    if not isinstance(raw, list):
-        raise ValueError(f"{questions_path}: eval questions file must parse to a top-level list")
-
-    questions: list[_EvalQuestion] = []
-    seen_questions: set[str] = set()
-    for index, item in enumerate(raw):
-        if not isinstance(item, dict):
-            raise ValueError(f"{questions_path}[{index}]: item is not a mapping: {item!r}")
-        question = item.get("question")
-        expected_slugs = item.get("expected_slugs")
-        answerable = item.get("answerable")
-        if not isinstance(question, str) or not question.strip():
-            raise ValueError(f"{questions_path}[{index}]: 'question' must be a non-blank string")
-        if question in seen_questions:
-            raise ValueError(f"{questions_path}[{index}]: duplicate question: {question!r}")
-        seen_questions.add(question)
-        if not isinstance(expected_slugs, list):
-            raise ValueError(f"{questions_path}[{index}]: 'expected_slugs' must be a list")
-        if not isinstance(answerable, bool):
-            raise ValueError(f"{questions_path}[{index}]: 'answerable' must be a bool")
-        questions.append(
-            _EvalQuestion(
-                question=question,
-                expected_slugs=[str(slug) for slug in expected_slugs],
-                answerable=answerable,
-            )
-        )
-    return questions
-
-
 def _evaluate_question(
     session: Session,
     *,
@@ -273,7 +218,7 @@ def _evaluate_question(
     chat_llm: ChatLLM,
     judge: GroundednessJudge,
     settings: Settings,
-    question: _EvalQuestion,
+    question: EvalQuestion,
 ) -> EvalRow:
     """Drive one question through retrieval + synthesis and score the result (see module
     docstring, rulings I.1-I.4).
@@ -325,6 +270,8 @@ def _evaluate_question(
         verdict=verdict,
         top_similarity=retrieval.top_similarity,
         answer_text=answer_text,
+        question_class=question.question_class,
+        persona=question.persona,
     )
 
 
@@ -381,7 +328,7 @@ def run_eval(
         numbers.
     """
     settings = Settings()
-    questions = _load_questions(Path(questions_path))
+    questions = load_questions(Path(questions_path))
     rows = [
         _evaluate_question(
             session,

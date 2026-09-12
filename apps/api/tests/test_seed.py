@@ -41,6 +41,7 @@ fails these tests loudly rather than silently matching on title text.
 from __future__ import annotations
 
 import re
+from collections import Counter
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
@@ -52,7 +53,7 @@ from sqlalchemy import Engine, func, select
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.db import make_session_factory
-from app.eval.questions import load_questions, resolve_expected_chunks
+from app.eval.questions import load_questions, resolve_expected_chunks, slugify_heading
 from app.models import Chunk, Content
 from app.rag.pipeline import EmbeddingChunkPipeline
 from app.seed import SeedReport, seed_all
@@ -173,12 +174,25 @@ def _all_seed_records() -> list[dict[str, Any]]:
 
 # ---- corpus invariants (PRD §8 / brief Interfaces pin) ----
 
+# Phase-9 wave 1 (DESIGN §C2) grows the phase-4 corpus of 21 files by four per batch. Exact
+# counts, not bands: a content wave that lands three of its four files must fail loudly.
+_EXPECTED_SEED_FILE_COUNT = 25
+_EXPECTED_PUBLISHED_COUNT = 21
+_EXPECTED_DRAFT_COUNT = 4
+
+# Tag vocabulary = PRD §8's six + the wave-1 additions (INDEX Global Constraints: the vocabulary is
+# widened in the same task as the first article that uses a new tag). `north-carolina` belongs to
+# the two "where you live" articles, which are wave 2 — it is deliberately NOT allowed yet.
+_WAVE1_TAGS = {"equity-compensation", "our-firm"}
+_ALLOWED_TAGS = _SIX_TAGS | _WAVE1_TAGS
+
 
 def test_seed_corpus_directory_exists_and_file_count_is_in_expected_band() -> None:
-    """~20 files total (brief's pinned band: 19-21)."""
+    """21 phase-4 basics + 4 files per landed wave-1 batch (task 10 = batch A)."""
     files = _seed_md_files()
-    assert 19 <= len(files) <= 21, (
-        f"expected 19-21 seed files, found {len(files)}: {[f.name for f in files]}"
+    assert len(files) == _EXPECTED_SEED_FILE_COUNT, (
+        f"expected {_EXPECTED_SEED_FILE_COUNT} seed files, found {len(files)}: "
+        f"{[f.name for f in files]}"
     )
 
 
@@ -200,22 +214,29 @@ def test_seed_corpus_status_is_published_or_draft() -> None:
         assert status in ("published", "draft"), f"{record['path'].name}: status={status!r}"
 
 
-def test_seed_corpus_tags_are_subset_of_the_six_prd_tags() -> None:
-    for record in _all_seed_records():
-        tags = set(record["frontmatter"].get("tags") or [])
-        unknown = tags - _SIX_TAGS
-        assert not unknown, f"{record['path'].name}: tags {unknown} are not among the six §8 tags"
-
-
 def test_seed_corpus_published_and_draft_counts_are_in_expected_bands() -> None:
     records = _all_seed_records()
     published = [r for r in records if r["frontmatter"].get("status") == "published"]
     drafts = [r for r in records if r["frontmatter"].get("status") == "draft"]
-    assert 16 <= len(published) <= 17, f"expected 16-17 published, found {len(published)}"
-    assert 3 <= len(drafts) <= 4, f"expected 3-4 drafts, found {len(drafts)}"
+    assert len(published) == _EXPECTED_PUBLISHED_COUNT, (
+        f"expected {_EXPECTED_PUBLISHED_COUNT} published, found {len(published)}"
+    )
+    assert len(drafts) == _EXPECTED_DRAFT_COUNT, (
+        f"expected {_EXPECTED_DRAFT_COUNT} drafts, found {len(drafts)}"
+    )
     assert len(published) + len(drafts) == len(records), (
         "every seed file must be either published or draft"
     )
+
+
+def test_seed_corpus_tags_are_subset_of_the_allowed_vocabulary() -> None:
+    for record in _all_seed_records():
+        tags = set(record["frontmatter"].get("tags") or [])
+        unknown = tags - _ALLOWED_TAGS
+        assert not unknown, (
+            f"{record['path'].name}: tags {unknown} are outside the allowed vocabulary "
+            f"{sorted(_ALLOWED_TAGS)}"
+        )
 
 
 def test_seed_corpus_each_of_the_six_tags_is_used_at_least_twice() -> None:
@@ -512,3 +533,205 @@ def test_eval_questions_expected_chunks_refs_all_resolve_against_the_seeded_corp
         unresolved = [ref for ref in all_refs if not resolve_expected_chunks(fresh, [ref])]
 
     assert not unresolved, f"expected_chunks refs that resolved to no chunk: {unresolved}"
+
+
+# ---- phase-9 wave-1 corpus (DESIGN §C1: H2 section == chunk == retrieval unit) ----
+
+# slug -> (exact frontmatter title, exact frontmatter tag set). One entry per wave-1 article,
+# added by the batch task that authored it (task 10 = batch A). Titles are pinned verbatim because
+# `app.seed` is idempotent BY TITLE: a retitled file would silently create a second row on prod.
+_WAVE1_ARTICLES: dict[str, tuple[str, frozenset[str]]] = {
+    "what-happens-to-your-rsus-at-vest": (
+        "What Happens to Your RSUs at Vest",
+        frozenset({"equity-compensation", "tax-planning"}),
+    ),
+    "double-trigger-rsus-and-an-ipo": (
+        "Double-Trigger RSUs and an IPO",
+        frozenset({"equity-compensation", "tax-planning"}),
+    ),
+    "espp-qualifying-and-disqualifying-dispositions": (
+        "ESPP Qualifying and Disqualifying Dispositions",
+        frozenset({"equity-compensation", "tax-planning"}),
+    ),
+    "how-we-work-and-what-we-charge": (
+        "How We Work and What We Charge",
+        frozenset({"our-firm"}),
+    ),
+}
+
+_KEY_NUMBERS_HEADING = "Key numbers (2026)"
+_SOURCES_HEADING = "Sources"
+_CURRENT_AS_OF_LINE = "_Current as of 2026-09_"
+# Structural H2s carry lists, not prose: capped, but exempt from the 150-token floor.
+_STRUCTURAL_H2 = {_KEY_NUMBERS_HEADING, _SOURCES_HEADING}
+_H2_MIN_TOKENS = 150
+_H2_MAX_TOKENS = 350
+
+_H2_RE = re.compile(r"^## (?P<text>.+)$", re.MULTILINE)
+# Any ATX heading that is NOT an H2: H1 (`# `) or H3-H6 (`### ` .. `###### `).
+_NON_H2_HEADING_RE = re.compile(r"^(?:#|#{3,6}) .*$", re.MULTILINE)
+
+
+def _wave1_records() -> dict[str, dict[str, Any]]:
+    """The parsed seed record for every wave-1 slug, keyed by slug (asserts each file exists)."""
+    by_slug = {record["path"].stem: record for record in _all_seed_records()}
+    missing = sorted(set(_WAVE1_ARTICLES) - set(by_slug))
+    assert not missing, f"wave-1 article files missing from seed/sample_content/: {missing}"
+    return {slug: by_slug[slug] for slug in _WAVE1_ARTICLES}
+
+
+def _h2_sections(body: str) -> list[tuple[str, str]]:
+    """(heading text, section text including its heading line) per H2, in document order."""
+    matches = list(_H2_RE.finditer(body))
+    sections: list[tuple[str, str]] = []
+    for index, match in enumerate(matches):
+        end = matches[index + 1].start() if index + 1 < len(matches) else len(body)
+        sections.append((match.group("text").strip(), body[match.start() : end]))
+    return sections
+
+
+def test_wave_1_articles_carry_their_pinned_title_tags_and_status() -> None:
+    for slug, (title, tags) in _WAVE1_ARTICLES.items():
+        frontmatter = _wave1_records()[slug]["frontmatter"]
+        assert frontmatter["title"] == title, (
+            f"{slug}: title is {frontmatter['title']!r}, brief pins {title!r} "
+            "(seed is idempotent by title — a drifted title creates a duplicate row)"
+        )
+        assert set(frontmatter["tags"]) == set(tags), (
+            f"{slug}: tags are {sorted(frontmatter['tags'])}, brief pins {sorted(tags)}"
+        )
+        assert frontmatter["status"] == "published", f"{slug}: wave-1 articles ship published"
+
+
+def test_wave_1_articles_use_h2_headings_only() -> None:
+    """Every ATX heading is a chunk boundary (`app.rag.chunking._HEADING_RE`), so an H1 or H3
+    would split an authored section and break its `expected_chunks` reference."""
+    for slug, record in _wave1_records().items():
+        stray = _NON_H2_HEADING_RE.findall(record["body"])
+        assert not stray, f"{slug}: non-H2 headings found: {stray}"
+
+
+def test_wave_1_articles_have_key_numbers_sources_and_the_current_as_of_line() -> None:
+    for slug, record in _wave1_records().items():
+        headings = [heading for heading, _ in _h2_sections(record["body"])]
+        assert _KEY_NUMBERS_HEADING in headings, f"{slug}: missing '## {_KEY_NUMBERS_HEADING}'"
+        assert _SOURCES_HEADING in headings, f"{slug}: missing '## {_SOURCES_HEADING}'"
+        assert headings[-2:] == [_KEY_NUMBERS_HEADING, _SOURCES_HEADING], (
+            f"{slug}: the last two H2s must be Key numbers then Sources, got {headings[-2:]}"
+        )
+        key_numbers = dict(_h2_sections(record["body"]))[_KEY_NUMBERS_HEADING]
+        non_blank = [line.strip() for line in key_numbers.splitlines() if line.strip()]
+        assert non_blank[-1] == _CURRENT_AS_OF_LINE, (
+            f"{slug}: Key numbers must end with {_CURRENT_AS_OF_LINE!r}, got {non_blank[-1]!r}"
+        )
+        sources = dict(_h2_sections(record["body"]))[_SOURCES_HEADING]
+        assert "http" in sources, f"{slug}: Sources section lists no URL"
+
+
+def test_wave_1_question_sections_are_inside_the_retrieval_token_band() -> None:
+    """DESIGN §C1: an H2 section is the retrieval unit — 150-350 tokens, comfortably under
+    `chunk_markdown`'s 400-token budget so it is never split."""
+    from app.rag.chunking import count_tokens
+
+    for slug, record in _wave1_records().items():
+        body = record["body"]
+        sections = _h2_sections(body)
+        question_sections = [
+            (heading, text) for heading, text in sections if heading not in _STRUCTURAL_H2
+        ]
+        assert 4 <= len(question_sections) <= 6, (
+            f"{slug}: expected 4-6 question H2 sections, found {len(question_sections)}"
+        )
+        first_h2 = _H2_RE.search(body)
+        lead = body[: first_h2.start()] if first_h2 else body
+        assert count_tokens(lead) <= _H2_MAX_TOKENS, (
+            f"{slug}: lead paragraph is {count_tokens(lead)} tokens, max {_H2_MAX_TOKENS}"
+        )
+        for heading, text in sections:
+            tokens = count_tokens(text)
+            assert tokens <= _H2_MAX_TOKENS, (
+                f"{slug} / '{heading}': {tokens} tokens, max {_H2_MAX_TOKENS}"
+            )
+            if heading not in _STRUCTURAL_H2:
+                assert tokens >= _H2_MIN_TOKENS, (
+                    f"{slug} / '{heading}': {tokens} tokens, min {_H2_MIN_TOKENS}"
+                )
+
+
+def test_wave_1_h2_heading_slugs_are_unique_within_each_article() -> None:
+    """`resolve_expected_chunks` takes the first matching heading; two H2s with the same slug
+    would make an `expected_chunks` reference ambiguous."""
+    for slug, record in _wave1_records().items():
+        slugs = [slugify_heading(heading) for heading, _ in _h2_sections(record["body"])]
+        duplicates = {value for value in slugs if slugs.count(value) > 1}
+        assert not duplicates, f"{slug}: duplicate heading slugs {duplicates}"
+
+
+def test_wave_1_expected_chunks_refs_name_real_headings_in_their_file() -> None:
+    """The fast, pure-file twin of the DB resolver pin: catches a typo'd ref without seeding."""
+    headings_by_slug = {
+        slug: {slugify_heading(heading) for heading, _ in _h2_sections(record["body"])}
+        for slug, record in _wave1_records().items()
+    }
+    for item in _load_eval_questions():
+        for ref in item.get("expected_chunks", []):
+            ref_slug, _, heading_slug = ref.partition("#")
+            if ref_slug not in headings_by_slug:
+                continue
+            assert heading_slug in headings_by_slug[ref_slug], (
+                f"{ref}: {ref_slug}.md has no H2 whose slug is {heading_slug!r} "
+                f"(its headings: {sorted(headings_by_slug[ref_slug])})"
+            )
+
+
+# ---- eval-question class balance (DESIGN §B2: 80 rows at the end of task 14) ----
+
+# Running totals after the batch this task lands. Phase-4 baseline: 17 answerable + 4 off_domain
+# (both by the loader's default rule — those rows carry no explicit `class`). Batch A adds
+# 6 answerable + 2 multi_source + 1 near_miss + 1 threshold + 1 stale_number.
+_EXPECTED_CLASS_COUNTS = {
+    "answerable": 23,
+    "multi_source": 2,
+    "near_miss": 1,
+    "off_domain": 4,
+    "threshold": 1,
+    "stale_number": 1,
+}
+_EXPECTED_QUESTION_TOTAL = 32
+
+
+def _question_class(item: dict[str, Any]) -> str:
+    """The class a row resolves to, using `app.eval.questions.load_questions`' default rule."""
+    return item.get("class", "answerable" if item["answerable"] else "off_domain")
+
+
+def test_eval_questions_class_counts_match_the_authored_plan() -> None:
+    items = _load_eval_questions()
+    counts = dict(Counter(_question_class(item) for item in items))
+    assert counts == _EXPECTED_CLASS_COUNTS, (
+        f"class counts {counts} != planned {_EXPECTED_CLASS_COUNTS} (DESIGN §B2)"
+    )
+    assert len(items) == _EXPECTED_QUESTION_TOTAL
+
+
+def test_eval_questions_unanswerable_rows_never_carry_a_reference_answer() -> None:
+    """Phase-9 N5 ruling: a `reference_answer` on an `answerable: false` row hands the
+    context-recall and answer-relevance judges a target the corpus must NOT contain, which would
+    score a correct refusal as a miss. Task 14 adds the loader-level guard; this is the file pin."""
+    offenders = [
+        item["question"]
+        for item in _load_eval_questions()
+        if item["answerable"] is False and "reference_answer" in item
+    ]
+    assert not offenders, f"answerable:false rows carrying a reference_answer: {offenders}"
+
+
+def test_eval_questions_near_miss_rows_are_unanswerable_and_uncited() -> None:
+    """A near_miss row points at a planted gap (DESIGN §C2): no expected slugs, no expected
+    chunks — the corpus is supposed to miss it."""
+    for item in _load_eval_questions():
+        if _question_class(item) != "near_miss":
+            continue
+        assert item["answerable"] is False, f"near_miss row marked answerable: {item['question']!r}"
+        assert item["expected_slugs"] == [], f"near_miss row has expected_slugs: {item!r}"
+        assert not item.get("expected_chunks"), f"near_miss row has expected_chunks: {item!r}"

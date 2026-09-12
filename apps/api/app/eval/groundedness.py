@@ -25,25 +25,41 @@ Controller rulings this module builds to (see the task-02 report for the full ra
       `fully_supported` is `None` for uncovered rows (not applicable — no answer-support claim to
       score when the row's entire question is whether the assistant refused).
   I.4 `verdict` holds the literal strings `"PASS"`/`"FAIL"`.
+
+Phase-9 task-05 (metrics v2): `GroundednessJudge`, `_split_sentences`, retrieval recall@k/
+precision@k/MRR, and the three new rubric judges (answer relevance, context precision, context
+recall) all now live in — or are re-exported from — `app.eval.metrics`, a pure leaf module with no
+DB/network/`Settings` dependency (task file Interfaces: "simpler and preferred" option). This
+module still owns everything that touches the DB, an LLM, or `Settings`: `OpenAIJudge` (the real
+judge, now also implementing the three rubric methods), `_evaluate_question`'s wiring of
+`app.eval.metrics`'s pure functions around the real `retrieve()`/`resolve_expected_chunks()`
+calls, and the CLI.
 """
 
 from __future__ import annotations
 
 import argparse
-import re
+import logging
 import subprocess
 import uuid
 from collections.abc import Callable, Iterable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Protocol
 
 from openai import OpenAI
 from sqlalchemy.orm import Session
 
 from app.config import Settings
 from app.db import make_engine, make_session_factory
-from app.eval.questions import EvalQuestion, load_questions
+from app.eval.metrics import (
+    GroundednessJudge,
+    MetricsJudge,
+    context_precision,
+    context_recall,
+    retrieval_metrics,
+    split_sentences,
+)
+from app.eval.questions import EvalQuestion, load_questions, resolve_expected_chunks
 from app.models import EvalRun
 from app.rag.embeddings import Embedder, OpenAICompatibleEmbedder
 from app.rag.retrieval import retrieve
@@ -51,10 +67,14 @@ from app.rag.synthesis import SYSTEM_PROMPT, ChatLLM, OpenAICompatibleChatLLM
 from app.seed_paths import seed_data_dir
 from app.services.eval_runs import compare_runs, latest_runs, record_run
 
+logger = logging.getLogger(__name__)
+
 __all__ = [
+    "ClassRollup",
     "EvalReport",
     "EvalRow",
     "GroundednessJudge",
+    "MetricsJudge",
     "OpenAIJudge",
     "run_eval",
 ]
@@ -66,14 +86,6 @@ __all__ = [
 # module scope is safe now — `seed_data_dir()` never does path math when the env var is set.
 _DEFAULT_QUESTIONS_PATH: Path = seed_data_dir() / "eval_questions.yaml"
 
-# A dependency-free sentence splitter: `.`/`!`/`?` followed by whitespace. Good enough for the
-# short, single-paragraph answers this harness judges sentence-by-sentence (brief: "call the judge
-# per sentence") — the exact tokenizer is explicitly unspecified by the brief
-# (`tests/test_groundedness.py` module docstring, judgment call 3): `ScriptedJudge` pins outcomes
-# by MARKER CONTENT, never by call count/order, so no test depends on this regex's exact behavior
-# beyond "splits on sentence-ending punctuation."
-_SENTENCE_BOUNDARY_RE = re.compile(r"(?<=[.!?])\s+")
-
 # Fix round 1, M4: named once so `_evaluate_question`'s `retrieve()` call and `_run_from_cli`'s
 # `record_run(..., retrieval_k=...)` can never silently drift apart — before this constant,
 # `_evaluate_question` relied on `retrieve()`'s own default `k` while `_run_from_cli` recorded a
@@ -82,11 +94,22 @@ _RETRIEVAL_K = 6
 
 
 @dataclass(frozen=True)
+class ClassRollup:
+    """One `EvalQuestion.question_class`'s rollup over a run's rows (task-05 Interfaces)."""
+
+    question_class: str
+    count: int
+    passed: int
+    pct_fully_supported: float  # over that class's answerable rows; 0.0 if none
+    mean_recall_at_k: float | None  # mean over rows whose recall_at_k is not None
+
+
+@dataclass(frozen=True)
 class EvalRow:
     """One eval question's outcome (task-02 brief Interfaces; `top_similarity`/`answer_text`/
     `question_class`/`persona`/`metrics` added phase-9 task-03 so `app.services.eval_runs.
-    record_run` has a full row to persist). The three defaulted fields stay `None` here — tasks
-    04/05/06 fill them in.
+    record_run` has a full row to persist). `metrics` is filled in by task 05's
+    `_evaluate_question` — see its own docstring for the dict shape.
     """
 
     question: str
@@ -106,35 +129,23 @@ class EvalRow:
 
 @dataclass(frozen=True)
 class EvalReport:
-    """The whole eval run's rows plus the §9.1/§10 summary numbers (task-02 brief Interfaces)."""
+    """The whole eval run's rows plus the §9.1/§10 summary numbers (task-02 brief Interfaces).
+
+    `by_class`/`unresolved_expected_chunks` are task-05 additions, both defaulted so task-03's
+    existing four-argument `EvalReport(...)` constructions (`tests/test_groundedness_cli.py`)
+    keep working unchanged.
+    """
 
     rows: list[EvalRow]
     pct_fully_supported: float
     refusal_correct: int
     refusal_total: int
-
-
-class GroundednessJudge(Protocol):
-    """The judge seam `run_eval` scores each answer sentence through (task-02 brief Interfaces).
-
-    Structurally implemented by `OpenAIJudge` (the real judge) and by
-    `tests/test_groundedness.py`'s `ScriptedJudge` — a `Protocol`, not an ABC, mirroring
-    `app.rag.embeddings.Embedder`/`app.rag.synthesis.ChatLLM`'s own seam shape
-    (CONVENTIONS.md §10: external seams are injectable, never reached in tests).
-    """
-
-    def is_supported(self, claim_text: str, chunk_texts: Sequence[str]) -> bool:
-        """Return whether `claim_text` (one answer sentence) is supported by `chunk_texts`.
-
-        Args:
-            claim_text: one sentence of the model's answer.
-            chunk_texts: the union of the row's cited chunk texts (I.1) — every chunk
-                `retrieve()` returned for this question, deduped, in retrieval order.
-
-        Returns:
-            `True` iff `claim_text` is fully supported by `chunk_texts`.
-        """
-        ...
+    by_class: dict[str, ClassRollup] = field(default_factory=dict)
+    # Controller ruling (task-04 review, Minor 1 — `.superpowers/sdd/phase-9-eval-data-loop/
+    # progress.md`): `resolve_expected_chunks` silently skips a ref that resolves to no chunk
+    # (task-04's own documented decision); this counts those refs, across every row, instead of
+    # only falling back to slug-level scoring with no trace.
+    unresolved_expected_chunks: int = 0
 
 
 # The judge's own system prompt — deliberately separate from `app.rag.synthesis.SYSTEM_PROMPT`
@@ -147,17 +158,39 @@ _JUDGE_SYSTEM_PROMPT = (
     "unsupported addition, no contradiction), or NO otherwise."
 )
 
+# The three new rubric judges (task-05 Interfaces). Each ends with the same YES/NO + reason
+# instruction, parsed by `OpenAIJudge._ask_yes_no` below — unlike `_JUDGE_SYSTEM_PROMPT` above
+# (unchanged: still a bare one-word "YES"/"NO" reply, its own pinned wire format from phase-7).
+_YES_NO_SUFFIX = "Reply with YES or NO on the first line, then one short line giving your reason."
+
+_ANSWER_RELEVANCE_PROMPT = (
+    "You judge whether an ANSWER actually addresses the QUESTION asked. Ignore whether it is "
+    "factually correct — that is judged separately. Answer NO if it answers a different "
+    "question, or is a refusal to a question that was asked in good faith. " + _YES_NO_SUFFIX
+)
+_CONTEXT_PRECISION_PROMPT = (
+    "You judge whether one SOURCE passage is relevant to answering the QUESTION. Relevant means "
+    "a correct answer would plausibly draw on it. " + _YES_NO_SUFFIX
+)
+_CONTEXT_RECALL_PROMPT = (
+    "You judge whether one CLAIM from a reference answer is covered by the SOURCE passages. "
+    "Covered means the sources state it or directly entail it. " + _YES_NO_SUFFIX
+)
+
 
 class OpenAIJudge:
-    """The real `GroundednessJudge`, built from `Settings` (task-02 brief Interfaces).
+    """The real `GroundednessJudge`/`MetricsJudge`, built from `Settings` (task-02 brief
+    Interfaces; task-05 Interfaces for the three rubric methods).
 
     Mirrors `app.rag.synthesis.OpenAICompatibleChatLLM`'s client construction exactly
-    (`from_settings`, `settings.llm_api_key`/`settings.llm_base_url`/`settings.chat_model`, the
-    same reused `embedding_timeout_seconds`/`embedding_max_retries` budgets) — `settings.
-    chat_model` defaults to `"gpt-4o-mini"` (`app/config.py`), which is this class's judge model
-    under that default. Judges at `temperature=0` (deterministic verdicts). Only exercised in the
-    real recorded run (`_run_from_cli`, deferred to task-03) — never in unit tests, which inject
-    `ScriptedJudge` instead.
+    (`from_settings`, `settings.llm_api_key`/`settings.llm_base_url`, the same reused
+    `embedding_timeout_seconds`/`embedding_max_retries` budgets) — but the model is
+    `settings.judge_model` (DESIGN D7: `"gpt-4o"`, a STRONGER model than the answerer's
+    `settings.chat_model`/`"gpt-4o-mini"`), not `chat_model` itself. This moves the recorded
+    groundedness number relative to every run before this task (see the implementer report).
+    Judges at `temperature=0` (deterministic verdicts). Only exercised in the real recorded run
+    (`_run_from_cli`) — never in unit tests, which inject `ScriptedJudge`/`FakeMetricsJudge`
+    instead.
     """
 
     def __init__(self, *, client: OpenAI, model: str) -> None:
@@ -174,7 +207,7 @@ class OpenAIJudge:
             timeout=settings.embedding_timeout_seconds,
             max_retries=settings.embedding_max_retries,
         )
-        return cls(client=client, model=settings.chat_model)
+        return cls(client=client, model=settings.judge_model)
 
     def is_supported(self, claim_text: str, chunk_texts: Sequence[str]) -> bool:
         """Ask the judge model whether `claim_text` is supported by `chunk_texts`."""
@@ -195,15 +228,49 @@ class OpenAIJudge:
         content = response.choices[0].message.content or ""
         return content.strip().upper().startswith("YES")
 
+    def _ask(self, system: str, user: str) -> str:
+        """One `chat.completions.create` call at `temperature=0`; returns the stripped content."""
+        response = self._client.chat.completions.create(
+            model=self._model,
+            temperature=0,
+            messages=[
+                {"role": "system", "content": system},
+                {"role": "user", "content": user},
+            ],
+        )
+        content = response.choices[0].message.content or ""
+        return content.strip()
 
-def _split_sentences(text: str) -> list[str]:
-    """Split `text` into sentences on `.`/`!`/`?` followed by whitespace (see module-level regex
-    docstring for why the exact tokenizer is unpinned).
-    """
-    stripped = text.strip()
-    if not stripped:
-        return []
-    return [sentence for sentence in _SENTENCE_BOUNDARY_RE.split(stripped) if sentence]
+    def _ask_yes_no(self, system: str, user: str) -> bool:
+        """Call `_ask`, parse its first line as the YES/NO verdict, and log the reason line at
+        DEBUG (no schema stores it — DESIGN does not ask for one).
+        """
+        content = self._ask(system, user)
+        first_line, _, rest = content.partition("\n")
+        reason = rest.strip()
+        if reason:
+            logger.debug("judge reason: %s", reason)
+        return first_line.strip().upper().startswith("YES")
+
+    def is_answer_relevant(self, question: str, answer_text: str) -> bool:
+        """Ask the judge model whether `answer_text` actually addresses `question`."""
+        user_message = f"QUESTION: {question}\n\nANSWER: {answer_text}\n\nIs the answer relevant?"
+        return self._ask_yes_no(_ANSWER_RELEVANCE_PROMPT, user_message)
+
+    def is_chunk_relevant(self, question: str, chunk_text: str) -> bool:
+        """Ask the judge model whether `chunk_text` is relevant to answering `question`."""
+        user_message = f"QUESTION: {question}\n\nSOURCE: {chunk_text}\n\nIs the source relevant?"
+        return self._ask_yes_no(_CONTEXT_PRECISION_PROMPT, user_message)
+
+    def is_claim_covered(self, claim_text: str, chunk_texts: Sequence[str]) -> bool:
+        """Ask the judge model whether `claim_text` is covered by `chunk_texts`."""
+        sources = (
+            "\n\n".join(f"[{i + 1}] {text}" for i, text in enumerate(chunk_texts))
+            if chunk_texts
+            else "(no source passages)"
+        )
+        user_message = f"SOURCES:\n{sources}\n\nCLAIM: {claim_text}\n\nIs the claim covered?"
+        return self._ask_yes_no(_CONTEXT_RECALL_PROMPT, user_message)
 
 
 def _dedupe_preserve_order(texts: Iterable[str]) -> list[str]:
@@ -219,9 +286,14 @@ def _evaluate_question(
     judge: GroundednessJudge,
     settings: Settings,
     question: EvalQuestion,
-) -> EvalRow:
+    metrics_judge: MetricsJudge | None = None,
+) -> tuple[EvalRow, int]:
     """Drive one question through retrieval + synthesis and score the result (see module
-    docstring, rulings I.1-I.4).
+    docstring, rulings I.1-I.4; task-05 for the `EvalRow.metrics` dict).
+
+    Returns the `EvalRow` plus this question's own unresolved-`expected_chunks`-ref count (task-05
+    controller ruling) — `max(0, len(question.expected_chunks) - len(resolved))` — so `run_eval`
+    can sum it into `EvalReport.unresolved_expected_chunks` without a second DB round-trip.
     """
     retrieval = retrieve(
         session,
@@ -247,11 +319,17 @@ def _evaluate_question(
         chat_llm.stream_answer(SYSTEM_PROMPT, question.question, retrieval.chunks)
     )
 
+    # Moved OUT of the `if question.answerable` branch below (task-05): the rubric judges
+    # (context precision/recall) need the same union of retrieved chunk texts regardless of
+    # whether the question is answerable, unlike the faithfulness judge which only ever ran on
+    # answerable rows. Computing it unconditionally is a pure, cheap Python operation and changes
+    # no v1 (pre-task-05) number — `is_supported`'s own call below is unchanged.
+    chunk_texts = _dedupe_preserve_order(chunk.text for chunk in retrieval.chunks)
+
     fully_supported: bool | None
     if question.answerable:
-        chunk_texts = _dedupe_preserve_order(chunk.text for chunk in retrieval.chunks)
         fully_supported = all(
-            judge.is_supported(sentence, chunk_texts) for sentence in _split_sentences(answer_text)
+            judge.is_supported(sentence, chunk_texts) for sentence in split_sentences(answer_text)
         )
         verdict = "PASS" if slugs_hit and fully_supported else "FAIL"
     else:
@@ -259,7 +337,33 @@ def _evaluate_question(
         fully_supported = None
         verdict = "PASS" if (refused and not retrieval_found and not cited_slugs) else "FAIL"
 
-    return EvalRow(
+    # Task-05: recall@k/precision@k/MRR, preferring `expected_chunks` (resolved against the LIVE
+    # corpus) over the coarser slug-level fallback whenever a resolvable ref exists (task file
+    # Interfaces, mode-selection rule).
+    resolved_chunk_ids = resolve_expected_chunks(session, question.expected_chunks)
+    retrieved_chunk_ids = [str(chunk.chunk_id) for chunk in retrieval.chunks]
+    if question.expected_chunks and resolved_chunk_ids:
+        retrieval_mode = "chunk"
+        expected_ids = [str(chunk_id) for chunk_id in sorted(resolved_chunk_ids, key=str)]
+        ir_metrics = retrieval_metrics(expected_ids, retrieved_chunk_ids, mode=retrieval_mode)
+    else:
+        retrieval_mode = "slug"
+        ir_metrics = retrieval_metrics(question.expected_slugs, cited_slugs, mode=retrieval_mode)
+    unresolved = max(0, len(question.expected_chunks) - len(resolved_chunk_ids))
+
+    # Task-05: the three rubric judges, only when a `metrics_judge` was supplied — `None` leaves
+    # all three `None` so pure retrieval metrics still land without ever reaching an LLM (this is
+    # what keeps `tests/test_groundedness.py`'s `ScriptedJudge`-only tests green: it implements
+    # only `is_supported`, never `MetricsJudge`'s three extra methods).
+    answer_relevance: bool | None = None
+    context_precision_value: float | None = None
+    context_recall_value: float | None = None
+    if metrics_judge is not None:
+        answer_relevance = metrics_judge.is_answer_relevant(question.question, answer_text)
+        context_precision_value = context_precision(metrics_judge, question.question, chunk_texts)
+        context_recall_value = context_recall(metrics_judge, question.reference_answer, chunk_texts)
+
+    row = EvalRow(
         question=question.question,
         answerable=question.answerable,
         expected_slugs=question.expected_slugs,
@@ -272,11 +376,61 @@ def _evaluate_question(
         answer_text=answer_text,
         question_class=question.question_class,
         persona=question.persona,
+        metrics={
+            "retrieval_mode": ir_metrics.mode,
+            "recall_at_k": ir_metrics.recall_at_k,
+            "precision_at_k": ir_metrics.precision_at_k,
+            "mrr": ir_metrics.mrr,
+            "expected_chunk_hits": ir_metrics.hits,
+            "retrieved_chunk_ids": retrieved_chunk_ids,
+            "answer_relevance": answer_relevance,
+            "context_precision": context_precision_value,
+            "context_recall": context_recall_value,
+        },
+    )
+    return row, unresolved
+
+
+def _class_rollup(question_class: str, rows: Sequence[EvalRow]) -> ClassRollup:
+    """One class's rollup (task-05 Interfaces): `passed` counts `verdict == "PASS"` rows;
+    `pct_fully_supported` is computed over the class's ANSWERABLE rows only (mirroring `_build_
+    report`'s corpus-wide I.3 split), `0.0` when the class has none; `mean_recall_at_k` averages
+    `metrics["recall_at_k"]` over rows where it is not `None`, else `None`.
+    """
+    class_rows = [row for row in rows if row.question_class == question_class]
+    passed = sum(1 for row in class_rows if row.verdict == "PASS")
+
+    answerable_rows = [row for row in class_rows if row.answerable]
+    pct_fully_supported = (
+        100.0 * sum(1 for row in answerable_rows if row.fully_supported) / len(answerable_rows)
+        if answerable_rows
+        else 0.0
+    )
+
+    # `EvalRow.metrics` is a `dict[str, object] | None` (an open JSONB-shaped bucket, per
+    # `app.models.eval.EvalResult.metrics`'s own docstring) — narrow each `recall_at_k` value to
+    # `float` explicitly rather than trusting the dict's value type, so mypy strict can verify the
+    # `sum(...)` below.
+    recall_values: list[float] = []
+    for row in class_rows:
+        recall_at_k = row.metrics.get("recall_at_k") if row.metrics is not None else None
+        if isinstance(recall_at_k, int | float):
+            recall_values.append(float(recall_at_k))
+    mean_recall_at_k = sum(recall_values) / len(recall_values) if recall_values else None
+
+    return ClassRollup(
+        question_class=question_class,
+        count=len(class_rows),
+        passed=passed,
+        pct_fully_supported=pct_fully_supported,
+        mean_recall_at_k=mean_recall_at_k,
     )
 
 
-def _build_report(rows: list[EvalRow]) -> EvalReport:
-    """Aggregate `rows` into the §9.1/§10 summary numbers (I.3: split by `answerable`)."""
+def _build_report(rows: list[EvalRow], *, unresolved_expected_chunks: int = 0) -> EvalReport:
+    """Aggregate `rows` into the §9.1/§10 summary numbers (I.3: split by `answerable`) plus the
+    task-05 per-class rollups.
+    """
     answerable_rows = [row for row in rows if row.answerable]
     uncovered_rows = [row for row in rows if not row.answerable]
 
@@ -288,11 +442,21 @@ def _build_report(rows: list[EvalRow]) -> EvalReport:
     refusal_total = len(uncovered_rows)
     refusal_correct = sum(1 for row in uncovered_rows if row.verdict == "PASS")
 
+    # First-occurrence order (mirrors `rows`' own "in file order" contract) rather than sorted —
+    # a `by_class` iteration order that matches the eval file's own class grouping reads more
+    # naturally in the printed rollup block than an alphabetical resort would.
+    class_names = dict.fromkeys(
+        row.question_class for row in rows if row.question_class is not None
+    )
+    by_class = {name: _class_rollup(name, rows) for name in class_names}
+
     return EvalReport(
         rows=rows,
         pct_fully_supported=pct_fully_supported,
         refusal_correct=refusal_correct,
         refusal_total=refusal_total,
+        by_class=by_class,
+        unresolved_expected_chunks=unresolved_expected_chunks,
     )
 
 
@@ -303,9 +467,10 @@ def run_eval(
     chat_llm: ChatLLM,
     judge: GroundednessJudge,
     questions_path: Path,
+    metrics_judge: MetricsJudge | None = None,
 ) -> EvalReport:
     """Run every question in `questions_path` through the real retrieval + synthesis path and
-    score it (task-02 brief Interfaces).
+    score it (task-02 brief Interfaces; task-05 adds the optional `metrics_judge`).
 
     Drives `app.rag.retrieval.retrieve`/the `ChatLLM` seam directly (not HTTP/SSE) — the exact
     same two calls `app.routes.public_routes._generate_chat_stream` makes for `POST /public/chat`,
@@ -322,14 +487,19 @@ def run_eval(
             through.
         questions_path: path to a PRD §8.1-shaped YAML file (`seed/eval_questions.yaml` in
             production).
+        metrics_judge: the optional `MetricsJudge` seam (task-05) the three rubric metrics
+            (answer relevance, context precision, context recall) are scored through. `None`
+            (the default) leaves those three `EvalRow.metrics` keys `None` and computes only the
+            pure-math retrieval metrics — this is what keeps every pre-task-05 caller (including
+            `tests/test_groundedness.py`'s `ScriptedJudge`-only tests) working unchanged.
 
     Returns:
         An `EvalReport` with one `EvalRow` per question, in file order, plus the §9.1/§10 summary
-        numbers.
+        numbers and the task-05 per-class rollups/unresolved-ref count.
     """
     settings = Settings()
     questions = load_questions(Path(questions_path))
-    rows = [
+    evaluations = [
         _evaluate_question(
             session,
             embedder=embedder,
@@ -337,10 +507,13 @@ def run_eval(
             judge=judge,
             settings=settings,
             question=question,
+            metrics_judge=metrics_judge,
         )
         for question in questions
     ]
-    return _build_report(rows)
+    rows = [row for row, _unresolved in evaluations]
+    unresolved_expected_chunks = sum(unresolved for _row, unresolved in evaluations)
+    return _build_report(rows, unresolved_expected_chunks=unresolved_expected_chunks)
 
 
 def _print_table(rows: Sequence[EvalRow]) -> None:
@@ -422,16 +595,32 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     return args
 
 
+def _print_class_rollups(by_class: dict[str, ClassRollup]) -> None:
+    """Print the task-05 per-class rollup block (task file Interfaces, exact format)."""
+    print("by class:")
+    print(f"  {'class':<14} {'n':>3} {'pass':>5} {'supported%':>11} {'recall@k':>9}")
+    for rollup in by_class.values():
+        recall = "-" if rollup.mean_recall_at_k is None else f"{rollup.mean_recall_at_k:.2f}"
+        print(
+            f"  {rollup.question_class:<14} {rollup.count:>3} {rollup.passed:>5} "
+            f"{rollup.pct_fully_supported:>11.1f} {recall:>9}"
+        )
+
+
 def _print_report(report: EvalReport) -> None:
     """Print one run's per-question table plus the phase-7 summary line (byte-identical to the
     phase-7 stdout — `docs/plans/phase-7-evaluation/verification-record.md` §1 and task-09 both
-    depend on this exact line).
+    depend on this exact line), then the task-05 per-class rollup block when `report.by_class` is
+    non-empty (a pre-task-05 `EvalReport(...)` construction — `tests/test_groundedness_cli.py`'s
+    `_row`/`_report` helpers — defaults it to `{}`, so nothing extra prints for those).
     """
     _print_table(report.rows)
     print(
         f"groundedness: {report.pct_fully_supported:.1f}% fully supported; "
         f"refusals {report.refusal_correct}/{report.refusal_total} correct"
     )
+    if report.by_class:
+        _print_class_rollups(report.by_class)
 
 
 def _print_stability(reports: Sequence[EvalReport], *, label: str) -> None:
@@ -493,6 +682,11 @@ def _run_from_cli(
     this invocation can appear in `latest_runs`' own result. `_git_sha()` is computed ONCE, before
     the run loop (fix round 1, I1/M8 — one subprocess call and one value for the whole family,
     not one per run).
+
+    Task-05: the same `OpenAIJudge` instance built from `settings.judge_model` is passed as BOTH
+    `judge` (faithfulness) and `metrics_judge` (the three rubric methods) — one object structurally
+    satisfies both seams — and `record_run` is told `judge_model=settings.judge_model` (the model
+    that ACTUALLY judged this run), not `settings.chat_model`.
     """
     args = _parse_args(argv)
     settings = Settings()
@@ -529,6 +723,7 @@ def _run_from_cli(
                 chat_llm=chat_llm,
                 judge=judge,
                 questions_path=args.questions,
+                metrics_judge=judge,
             )
             _print_report(report)
             reports.append(report)
@@ -539,7 +734,7 @@ def _run_from_cli(
                     label=args.label,
                     embedding_model=settings.embedding_model,
                     chat_model=settings.chat_model,
-                    judge_model=settings.chat_model,
+                    judge_model=settings.judge_model,
                     similarity_threshold=settings.similarity_threshold,
                     retrieval_k=_RETRIEVAL_K,
                     git_sha=git_sha,

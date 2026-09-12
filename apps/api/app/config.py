@@ -117,6 +117,11 @@ class Settings(BaseSettings):
     # per PRD §9 so a provider swap never touches code.
     chat_model: str = "gpt-4o-mini"
 
+    # DESIGN D7 (2026-09-12): recorded eval numbers are judged by a STRONGER model than the
+    # answerer (`chat_model`, gpt-4o-mini) — a same-family caveat the human-labelled scorecard
+    # (task 08) covers. Zero-env constructible like every other setting (CONVENTIONS.md §5).
+    judge_model: str = "gpt-4o"
+
     # Not part of the PRD §9 env roster (phase-3 task-02 review round 1,
     # finding I1): the `openai` SDK's own defaults for an unconfigured
     # client are `read=600s` with `max_retries=2` (3 attempts total) — since

@@ -41,6 +41,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import re
 import subprocess
 import uuid
 from collections.abc import Callable, Iterable, Sequence
@@ -105,14 +106,24 @@ class ClassRollup:
 
     question_class: str
     count: int
+    # fix round 2 (Opus re-review, N2): how many of `count` rows are chunk-mode — i.e. have a
+    # resolved `expected_chunks` ref, so their per-row `recall_at_k`/`mrr` is not `None` and
+    # actually feeds `mean_recall_at_k`/`mean_mrr` below. Printed as its own column immediately
+    # after `count` so a rollup like "answerable n=40 recall@k=0.83" is never read as "83% recall
+    # over all 40 rows" when only a handful were chunk-mode.
+    n_scored: int
     passed: int
     # fix round 1 I4: `None` (not `0.0`) when this rollup has no ANSWERABLE rows — a class of all
     # refusals has nothing to say about faithfulness, which reads very differently from "measured
     # 0%".
     pct_fully_supported: float | None
-    # fix round 1 C1: the pre-existing per-row `slugs_hit` rate (always applicable — every row has
-    # a `slugs_hit` bool) — the coarse "did retrieval surface the right ARTICLE" signal, kept
-    # separate from chunk-level recall/precision/MRR so the two granularities never blend.
+    # fix round 1 C1: the pre-existing per-row `slugs_hit` rate — the coarse "did retrieval
+    # surface the right ARTICLE" signal, kept separate from chunk-level recall/precision/MRR so
+    # the two granularities never blend. Fix round 2 (N3): averaged over rows with a NON-EMPTY
+    # `expected_slugs` only — `slugs_hit` is vacuously `True` by set-inclusion when
+    # `expected_slugs == []` (an off-domain/near-miss row has nothing to "hit"), so including
+    # those rows inflated this rate toward a false 100%. `None` when no row in the rollup has a
+    # non-empty `expected_slugs` (printed as `-`, I4).
     doc_hit_rate: float | None
     # fix round 1 C1: chunk-mode rows ONLY (≥1 resolved `expected_chunks` ref) — a slug-mode or
     # unresolved-ref row's per-row `recall_at_k`/`mrr` is `None` (see `_evaluate_question`) and so
@@ -177,6 +188,13 @@ class EvalReport:
     # (task-04's own documented decision); this counts those refs, across every row, instead of
     # only falling back to slug-level scoring with no trace.
     unresolved_expected_chunks: int = 0
+    # Fix round 2 (Opus re-review, N1): how many rows the batched context-precision judge
+    # returned a reply for that survived every parse check (`OpenAIJudge._parse_chunk_relevance`)
+    # — a reply that is STILL unparsable after fence-stripping falls back to `None` (N/A) rather
+    # than a fabricated `0.0`, and this count is the trace that a silent N/A ever happened at all
+    # (mirrors `unresolved_expected_chunks`'s own role for the retrieval side). Defaulted so
+    # task-03's four-argument `EvalReport(...)` constructions keep working unchanged.
+    malformed_judge_replies: int = 0
     # Fix round 1 (Opus review, I6): the whole run's rollup — every `by_class` metric, aggregated
     # once more over EVERY row regardless of class. Defaulted (an empty rollup over zero rows) so
     # task-03's four-argument `EvalReport(...)` constructions keep working unchanged.
@@ -224,6 +242,22 @@ _CONTEXT_PRECISION_BATCH_PROMPT = (
     'SOURCE in the SAME order given, each shaped exactly {"index": <0-based source number>, '
     '"relevant": <true or false>} — no prose, no markdown fences, nothing else.'
 )
+
+# Fix round 2 (Opus re-review, N1): the prompt above forbids markdown fences, but nothing enforces
+# it — a chat model told to emit JSON commonly wraps it in ``` or ```json anyway. Matches ONE
+# leading/trailing fence around the whole reply (optionally tagged `json`, case-insensitive) and
+# captures the interior; a reply that isn't fenced simply doesn't match, and `_strip_code_fence`
+# falls back to the original (stripped) text unchanged.
+_CODE_FENCE_RE = re.compile(r"^```(?:json)?\s*\n(.*)\n```$", re.DOTALL | re.IGNORECASE)
+
+
+def _strip_code_fence(content: str) -> str:
+    """Strip one leading/trailing markdown code fence (``` or ```json) and surrounding
+    whitespace from `content`, if present — otherwise return it merely `.strip()`-ed.
+    """
+    stripped = content.strip()
+    match = _CODE_FENCE_RE.match(stripped)
+    return match.group(1).strip() if match else stripped
 
 
 class OpenAIJudge:
@@ -325,12 +359,14 @@ class OpenAIJudge:
         user_message = f"SOURCES:\n{sources}\n\nCLAIM: {claim_text}\n\nIs the claim covered?"
         return self._ask_yes_no(_CONTEXT_RECALL_PROMPT, user_message)
 
-    def rank_chunk_relevance(self, question: str, chunk_texts: Sequence[str]) -> list[bool]:
+    def rank_chunk_relevance(self, question: str, chunk_texts: Sequence[str]) -> list[bool] | None:
         """One relevance verdict per `chunk_texts`, in order — a SINGLE judge call over every
         retrieved chunk (fix round 1, Cost ruling) rather than the one-call-per-chunk
         `is_chunk_relevant` this replaces operationally. Feeds
         `app.eval.metrics.ragas_context_precision`. Returns `[]` without a call when
-        `chunk_texts` is empty (nothing to judge).
+        `chunk_texts` is empty (nothing to judge); returns `None` (fix round 2, N1) when the
+        reply is unparsable even after fence-stripping — never a fabricated all-`False` verdict
+        list, which used to score as a real-looking `0.0` for context precision.
         """
         if not chunk_texts:
             return []
@@ -341,45 +377,48 @@ class OpenAIJudge:
         content = self._ask(_CONTEXT_PRECISION_BATCH_PROMPT, user_message)
         return self._parse_chunk_relevance(content, len(chunk_texts))
 
-    def _parse_chunk_relevance(self, content: str, expected_count: int) -> list[bool]:
+    def _parse_chunk_relevance(self, content: str, expected_count: int) -> list[bool] | None:
         """Strictly parse `rank_chunk_relevance`'s `[{"index": int, "relevant": bool}, ...]`
-        reply (fix round 1, Cost ruling). ANYTHING unexpected — invalid JSON, not a list, the
-        wrong length, a missing/duplicate/out-of-range `index`, a non-bool `relevant` — falls back
-        to "every source irrelevant" (a conservative floor for context precision, never an
-        inflated score) plus a WARNING log naming the raw reply, so a real malformed-output rate
-        is visible in logs without ever aborting a whole eval run over one bad reply.
+        reply (fix round 1, Cost ruling). `content` is first passed through `_strip_code_fence`
+        (fix round 2, N1) so a reply wrapped in a ``` or ```json fence — the single most common
+        deviation for a chat model told to emit bare JSON — still parses to the SAME verdicts as
+        an unfenced reply. ANYTHING still unexpected after that — invalid JSON, not a list, the
+        wrong length, a missing/duplicate/out-of-range `index`, a non-bool `relevant` — returns
+        `None` (fix round 2, N1: not-applicable, consistent with ruling I4 — never a fabricated
+        `0.0`) plus a WARNING log naming the RAW (unstripped) reply, so a genuinely malformed-
+        output rate is visible in logs without ever aborting a whole eval run over one bad reply.
         """
-        fallback = [False] * expected_count
+        stripped = _strip_code_fence(content)
         try:
-            parsed = json.loads(content)
+            parsed = json.loads(stripped)
         except json.JSONDecodeError:
             logger.warning("context-precision judge returned unparseable JSON: %r", content)
-            return fallback
+            return None
         if not isinstance(parsed, list) or len(parsed) != expected_count:
             logger.warning("context-precision judge returned malformed verdicts: %r", content)
-            return fallback
+            return None
 
         verdicts: list[bool | None] = [None] * expected_count
         for entry in parsed:
             if not isinstance(entry, dict):
                 logger.warning("context-precision judge returned malformed verdicts: %r", content)
-                return fallback
+                return None
             index = entry.get("index")
             relevant = entry.get("relevant")
             if not isinstance(index, int) or isinstance(index, bool):
                 logger.warning("context-precision judge returned malformed verdicts: %r", content)
-                return fallback
+                return None
             if not isinstance(relevant, bool):
                 logger.warning("context-precision judge returned malformed verdicts: %r", content)
-                return fallback
+                return None
             if not (0 <= index < expected_count) or verdicts[index] is not None:
                 logger.warning("context-precision judge returned malformed verdicts: %r", content)
-                return fallback
+                return None
             verdicts[index] = relevant
 
         if any(verdict is None for verdict in verdicts):
             logger.warning("context-precision judge returned malformed verdicts: %r", content)
-            return fallback
+            return None
         return [bool(verdict) for verdict in verdicts]
 
 
@@ -489,6 +528,11 @@ def _evaluate_question(
     answer_relevance_rubric: bool | None = None
     context_precision_value: float | None = None
     context_recall_value: float | None = None
+    # Fix round 2 (Opus re-review, N1): `True` only when the batched context-precision judge
+    # reply was STILL unparsable after fence-stripping (`rank_chunk_relevance` returned `None`) —
+    # never set when there was simply no `metrics_judge` at all (that case has nothing to call
+    # malformed).
+    judge_reply_malformed = False
     if metrics_judge is not None:
         # I1: judged only when the row was ANSWERED (retrieval found content, the model did not
         # refuse) — a refusal has no "does this answer address the question" claim to score, and
@@ -501,9 +545,15 @@ def _evaluate_question(
             )
         # I3 + Cost: ONE batched call over every retrieved chunk (`rank_chunk_relevance`) feeds
         # the RAGAS rank-aware `ragas_context_precision` formula — replaces what used to be one
-        # `is_chunk_relevant` call per chunk.
+        # `is_chunk_relevant` call per chunk. Fix round 2, N1: `None` means the reply was
+        # unparsable — `context_precision` stays `None` (N/A) rather than scoring a fabricated
+        # `ragas_context_precision([False, ...]) == 0.0`, and the row is flagged so the count is
+        # never silent.
         chunk_relevance = metrics_judge.rank_chunk_relevance(question.question, chunk_texts)
-        context_precision_value = ragas_context_precision(chunk_relevance)
+        if chunk_relevance is None:
+            judge_reply_malformed = True
+        else:
+            context_precision_value = ragas_context_precision(chunk_relevance)
         context_recall_value = context_recall(metrics_judge, question.reference_answer, chunk_texts)
 
     row = EvalRow(
@@ -534,6 +584,12 @@ def _evaluate_question(
             "answer_relevance_rubric": answer_relevance_rubric,
             "context_precision": context_precision_value,
             "context_recall": context_recall_value,
+            # Fix round 2 (Opus re-review, N1): `True` iff the batched context-precision judge's
+            # reply was still unparsable after fence-stripping (see `judge_reply_malformed`,
+            # above) — always present (never omitted) so `EvalReport.malformed_judge_replies`
+            # (`_build_report`) can count it with a plain `.get(...)`, `False` whenever there was
+            # no `metrics_judge` at all.
+            "judge_reply_malformed": judge_reply_malformed,
         },
     )
     return row, unresolved
@@ -575,17 +631,35 @@ def _rollup(label: str, rows: Sequence[EvalRow]) -> ClassRollup:
     """
     passed = sum(1 for row in rows if row.verdict == "PASS")
 
+    # Fix round 2 (Opus re-review, N2): a row is "scored" for recall@k/MRR purposes iff it's
+    # chunk-mode — `_evaluate_question` only ever sets `recall_at_k` to a non-`None` value in
+    # that mode (see its own C1 comment) — so this is exactly the row count `mean_recall_at_k`/
+    # `mean_mrr` are averaged over, made visible instead of implicit.
+    n_scored = sum(
+        1 for row in rows if row.metrics is not None and row.metrics.get("recall_at_k") is not None
+    )
+
     answerable_rows = [row for row in rows if row.answerable]
     pct_fully_supported = (
         100.0 * sum(1 for row in answerable_rows if row.fully_supported) / len(answerable_rows)
         if answerable_rows
         else None
     )
-    doc_hit_rate = sum(1 for row in rows if row.slugs_hit) / len(rows) if rows else None
+    # Fix round 2 (Opus re-review, N3): averaged over rows with a NON-EMPTY `expected_slugs`
+    # only — `slugs_hit` is vacuously `True` (empty set ⊆ any set) for a row that expects nothing,
+    # so an off-domain/near-miss class (every row's `expected_slugs == []`) used to read a false
+    # 100% here instead of "not applicable".
+    doc_hit_rows = [row for row in rows if row.expected_slugs]
+    doc_hit_rate = (
+        sum(1 for row in doc_hit_rows if row.slugs_hit) / len(doc_hit_rows)
+        if doc_hit_rows
+        else None
+    )
 
     return ClassRollup(
         question_class=label,
         count=len(rows),
+        n_scored=n_scored,
         passed=passed,
         pct_fully_supported=pct_fully_supported,
         doc_hit_rate=doc_hit_rate,
@@ -619,6 +693,12 @@ def _build_report(rows: list[EvalRow], *, unresolved_expected_chunks: int = 0) -
     refusal_total = len(uncovered_rows)
     refusal_correct = sum(1 for row in uncovered_rows if row.verdict == "PASS")
 
+    # Fix round 2 (Opus re-review, N1): count across every row, not only answerable ones — a
+    # malformed batched-judge reply can happen for any row a `metrics_judge` scored.
+    malformed_judge_replies = sum(
+        1 for row in rows if row.metrics is not None and row.metrics.get("judge_reply_malformed")
+    )
+
     # First-occurrence order (mirrors `rows`' own "in file order" contract) rather than sorted —
     # a `by_class` iteration order that matches the eval file's own class grouping reads more
     # naturally in the printed rollup block than an alphabetical resort would.
@@ -638,6 +718,7 @@ def _build_report(rows: list[EvalRow], *, unresolved_expected_chunks: int = 0) -
         refusal_total=refusal_total,
         by_class=by_class,
         unresolved_expected_chunks=unresolved_expected_chunks,
+        malformed_judge_replies=malformed_judge_replies,
         overall=overall,
     )
 
@@ -795,9 +876,9 @@ def _fmt_score(value: float | None) -> str:
 
 def _print_headline_rollup_row(rollup: ClassRollup) -> None:
     """One row of the "by class" headline table (fix round 1: C1's `doc_hit%` column, I2's
-    precision@k exclusion, I4's `-` cells)."""
+    precision@k exclusion, I4's `-` cells; fix round 2, N2: `n_scored` immediately after `n`)."""
     print(
-        f"  {rollup.question_class:<14} {rollup.count:>3} {rollup.passed:>5} "
+        f"  {rollup.question_class:<14} {rollup.count:>3} {rollup.n_scored:>8} {rollup.passed:>5} "
         f"{_fmt_pct(rollup.pct_fully_supported, already_pct=True):>11} "
         f"{_fmt_pct(rollup.doc_hit_rate):>9} "
         f"{_fmt_score(rollup.mean_recall_at_k):>9} "
@@ -831,11 +912,15 @@ def _print_class_rollups(report: EvalReport) -> None:
       rows for that metric.
     - I6: both blocks end with an `overall` row (`report.overall`) — every metric aggregated once
       more across the WHOLE run, not only per class.
+    - N2 (fix round 2, Opus re-review): the headline block gains an `n_scored` column immediately
+      after `n` — how many of that rollup's rows are actually chunk-mode (i.e. behind
+      `recall@k`/`mrr`), since `n` alone conflated "rows in this class" with "rows this metric is
+      averaged over".
     """
     print("by class:")
     print(
-        f"  {'class':<14} {'n':>3} {'pass':>5} {'supported%':>11} {'doc_hit%':>9} "
-        f"{'recall@k':>9} {'mrr':>6}"
+        f"  {'class':<14} {'n':>3} {'n_scored':>8} {'pass':>5} {'supported%':>11} "
+        f"{'doc_hit%':>9} {'recall@k':>9} {'mrr':>6}"
     )
     for rollup in report.by_class.values():
         _print_headline_rollup_row(rollup)
@@ -864,6 +949,14 @@ def _print_report(report: EvalReport) -> None:
         f"groundedness: {report.pct_fully_supported:.1f}% fully supported; "
         f"refusals {report.refusal_correct}/{report.refusal_total} correct"
     )
+    # Fix round 2 (Opus re-review, N1/N2): both lines are ADDITIONS below the byte-identical
+    # phase-7 summary line above, printed only when the count is > 0 — a healthy run (no
+    # unresolved refs, no malformed judge replies) prints neither, so this never appears on a
+    # clean run's stdout.
+    if report.malformed_judge_replies > 0:
+        print(f"malformed judge replies: {report.malformed_judge_replies}")
+    if report.unresolved_expected_chunks > 0:
+        print(f"unresolved expected_chunks refs: {report.unresolved_expected_chunks}")
     if report.by_class:
         _print_class_rollups(report)
 

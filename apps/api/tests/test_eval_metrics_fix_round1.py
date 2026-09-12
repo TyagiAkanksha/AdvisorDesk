@@ -22,6 +22,15 @@ required so that fake keeps satisfying `MetricsJudge` after `_evaluate_question`
 Cost ruling's batched call; see that file's own comment and the fix-round-1 implementer report for
 the full rationale). Fakes here are defined locally (no cross-test-file imports), per this
 codebase's established convention (`tests/test_groundedness.py`'s own module docstring).
+
+Fix round 2 (Opus re-review, `.superpowers/sdd/phase-9-eval-data-loop/reports/
+task-05-rereview.md` "New findings"): tests for N1 (a fenced-or-malformed batched-judge reply
+returns `None`, never a fabricated `0.0`, and is counted in `EvalReport.malformed_judge_replies`),
+N2 (`ClassRollup.n_scored`; the `unresolved expected_chunks refs:` print line), N3
+(`doc_hit_rate` excludes rows with an empty `expected_slugs`), and N6 (the I7 pin now asserts a
+monkeypatched sentinel, not `Settings.judge_model`'s own default). N4/N5 ride to the whole-branch
+fix wave, untouched here. Same "implementer may add tests, never touch the authored file" rule as
+round 1 — `tests/test_eval_metrics.py` is unmodified by this round.
 """
 
 from __future__ import annotations
@@ -30,16 +39,21 @@ from collections.abc import Iterator, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Literal
+from typing import Literal, cast
 
 import pytest
 import yaml
+from openai import OpenAI
 from sqlalchemy.orm import Session
 
 from app.eval.groundedness import (
     ClassRollup,
     EvalReport,
+    EvalRow,
+    OpenAIJudge,
     _print_class_rollups,
+    _print_report,
+    _rollup,
     _run_from_cli,
     run_eval,
 )
@@ -121,7 +135,9 @@ class RecordingMetricsJudge:
         self.calls.append(("is_chunk_relevant", chunk_text))
         return True
 
-    def rank_chunk_relevance(self, question: str, chunk_texts: Sequence[str]) -> list[bool]:
+    def rank_chunk_relevance(self, question: str, chunk_texts: Sequence[str]) -> list[bool] | None:
+        # Fix round 2 (N1): return type widened to `list[bool] | None`; this fake still always
+        # returns a list (never `None`) — its behaviour is unchanged.
         self.calls.append(("rank_chunk_relevance", "|".join(chunk_texts)))
         return [True for _ in chunk_texts]
 
@@ -130,10 +146,80 @@ class RecordingMetricsJudge:
         return True
 
 
+@dataclass
+class MalformedReplyMetricsJudge:
+    """A `MetricsJudge` whose `rank_chunk_relevance` always reports a malformed judge reply
+    (returns `None`) — fix round 2, N1's `run_eval`-level pin that a malformed batched-judge
+    reply must surface as `context_precision = None` + `judge_reply_malformed = True` + a
+    `EvalReport.malformed_judge_replies` count, never a fabricated `0.0`.
+    """
+
+    def is_supported(self, claim_text: str, chunk_texts: Sequence[str]) -> bool:
+        return True
+
+    def is_answer_relevant(self, question: str, answer_text: str) -> bool:
+        return True
+
+    def is_chunk_relevant(self, question: str, chunk_text: str) -> bool:
+        return True
+
+    def rank_chunk_relevance(self, question: str, chunk_texts: Sequence[str]) -> list[bool] | None:
+        return None
+
+    def is_claim_covered(self, claim_text: str, chunk_texts: Sequence[str]) -> bool:
+        return True
+
+
 def _unit_vector(axis: int, dims: int = 1024) -> list[float]:
     vector = [0.0] * dims
     vector[axis] = 1.0
     return vector
+
+
+# --- fix round 2: a fake OpenAI client for exercising OpenAIJudge directly ---
+
+
+@dataclass
+class _FakeMessage:
+    content: str
+
+
+@dataclass
+class _FakeChoice:
+    message: _FakeMessage
+
+
+@dataclass
+class _FakeCompletion:
+    choices: list[_FakeChoice]
+
+
+@dataclass
+class _FakeCompletions:
+    reply: str
+
+    def create(self, **_kwargs: object) -> _FakeCompletion:
+        return _FakeCompletion(choices=[_FakeChoice(message=_FakeMessage(content=self.reply))])
+
+
+@dataclass
+class _FakeChat:
+    completions: _FakeCompletions
+
+
+@dataclass
+class _FakeOpenAIClient:
+    """Structurally satisfies the one `client.chat.completions.create(...)` call
+    `OpenAIJudge._ask` makes — never a real `OpenAI` instance, `cast` at each call site tells
+    mypy this is deliberate (the same pattern as `tests/test_ratelimit_guards.py`'s
+    `cast(RateLimiter, fake_limiter)`)."""
+
+    chat: _FakeChat
+
+
+def _fake_openai_judge(reply: str) -> OpenAIJudge:
+    client = _FakeOpenAIClient(chat=_FakeChat(completions=_FakeCompletions(reply=reply)))
+    return OpenAIJudge(client=cast(OpenAI, client), model="gpt-4o")
 
 
 # --- C1: chunk-mode-only recall@k/precision@k/MRR; unresolved refs excluded --
@@ -377,6 +463,7 @@ def test_print_class_rollups_labels_doc_hit_and_dashes_not_applicable_cells(
     normal_rollup = ClassRollup(
         question_class="answerable",
         count=17,
+        n_scored=15,
         passed=10,
         pct_fully_supported=58.8,
         doc_hit_rate=0.941,
@@ -390,9 +477,14 @@ def test_print_class_rollups_labels_doc_hit_and_dashes_not_applicable_cells(
     all_refusal_rollup = ClassRollup(
         question_class="off_domain",
         count=8,
+        n_scored=0,
         passed=8,
         pct_fully_supported=None,
-        doc_hit_rate=1.0,
+        # Fix round 2 (Opus re-review, N3): an all-refusal class's rows all have
+        # `expected_slugs == []` — `doc_hit_rate` must be `None` (not the vacuous `1.0` round 1
+        # left in place), see `test_doc_hit_rate_excludes_rows_with_empty_expected_slugs` below
+        # for the `_rollup`-level pin.
+        doc_hit_rate=None,
         mean_recall_at_k=None,
         mean_mrr=None,
         mean_precision_at_k=None,
@@ -403,6 +495,7 @@ def test_print_class_rollups_labels_doc_hit_and_dashes_not_applicable_cells(
     overall = ClassRollup(
         question_class="overall",
         count=25,
+        n_scored=20,
         passed=18,
         pct_fully_supported=40.0,
         doc_hit_rate=0.96,
@@ -430,12 +523,16 @@ def test_print_class_rollups_labels_doc_hit_and_dashes_not_applicable_cells(
     assert lines[0] == "by class:"
     assert "doc_hit%" in lines[1]
     assert "recall@k" in lines[1]
+    assert "n_scored" in lines[1]  # fix round 2, N2
 
     answerable_line = next(line for line in lines if line.strip().startswith("answerable"))
     assert "-" not in answerable_line
 
     off_domain_line = next(line for line in lines if line.strip().startswith("off_domain"))
-    assert off_domain_line.split() == ["off_domain", "8", "8", "-", "100.0", "-", "-"]
+    # columns: class, n, n_scored, pass, supported%, doc_hit%, recall@k, mrr (fix round 2 inserts
+    # n_scored after n and turns doc_hit% into "-" per N3 — was "8 8 - 100.0 - -" before this
+    # round).
+    assert off_domain_line.split() == ["off_domain", "8", "0", "8", "-", "-", "-", "-"]
 
     assert "judge metrics by class:" in out
     assert out.count("overall") == 2  # once in each of the two blocks
@@ -445,13 +542,19 @@ def test_print_class_rollups_labels_doc_hit_and_dashes_not_applicable_cells(
 
 
 def test_run_from_cli_builds_the_judge_from_judge_model_and_forwards_it_as_metrics_judge(
-    db_session: Session,
+    db_session: Session, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """`_run_from_cli` must build its judge from `settings.judge_model` (not `chat_model`) and
     pass that SAME instance as both `judge` and `metrics_judge` into `run_eval` — the two lines
     that make DESIGN D7 real in a recorded run (Opus review I7). `run_eval_fn` here never calls
     the real `run_eval`, so this never reaches OpenAI.
+
+    Fix round 2, N6: the assertion reads a MONKEYPATCHED SENTINEL, not `Settings.judge_model`'s
+    own default (`"gpt-4o"`) — asserting against the default would also pass for a hard-coded
+    `model="gpt-4o"` inside `OpenAIJudge.from_settings`, which discriminates nothing. A sentinel
+    proves the value actually flows from `settings.judge_model` through to the built judge.
     """
+    monkeypatch.setenv("JUDGE_MODEL", "judge-sentinel")
     captured: dict[str, object] = {}
 
     def recording_run_eval(*_args: object, **kwargs: object) -> EvalReport:
@@ -459,10 +562,262 @@ def test_run_from_cli_builds_the_judge_from_judge_model_and_forwards_it_as_metri
         return EvalReport(rows=[], pct_fully_supported=0.0, refusal_correct=0, refusal_total=0)
 
     _run_from_cli(
-        ["--label", "fix-round-1-i7", "--no-persist"],
+        ["--label", "fix-round-2-n6", "--no-persist"],
         run_eval_fn=recording_run_eval,
         session_factory=lambda: db_session,
     )
 
     assert captured["judge"] is captured["metrics_judge"]
-    assert getattr(captured["judge"], "_model", None) == "gpt-4o"
+    assert getattr(captured["judge"], "_model", None) == "judge-sentinel"
+
+
+# --- N1: a malformed batched-judge reply -> None, counted, never a fabricated 0.0 ------------
+
+
+def test_rank_chunk_relevance_parses_a_fenced_reply_to_the_same_verdicts_as_unfenced() -> None:
+    """A model that ignores the "no markdown fences" instruction and wraps its JSON reply in
+    ```json ... ``` must still parse to the SAME verdicts as the unfenced reply (fix round 2,
+    N1)."""
+    unfenced = '[{"index": 0, "relevant": true}, {"index": 1, "relevant": false}]'
+    fenced = f"```json\n{unfenced}\n```"
+
+    verdicts_unfenced = _fake_openai_judge(unfenced).rank_chunk_relevance("Q?", ["a", "b"])
+    verdicts_fenced = _fake_openai_judge(fenced).rank_chunk_relevance("Q?", ["a", "b"])
+
+    assert verdicts_fenced == verdicts_unfenced == [True, False]
+
+
+def test_rank_chunk_relevance_returns_none_for_a_prose_reply() -> None:
+    """A reply that is prose, not JSON, is STILL unparsable after fence-stripping — `None`
+    (not-applicable), never a fabricated all-`False` verdict list (fix round 2, N1)."""
+    judge = _fake_openai_judge("Sure! Here are the verdicts you asked for: all relevant.")
+
+    assert judge.rank_chunk_relevance("Q?", ["a", "b"]) is None
+
+
+def test_run_eval_records_na_context_precision_and_counts_a_malformed_judge_reply(
+    db_session: Session, tmp_path: Path
+) -> None:
+    """Through `run_eval` with a `MetricsJudge` whose `rank_chunk_relevance` always returns
+    `None` (fix round 2, N1): the row's `context_precision` is `None` (never a fabricated
+    `0.0`), `judge_reply_malformed` is `True`, `EvalReport.malformed_judge_replies == 1`, and the
+    class rollup's `mean_context_precision` is `None` (prints `-`, never a real-looking number)."""
+    question = "What happens to my RSUs when they vest?"
+    content = Content(
+        title="RSUs at vest",
+        slug="rsus-at-vest",
+        body_md="unused",
+        status="published",
+        published_at=datetime.now(UTC),
+    )
+    db_session.add(content)
+    db_session.flush()
+    db_session.add(
+        Chunk(
+            content_id=content.id,
+            chunk_index=0,
+            text="## What happens at vest?\n\nShares are delivered and taxed as ordinary income.",
+            embedding=_unit_vector(0),
+        )
+    )
+    db_session.flush()
+
+    path = tmp_path / "eval_questions.yaml"
+    path.write_text(
+        yaml.safe_dump(
+            [
+                {
+                    "question": question,
+                    "expected_slugs": ["rsus-at-vest"],
+                    "answerable": True,
+                    "class": "answerable",
+                }
+            ],
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+
+    report = run_eval(
+        db_session,
+        embedder=ScriptedEmbedder(vectors={question: _unit_vector(0)}),
+        chat_llm=ScriptedChatLLM(
+            answers={question: "Shares are delivered and taxed as ordinary income."}
+        ),
+        judge=ScriptedJudge(),
+        questions_path=path,
+        metrics_judge=MalformedReplyMetricsJudge(),
+    )
+
+    row = report.rows[0]
+    assert row.metrics is not None
+    assert row.metrics["context_precision"] is None
+    assert row.metrics["judge_reply_malformed"] is True
+    assert report.malformed_judge_replies == 1
+    assert report.by_class["answerable"].mean_context_precision is None
+
+
+def test_print_report_prints_malformed_judge_replies_line_only_when_positive(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """`_print_report` prints `malformed judge replies: N` under the summary line ONLY when
+    `N > 0` (fix round 2, N1) — a clean run's stdout never mentions it."""
+    healthy = EvalReport(rows=[], pct_fully_supported=100.0, refusal_correct=0, refusal_total=0)
+    _print_report(healthy)
+    assert "malformed judge replies" not in capsys.readouterr().out
+
+    unhealthy = EvalReport(
+        rows=[],
+        pct_fully_supported=100.0,
+        refusal_correct=0,
+        refusal_total=0,
+        malformed_judge_replies=2,
+    )
+    _print_report(unhealthy)
+    assert "malformed judge replies: 2" in capsys.readouterr().out
+
+
+# --- N2: n_scored says how many rows are behind recall@k/mrr; unresolved line ----------------
+
+
+def test_class_rollup_n_scored_counts_only_chunk_mode_rows(
+    db_session: Session, tmp_path: Path
+) -> None:
+    """A class of two rows — one with a resolved `expected_chunks` ref (chunk-mode) and one
+    slug-only — `n_scored` counts only the chunk-mode row, while `count` counts both (fix round
+    2, N2)."""
+    content = Content(
+        title="Topic A",
+        slug="topic-a",
+        body_md="unused",
+        status="published",
+        published_at=datetime.now(UTC),
+    )
+    db_session.add(content)
+    db_session.flush()
+    db_session.add(
+        Chunk(
+            content_id=content.id,
+            chunk_index=0,
+            text="## Heading A\n\nContent about topic A.",
+            embedding=_unit_vector(0),
+        )
+    )
+    db_session.flush()
+
+    q_chunk = "What is topic A specifically?"
+    q_slug_only = "Tell me generally about topic A."
+    path = tmp_path / "eval_questions.yaml"
+    path.write_text(
+        yaml.safe_dump(
+            [
+                {
+                    "question": q_chunk,
+                    "expected_slugs": ["topic-a"],
+                    "answerable": True,
+                    "class": "answerable",
+                    "expected_chunks": ["topic-a#heading-a"],
+                },
+                {
+                    "question": q_slug_only,
+                    "expected_slugs": ["topic-a"],
+                    "answerable": True,
+                    "class": "answerable",
+                },
+            ],
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+
+    report = run_eval(
+        db_session,
+        embedder=ScriptedEmbedder(vectors={q_chunk: _unit_vector(0), q_slug_only: _unit_vector(0)}),
+        chat_llm=ScriptedChatLLM(
+            answers={q_chunk: "About topic A.", q_slug_only: "About topic A."}
+        ),
+        judge=ScriptedJudge(),
+        questions_path=path,
+    )
+
+    assert report.by_class["answerable"].count == 2
+    assert report.by_class["answerable"].n_scored == 1
+
+
+def test_print_report_prints_unresolved_expected_chunks_line_only_when_positive(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """`_print_report` prints `unresolved expected_chunks refs: N` under the summary line ONLY
+    when `report.unresolved_expected_chunks > 0` (fix round 2, N2) — previously printed nowhere
+    at all."""
+    clean = EvalReport(rows=[], pct_fully_supported=100.0, refusal_correct=0, refusal_total=0)
+    _print_report(clean)
+    assert "unresolved expected_chunks refs" not in capsys.readouterr().out
+
+    with_unresolved = EvalReport(
+        rows=[],
+        pct_fully_supported=100.0,
+        refusal_correct=0,
+        refusal_total=0,
+        unresolved_expected_chunks=3,
+    )
+    _print_report(with_unresolved)
+    assert "unresolved expected_chunks refs: 3" in capsys.readouterr().out
+
+
+# --- N3: doc_hit_rate excludes rows with an empty expected_slugs -----------------------------
+
+
+def test_doc_hit_rate_excludes_rows_with_empty_expected_slugs() -> None:
+    """`doc_hit_rate` averages `slugs_hit` over rows with a NON-EMPTY `expected_slugs` only — a
+    row with `expected_slugs=[]` is vacuously `slugs_hit=True` (the empty set is a subset of any
+    set) and must be excluded, not averaged in as a real hit (fix round 2, N3)."""
+    vacuous_hit_row = EvalRow(
+        question="off-domain question",
+        answerable=False,
+        expected_slugs=[],
+        cited_slugs=[],
+        slugs_hit=True,
+        fully_supported=None,
+        refused=True,
+        verdict="PASS",
+        top_similarity=None,
+        answer_text="",
+    )
+    real_miss_row = EvalRow(
+        question="answerable question",
+        answerable=True,
+        expected_slugs=["a"],
+        cited_slugs=[],
+        slugs_hit=False,
+        fully_supported=False,
+        refused=False,
+        verdict="FAIL",
+        top_similarity=0.5,
+        answer_text="x",
+    )
+
+    rollup = _rollup("mixed", [vacuous_hit_row, real_miss_row])
+
+    assert rollup.doc_hit_rate == pytest.approx(0.0)
+
+
+def test_doc_hit_rate_is_none_when_no_row_has_a_non_empty_expected_slugs() -> None:
+    """The all-refusal-class shape from the I5 fixture: every row's `expected_slugs == []`, so
+    `doc_hit_rate` is `None` (not-applicable), never the vacuous `1.0` round 1 left in place."""
+    vacuous_hit_row = EvalRow(
+        question="off-domain question",
+        answerable=False,
+        expected_slugs=[],
+        cited_slugs=[],
+        slugs_hit=True,
+        fully_supported=None,
+        refused=True,
+        verdict="PASS",
+        top_similarity=None,
+        answer_text="",
+    )
+
+    rollup = _rollup("off_domain", [vacuous_hit_row])
+
+    assert rollup.doc_hit_rate is None

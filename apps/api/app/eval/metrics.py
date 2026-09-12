@@ -92,13 +92,21 @@ class MetricsJudge(Protocol):
     `is_chunk_relevant` itself is KEPT (not removed) because `context_precision` below still calls
     it once per chunk (both paths feed the SAME `ragas_context_precision` formula; only the call
     count differs).
+
+    Fix round 2 (Opus re-review, N1): `rank_chunk_relevance`'s return type widens to
+    `list[bool] | None` — `None` means the judge's reply was unparsable even after fence-
+    stripping (`app.eval.groundedness.OpenAIJudge._parse_chunk_relevance`), so the caller records
+    "not applicable" (`EvalRow.metrics["context_precision"] = None`, `"judge_reply_malformed":
+    True`) instead of a fabricated `0.0`.
     """
 
     def is_supported(self, claim_text: str, chunk_texts: Sequence[str]) -> bool: ...
     def is_answer_relevant(self, question: str, answer_text: str) -> bool: ...
     def is_chunk_relevant(self, question: str, chunk_text: str) -> bool: ...
     def is_claim_covered(self, claim_text: str, chunk_texts: Sequence[str]) -> bool: ...
-    def rank_chunk_relevance(self, question: str, chunk_texts: Sequence[str]) -> list[bool]: ...
+    def rank_chunk_relevance(
+        self, question: str, chunk_texts: Sequence[str]
+    ) -> list[bool] | None: ...
 
 
 @dataclass(frozen=True)

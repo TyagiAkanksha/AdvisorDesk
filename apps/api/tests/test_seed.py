@@ -52,6 +52,7 @@ from sqlalchemy import Engine, func, select
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.db import make_session_factory
+from app.eval.questions import load_questions, resolve_expected_chunks
 from app.models import Chunk, Content
 from app.rag.pipeline import EmbeddingChunkPipeline
 from app.seed import SeedReport, seed_all
@@ -482,3 +483,32 @@ def test_eval_questions_have_no_duplicate_question_text() -> None:
     questions = [item["question"] for item in items]
     duplicates = {question for question in questions if questions.count(question) > 1}
     assert not duplicates, f"eval_questions.yaml has duplicate questions: {duplicates}"
+
+
+def test_eval_questions_expected_chunks_refs_all_resolve_against_the_seeded_corpus(
+    session_factory: sessionmaker[Session],
+) -> None:
+    """Controller ruling (phase-9 task-04 review, Minor 1 —
+    `.superpowers/sdd/phase-9-eval-data-loop/progress.md`): `resolve_expected_chunks`
+    (`app/eval/questions.py`) silently skips an `expected_chunks` ref that matches no chunk — its
+    own documented decision, so a stale/typo'd ref in a golden question never aborts a whole eval
+    run. That silence means a broken ref in the COMMITTED `seed/eval_questions.yaml` could ship
+    unnoticed to task 09's baseline run. This is the DB pin closing that gap: seed the real corpus
+    (`seed/sample_content/`) on the throwaway schema, then require every `expected_chunks` ref the
+    committed YAML carries to resolve to at least one chunk id.
+
+    Today's committed file has zero `expected_chunks` refs (phase-9 task 04 shipped the loader
+    before the golden question set was authored) — `all(... for ref in [])` is vacuously `True`,
+    so this pin passes trivially now and becomes a real check the moment refs are added.
+    """
+    pipeline = EmbeddingChunkPipeline(FakeEmbedder())
+    with _script_session(session_factory) as session:
+        seed_all(session, pipeline, content_dir=_SEED_CONTENT_DIR)
+
+    questions = load_questions(_EVAL_YAML_PATH)
+    all_refs = [ref for question in questions for ref in question.expected_chunks]
+
+    with _script_session(session_factory) as fresh:
+        unresolved = [ref for ref in all_refs if not resolve_expected_chunks(fresh, [ref])]
+
+    assert not unresolved, f"expected_chunks refs that resolved to no chunk: {unresolved}"

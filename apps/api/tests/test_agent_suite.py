@@ -10,6 +10,10 @@ from typing import Any
 
 import pytest
 import yaml
+from sqlalchemy import select
+from sqlalchemy.orm import Session
+
+from app.agent.loop import LlmDone, LlmStep, TextDelta, ToolCallStep
 from app.eval.agent_suite import (
     AgentTask,
     ReferenceStep,
@@ -19,10 +23,6 @@ from app.eval.agent_suite import (
     run_agent_suite,
     score_trajectory,
 )
-from sqlalchemy import select
-from sqlalchemy.orm import Session
-
-from app.agent.loop import LlmDone, LlmStep, TextDelta, ToolCallStep
 from app.models import Content
 from app.services.lifecycle import NoopChunkPipeline
 

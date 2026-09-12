@@ -1,0 +1,123 @@
+# Agent trajectory suite (phase-9 DESIGN §B2). Ten CMS tasks from PRD §2.2's admin user stories,
+# run through the REAL agent loop on a scratch schema seeded from seed/sample_content/.
+# `reference_trajectory` is the tool sequence a correct run makes; `args_contains` values are
+# matched case-insensitively as substrings of the actual argument.
+
+- id: draft-and-tag
+  prompt: "Draft an article on Roth IRA conversion timing and tag it retirement."
+  reference_trajectory:
+    - tool: create_draft
+      args_contains: {title: "Roth IRA conversion", tags: ["retirement"]}
+  min_steps: 1
+  end_state:
+    - content_title_contains: "roth ira conversion timing"
+      status: draft
+      tags_include: ["retirement"]
+
+- id: count-published-by-tag
+  prompt: "How many published pieces do we have on tax planning?"
+  reference_trajectory:
+    - tool: count_content
+      args_contains: {status: "published", tag: "tax-planning"}
+  min_steps: 1
+  end_state:
+    - no_new_content: true
+
+- id: publish-drafts-with-tag
+  prompt: "Find everything tagged college-savings and publish the drafts."
+  reference_trajectory:
+    - tool: search_content
+      args_contains: {tag: "college-savings"}
+    - tool: publish
+  min_steps: 2
+  end_state:
+    - content_title_exists: "Coverdell ESA vs 529 Plan Basics"
+      status: published
+
+- id: archive-by-title
+  prompt: "Archive the article titled 'Dollar Cost Averaging Basics'."
+  reference_trajectory:
+    - tool: search_content
+      args_contains: {q: "Dollar Cost Averaging"}
+    - tool: archive
+  min_steps: 2
+  end_state:
+    - content_title_exists: "Dollar Cost Averaging Basics"
+      status: archived
+
+- id: edit-a-body
+  prompt: >-
+    Add a closing sentence to 'HSA Triple Tax Advantage Basics' reminding readers to keep their
+    receipts.
+  reference_trajectory:
+    - tool: search_content
+      args_contains: {q: "HSA"}
+    - tool: edit_content
+      args_contains: {body_md: "receipts"}
+  min_steps: 2
+  end_state:
+    - content_title_exists: "HSA Triple Tax Advantage Basics"
+      status: published
+
+- id: add-and-remove-tags
+  prompt: >-
+    Tag 'Understanding Index Funds Basics' with retirement as well, and remove the
+    investing-basics tag.
+  reference_trajectory:
+    - tool: search_content
+      args_contains: {q: "Index Funds"}
+    - tool: tag_content
+      args_contains: {add: ["retirement"], remove: ["investing-basics"]}
+  min_steps: 2
+  end_state:
+    - content_title_exists: "Understanding Index Funds Basics"
+      tags_include: ["retirement"]
+
+- id: report-weak-queries
+  prompt: "What have clients asked in the last 30 days that our content couldn't answer?"
+  reference_trajectory:
+    - tool: report_content_gaps
+      args_contains: {days: 30}
+  min_steps: 1
+  end_state:
+    - no_new_content: true
+
+- id: propose-a-fix-from-a-gap
+  prompt: >-
+    Clients keep asking about crypto compensation and we have nothing on it. Check the gaps
+    report, then draft something to cover it.
+  reference_trajectory:
+    - tool: report_content_gaps
+    - tool: create_draft
+      args_contains: {title: "crypto"}
+  min_steps: 2
+  end_state:
+    - content_title_contains: "crypto"
+      status: draft
+
+- id: draft-publish-verify
+  prompt: >-
+    Draft an article titled 'Mega Backdoor Roth Basics', publish it, and tell me its status.
+  reference_trajectory:
+    - tool: create_draft
+      args_contains: {title: "Mega Backdoor Roth Basics"}
+    - tool: publish
+  min_steps: 2
+  end_state:
+    - content_title_exists: "Mega Backdoor Roth Basics"
+      status: published
+
+# The ambiguous one: the right move is to ask, not to guess. A correct run calls NO tool at all.
+- id: ambiguous-cleanup-should-ask
+  prompt: "Clean up the old stuff."
+  reference_trajectory: []
+  min_steps: 0
+  end_state:
+    - no_new_content: true
+  forbidden_tools:
+    - create_draft
+    - edit_content
+    - delete_content
+    - tag_content
+    - publish
+    - archive

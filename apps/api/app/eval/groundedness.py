@@ -62,6 +62,7 @@ from app.eval.metrics import (
     split_sentences,
 )
 from app.eval.questions import EvalQuestion, load_questions, resolve_expected_chunks
+from app.eval.taxonomy import classify_failure, failure_distribution
 from app.models import EvalRun
 from app.rag.embeddings import Embedder, OpenAICompatibleEmbedder
 from app.rag.retrieval import retrieve
@@ -199,6 +200,11 @@ class EvalReport:
     # once more over EVERY row regardless of class. Defaulted (an empty rollup over zero rows) so
     # task-03's four-argument `EvalReport(...)` constructions keep working unchanged.
     overall: ClassRollup = field(default_factory=lambda: _rollup("overall", []))
+    # Task-06: the failure-taxonomy distribution across every row's `metrics["failure_cause"]`
+    # (`app.eval.taxonomy.failure_distribution`), ordered by `FAILURE_CAUSES` and omitting
+    # zero-count causes. Defaulted so task-03's four-argument `EvalReport(...)` constructions
+    # keep working unchanged.
+    failure_causes: dict[str, int] = field(default_factory=dict)
 
 
 # The judge's own system prompt — deliberately separate from `app.rag.synthesis.SYSTEM_PROMPT`
@@ -427,6 +433,21 @@ def _dedupe_preserve_order(texts: Iterable[str]) -> list[str]:
     return list(dict.fromkeys(texts))
 
 
+@dataclass(frozen=True)
+class _ClassificationSnapshot:
+    """A `app.eval.taxonomy.ClassifiableRow` built from `_evaluate_question`'s own already-
+    computed local values (task-06 Interfaces) — classified BEFORE the frozen `EvalRow` below is
+    constructed, since a frozen row must never be mutated after the fact.
+    """
+
+    answerable: bool
+    refused: bool
+    verdict: str
+    fully_supported: bool | None
+    top_similarity: float | None
+    cited_slugs: Sequence[str]
+
+
 def _evaluate_question(
     session: Session,
     *,
@@ -556,6 +577,47 @@ def _evaluate_question(
             context_precision_value = ragas_context_precision(chunk_relevance)
         context_recall_value = context_recall(metrics_judge, question.reference_answer, chunk_texts)
 
+    row_metrics: dict[str, object] = {
+        "retrieval_mode": retrieval_mode,
+        "recall_at_k": scored_recall,
+        "precision_at_k": scored_precision,
+        "mrr": scored_mrr,
+        "expected_chunk_hits": ir_metrics.hits,
+        "retrieved_chunk_ids": retrieved_chunk_ids,
+        # Fix round 1 (Opus review, I3), made the sole key in round 1b (controller amendment
+        # commit b63a9eb re-pinned the authored test onto this name): RAGAS's own "answer
+        # relevancy" names a different metric (mean cosine similarity between the question and
+        # back-generated questions) — this is a YES/NO rubric verdict, not that — so the old
+        # `answer_relevance` key is gone; `answer_relevance_rubric` is the only key.
+        "answer_relevance_rubric": answer_relevance_rubric,
+        "context_precision": context_precision_value,
+        "context_recall": context_recall_value,
+        # Fix round 2 (Opus re-review, N1): `True` iff the batched context-precision judge's
+        # reply was still unparsable after fence-stripping (see `judge_reply_malformed`,
+        # above) — always present (never omitted) so `EvalReport.malformed_judge_replies`
+        # (`_build_report`) can count it with a plain `.get(...)`, `False` whenever there was
+        # no `metrics_judge` at all.
+        "judge_reply_malformed": judge_reply_malformed,
+    }
+
+    # Task-06: classify the failure cause from the LOCAL values computed above — never from the
+    # (not-yet-built) frozen `EvalRow`, and never by mutating it afterwards. `human_verdict` stays
+    # `None` at run time — human labels arrive offline through task 08's scorecard, which reads
+    # the persisted rows.
+    classification_snapshot = _ClassificationSnapshot(
+        answerable=question.answerable,
+        refused=refused,
+        verdict=verdict,
+        fully_supported=fully_supported,
+        top_similarity=retrieval.top_similarity,
+        cited_slugs=cited_slugs,
+    )
+    row_metrics["failure_cause"] = classify_failure(
+        classification_snapshot,
+        threshold=settings.similarity_threshold,
+        expected_chunk_hits=ir_metrics.hits,
+    )
+
     row = EvalRow(
         question=question.question,
         answerable=question.answerable,
@@ -569,28 +631,7 @@ def _evaluate_question(
         answer_text=answer_text,
         question_class=question.question_class,
         persona=question.persona,
-        metrics={
-            "retrieval_mode": retrieval_mode,
-            "recall_at_k": scored_recall,
-            "precision_at_k": scored_precision,
-            "mrr": scored_mrr,
-            "expected_chunk_hits": ir_metrics.hits,
-            "retrieved_chunk_ids": retrieved_chunk_ids,
-            # Fix round 1 (Opus review, I3), made the sole key in round 1b (controller amendment
-            # commit b63a9eb re-pinned the authored test onto this name): RAGAS's own "answer
-            # relevancy" names a different metric (mean cosine similarity between the question and
-            # back-generated questions) — this is a YES/NO rubric verdict, not that — so the old
-            # `answer_relevance` key is gone; `answer_relevance_rubric` is the only key.
-            "answer_relevance_rubric": answer_relevance_rubric,
-            "context_precision": context_precision_value,
-            "context_recall": context_recall_value,
-            # Fix round 2 (Opus re-review, N1): `True` iff the batched context-precision judge's
-            # reply was still unparsable after fence-stripping (see `judge_reply_malformed`,
-            # above) — always present (never omitted) so `EvalReport.malformed_judge_replies`
-            # (`_build_report`) can count it with a plain `.get(...)`, `False` whenever there was
-            # no `metrics_judge` at all.
-            "judge_reply_malformed": judge_reply_malformed,
-        },
+        metrics=row_metrics,
     )
     return row, unresolved
 
@@ -606,6 +647,15 @@ def _as_float(value: object | None) -> float | None:
     if isinstance(value, int | float):
         return float(value)
     return None
+
+
+def _as_failure_cause(value: object | None) -> str | None:
+    """Narrow one `EvalRow.metrics["failure_cause"]` value to `str | None` for
+    `app.eval.taxonomy.failure_distribution` — mirrors `_as_float`'s own narrowing role for the
+    mean helpers below (a plain `dict[str, object]` lookup is `object`-typed to mypy even though
+    `classify_failure`'s own return type is always `str | None`).
+    """
+    return value if isinstance(value, str) else None
 
 
 def _mean_metric(rows: Sequence[EvalRow], key: str) -> float | None:
@@ -711,6 +761,14 @@ def _build_report(rows: list[EvalRow], *, unresolved_expected_chunks: int = 0) -
     }
     overall = _rollup("overall", rows)
 
+    # Task-06: the distribution of `metrics["failure_cause"]` across every row (a row with no
+    # `metrics` at all — pre-task-05 rows never persisted this way — reads as `None`, dropped by
+    # `failure_distribution` like any other non-failure).
+    failure_causes = failure_distribution(
+        _as_failure_cause(row.metrics.get("failure_cause")) if row.metrics is not None else None
+        for row in rows
+    )
+
     return EvalReport(
         rows=rows,
         pct_fully_supported=pct_fully_supported,
@@ -720,6 +778,7 @@ def _build_report(rows: list[EvalRow], *, unresolved_expected_chunks: int = 0) -
         unresolved_expected_chunks=unresolved_expected_chunks,
         malformed_judge_replies=malformed_judge_replies,
         overall=overall,
+        failure_causes=failure_causes,
     )
 
 
@@ -959,6 +1018,13 @@ def _print_report(report: EvalReport) -> None:
         print(f"unresolved expected_chunks refs: {report.unresolved_expected_chunks}")
     if report.by_class:
         _print_class_rollups(report)
+    # Task-06: the failure-taxonomy distribution, printed AFTER the per-class rollup blocks and
+    # only when at least one cause was assigned — a clean run (nothing failed) prints nothing
+    # extra, same convention as the two lines above.
+    if report.failure_causes:
+        print("failure causes:")
+        for cause, count in report.failure_causes.items():
+            print(f"  {cause:<24} {count:>3}")
 
 
 def _print_stability(reports: Sequence[EvalReport], *, label: str) -> None:

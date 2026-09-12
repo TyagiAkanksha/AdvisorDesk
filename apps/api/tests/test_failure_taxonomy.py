@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 import pytest
+
 from app.eval.taxonomy import (
     CORPUS_GAP,
     FAILURE_CAUSES,
@@ -106,3 +107,17 @@ def test_every_cause_maps_to_a_proposal_kind_or_explicitly_to_none() -> None:
     assert PROPOSAL_KIND_BY_CAUSE[RETRIEVAL_MISS] == "retune"
     assert PROPOSAL_KIND_BY_CAUSE[THRESHOLD_REFUSAL] == "retune"
     assert PROPOSAL_KIND_BY_CAUSE[JUDGE_DISAGREEMENT] is None
+
+
+# --- implementer addition: row 8 of the decision table (the fallback) --------
+
+
+def test_a_fail_with_hits_and_a_faithful_answer_is_a_retrieval_miss() -> None:
+    """Row 8 (otherwise): retrieval found the expected chunk(s), the answer was faithful to the
+    context it got, and yet the row still failed overall — the only way that combination happens
+    is unmet slug-level coverage the chunk-level hit count doesn't capture, so it falls back to
+    `retrieval_miss` rather than any of the more specific causes above it in the table.
+    """
+    row = Row(refused=False, fully_supported=True, cited_slugs=["a"])
+
+    assert _classify(row, hits=1) == RETRIEVAL_MISS

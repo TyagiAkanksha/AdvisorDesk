@@ -8,6 +8,7 @@ import pytest
 from sqlalchemy.orm import Session
 
 from app.eval.groundedness import (
+    ClassRollup,
     EvalReport,
     EvalRow,
     _parse_args,
@@ -90,6 +91,63 @@ def test_print_report_emits_the_unchanged_phase7_table_and_summary_line(
         "What is a Roth IRA conversion and how is it taxed?"
     )
     assert lines[3] == "groundedness: 58.8% fully supported; refusals 4/4 correct"
+
+
+# --- implementer addition: task-06 failure-taxonomy printing pins ----------
+
+
+def test_print_report_prints_failure_causes_after_the_rollup_blocks(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Task-06: the `failure causes:` block prints AFTER the per-class rollup blocks, only when
+    at least one cause was assigned, in `FAILURE_CAUSES` order, each line formatted
+    `f"  {cause:<24} {count:>3}"` (task file Interfaces).
+    """
+    rollup = ClassRollup(
+        question_class="answerable",
+        count=1,
+        n_scored=0,
+        passed=1,
+        pct_fully_supported=100.0,
+        doc_hit_rate=1.0,
+        mean_recall_at_k=None,
+        mean_mrr=None,
+        mean_precision_at_k=None,
+        mean_answer_relevance_rubric=None,
+        mean_context_precision=None,
+        mean_context_recall=None,
+    )
+    report = EvalReport(
+        rows=[_row("q")],
+        pct_fully_supported=50.0,
+        refusal_correct=0,
+        refusal_total=0,
+        by_class={"answerable": rollup},
+        failure_causes={"corpus_gap": 6, "generation_unfaithful": 4, "threshold_refusal": 1},
+    )
+
+    _print_report(report)
+
+    lines = capsys.readouterr().out.splitlines()
+    assert "failure causes:" in lines
+    causes_index = lines.index("failure causes:")
+    judge_metrics_index = lines.index("judge metrics by class:")
+    assert causes_index > judge_metrics_index
+    assert lines[causes_index + 1] == f"  {'corpus_gap':<24} {6:>3}"
+    assert lines[causes_index + 2] == f"  {'generation_unfaithful':<24} {4:>3}"
+    assert lines[causes_index + 3] == f"  {'threshold_refusal':<24} {1:>3}"
+
+
+def test_print_report_omits_the_failure_causes_block_on_a_clean_run(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    report = EvalReport(
+        rows=[_row("q")], pct_fully_supported=100.0, refusal_correct=0, refusal_total=0
+    )
+
+    _print_report(report)
+
+    assert "failure causes:" not in capsys.readouterr().out
 
 
 def test_print_stability_reports_mean_and_spread_per_metric(

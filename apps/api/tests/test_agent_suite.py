@@ -413,6 +413,11 @@ class FreshInstanceAgentLLM:
     each task."""
 
     seen_ids: list[int]
+    # Controller amendment (task-10 RED run, 2026-09-12): `id()` values are only unique among
+    # objects that are alive at the same time — a fresh instance that is garbage-collected after
+    # its task can hand its id to the next one, which made this pin flaky (1-in-N `id()` reuse).
+    # Keeping every instance referenced here makes the identity comparison sound.
+    keep_alive: list[FreshInstanceAgentLLM] = field(default_factory=list)
 
     def next_step(
         self, messages: list[dict[str, Any]], tool_schemas: list[dict[str, Any]]
@@ -421,7 +426,9 @@ class FreshInstanceAgentLLM:
         return LlmDone()
 
     def new_conversation(self) -> FreshInstanceAgentLLM:
-        return FreshInstanceAgentLLM(seen_ids=self.seen_ids)
+        fresh = FreshInstanceAgentLLM(seen_ids=self.seen_ids, keep_alive=self.keep_alive)
+        self.keep_alive.append(fresh)
+        return fresh
 
 
 @dataclass

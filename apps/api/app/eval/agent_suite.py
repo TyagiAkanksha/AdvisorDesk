@@ -16,12 +16,18 @@ is the whole point of this task).
 `AgentTaskResult`/`AgentSuiteReport` satisfy `app.services.eval_runs.EvalRowLike`/`EvalReportLike`
 by shape (no inheritance) — the same structural-Protocol seam `app.eval.groundedness.EvalRow`/
 `EvalReport` already use, so this module persists through the identical `record_run` call.
+
+**`metrics` payload** (persisted into `eval_results.metrics`): `task_id`, `task_success`,
+`tool_precision`, `tool_recall`, `steps`, `min_steps`, `efficient`, `looped`, `trajectory`,
+`end_state_failures`, `forbidden_tools_called`, and `error` (fix round 1, M4) — the failed
+exchange's `Error.message`, or `None` when the exchange had no error. `answer_text` itself
+accumulates ONLY `Token` text (task file: "the agent's accumulated `Token` text"); a graceful
+failure's message lives in `metrics["error"]`, not appended into `answer_text`.
 """
 
 from __future__ import annotations
 
 import argparse
-import subprocess
 import uuid
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
@@ -36,12 +42,14 @@ from app.agent.llm import OpenAICompatibleAgentLLM
 from app.agent.loop import AgentLLM, Done, Error, Token, ToolCall, run_agent
 from app.config import Settings
 from app.db import make_engine, make_session_factory
+from app.eval.groundedness import _git_sha
 from app.models import Content, ContentTag, Tag, User
 from app.rag.embeddings import OpenAICompatibleEmbedder
 from app.rag.pipeline import EmbeddingChunkPipeline
 from app.seed_paths import seed_data_dir
 from app.services.eval_runs import record_run
 from app.services.lifecycle import ChunkPipeline
+from app.services.queries import active_select
 from app.services.tags import tags_for_contents
 
 __all__ = [
@@ -64,6 +72,16 @@ _VALID_ASSERTION_KEYS = {
     "content_title_contains",
     "content_count",
     "no_new_content",
+}
+
+# Fix round 1, M3: the secondary keys each assertion shape accepts alongside its leading key.
+# `load_agent_tasks` rejects anything else (or a mistyped one, e.g. plural `tags_includes`) with a
+# ValueError naming the offending key, instead of `_check_status_and_tags` silently ignoring it.
+_SECONDARY_KEYS_BY_ASSERTION: dict[str, frozenset[str]] = {
+    "content_title_exists": frozenset({"status", "tags_include"}),
+    "content_title_contains": frozenset({"status", "tags_include"}),
+    "content_count": frozenset({"status", "tag"}),
+    "no_new_content": frozenset(),
 }
 
 _DEFAULT_TASKS_PATH: Path = seed_data_dir() / "agent_tasks.yaml"
@@ -157,7 +175,13 @@ def _parse_reference_step(raw: object, *, task_id: str) -> ReferenceStep:
 
 
 def _validate_end_state_assertion(raw: object, *, task_id: str) -> dict[str, object]:
-    """Validate one `end_state` assertion mapping, raising `ValueError` naming `end_state`."""
+    """Validate one `end_state` assertion mapping, raising `ValueError` naming the offending key.
+
+    Fix round 1, M3: beyond the leading key, also validates the SECONDARY keys against the
+    per-shape allowed set (`_SECONDARY_KEYS_BY_ASSERTION`) and, when present, that `tags_include`
+    is a list of str — a hand-edit typo (`tags_includes`, or a bare string) used to be silently
+    ignored by `_check_status_and_tags` instead of failing loudly.
+    """
     if not isinstance(raw, dict) or not raw:
         raise ValueError(f"{task_id}: an end_state assertion must be a non-empty mapping: {raw!r}")
     leading_key = next(iter(raw))
@@ -166,6 +190,26 @@ def _validate_end_state_assertion(raw: object, *, task_id: str) -> dict[str, obj
             f"{task_id}: an end_state assertion has unknown leading key {leading_key!r} "
             f"(expected one of {sorted(_VALID_ASSERTION_KEYS)}): {raw!r}"
         )
+
+    allowed_secondary = _SECONDARY_KEYS_BY_ASSERTION[leading_key]
+    unknown_secondary = set(raw) - {leading_key} - allowed_secondary
+    if unknown_secondary:
+        offending = sorted(unknown_secondary)[0]
+        raise ValueError(
+            f"{task_id}: an end_state assertion for {leading_key!r} has unknown key "
+            f"{offending!r} (expected a subset of {sorted(allowed_secondary)}): {raw!r}"
+        )
+
+    if "tags_include" in raw:
+        tags_include = raw["tags_include"]
+        if not isinstance(tags_include, list) or not all(
+            isinstance(item, str) for item in tags_include
+        ):
+            raise ValueError(
+                f"{task_id}: an end_state assertion's 'tags_include' must be a list of str, "
+                f"got {tags_include!r}: {raw!r}"
+            )
+
     return dict(raw)
 
 
@@ -369,7 +413,10 @@ def evaluate_end_state(
         if "content_title_exists" in assertion:
             title = str(assertion["content_title_exists"])
             content = session.execute(
-                select(Content).where(Content.title == title).limit(1)
+                active_select(Content)
+                .where(Content.title == title)
+                .order_by(Content.created_at, Content.id)
+                .limit(1)
             ).scalar_one_or_none()
             if content is None:
                 failures.append(f"content_title_exists: no content titled {title!r} exists")
@@ -377,15 +424,13 @@ def evaluate_end_state(
             failures.extend(_check_status_and_tags(session, content, assertion))
 
         elif "content_title_contains" in assertion:
-            fragment = str(assertion["content_title_contains"]).lower()
-            content = next(
-                (
-                    row
-                    for row in session.scalars(select(Content)).all()
-                    if fragment in row.title.lower()
-                ),
-                None,
-            )
+            fragment = str(assertion["content_title_contains"])
+            content = session.execute(
+                active_select(Content)
+                .where(Content.title.ilike(f"%{fragment}%"))
+                .order_by(Content.created_at, Content.id)
+                .limit(1)
+            ).scalar_one_or_none()
             if content is None:
                 failures.append(
                     f"content_title_contains: no content titled like {fragment!r} exists"
@@ -395,7 +440,7 @@ def evaluate_end_state(
 
         elif "content_count" in assertion:
             expected_count = assertion["content_count"]
-            stmt = select(Content)
+            stmt = active_select(Content)
             status = assertion.get("status")
             if status is not None:
                 stmt = stmt.where(Content.status == status)
@@ -414,6 +459,9 @@ def evaluate_end_state(
                 )
 
         elif "no_new_content" in assertion:
+            # Deliberately UNfiltered (fix round 1, I1): a task that creates then soft-deletes a
+            # row DID create content, and the authored test's own baseline capture is unfiltered
+            # too — the two must stay unfiltered together.
             current_ids = set(session.scalars(select(Content.id)).all())
             new_ids = current_ids - baseline_content_ids
             if new_ids:
@@ -428,23 +476,6 @@ def evaluate_end_state(
 # ---------------------------------------------------------------------------
 # Driving the real agent loop.
 # ---------------------------------------------------------------------------
-
-
-def _ensure_actor_exists(session: Session, actor_id: uuid.UUID) -> None:
-    """Ensure a `User` row exists for `actor_id`, inserting a minimal placeholder if not.
-
-    Several write tools (`create_draft`/`edit_content`/...) stamp `actor_id` into `Content.
-    author_id`/`updated_by`, both FKs to `users.id` (nullable, but NOT validated against a
-    dangling id) — a caller-chosen `actor_id` with no matching row would otherwise fail the
-    task's first write with an `IntegrityError`, not a task-scoring outcome. A no-op for the
-    CLI's own real-run path, where `actor_id` is always picked from an existing `users` row
-    (`_run_from_cli`, below); only matters for a caller (e.g. a test) that hands in a synthetic
-    id, mirroring `tests/test_agent_loop.py`'s own `actor_id` fixture seeding a real `User` row
-    for the identical reason.
-    """
-    if session.get(User, actor_id) is None:
-        session.add(User(id=actor_id, email=f"agent-suite-{actor_id}@example.invalid"))
-        session.flush()
 
 
 def _fresh_llm_for_task(llm: AgentLLM) -> AgentLLM:
@@ -491,13 +522,22 @@ def run_agent_task(
 
     Returns:
         One `AgentTaskResult`, `EvalRowLike`-shaped.
+
+    Raises:
+        ValueError: fix round 1, M1 — `actor_id` has no matching `users` row. Several write
+            tools (`create_draft`/`edit_content`/...) stamp `actor_id` into `Content.author_id`/
+            `updated_by` (both FKs to `users.id`); a dangling id used to be silently papered over
+            by inserting a placeholder `User` row from library code — this now fails loudly
+            instead, the same principle the CLI's own `--database-url` path already applies.
     """
-    _ensure_actor_exists(session, actor_id)
+    if session.get(User, actor_id) is None:
+        raise ValueError(f"actor_id {actor_id} has no users row")
     baseline_content_ids = set(session.scalars(select(Content.id)).all())
 
     messages: list[dict[str, Any]] = [{"role": "user", "content": task.prompt}]
     trajectory: list[ToolCallRecord] = []
     answer_parts: list[str] = []
+    error_message: str | None = None
 
     task_llm = _fresh_llm_for_task(llm)
     events = run_agent(
@@ -509,7 +549,10 @@ def run_agent_task(
         elif isinstance(event, Token):
             answer_parts.append(event.text)
         elif isinstance(event, Error):
-            answer_parts.append(event.message)
+            # Fix round 1, M4: `answer_text` accumulates ONLY `Token` text (task file). The
+            # error still needs to be disclosed somewhere, so it goes into `metrics["error"]`
+            # instead of being appended here.
+            error_message = event.message
         elif isinstance(event, Done):
             pass
 
@@ -540,6 +583,7 @@ def run_agent_task(
         ],
         "end_state_failures": end_state_failures,
         "forbidden_tools_called": forbidden_tools_called,
+        "error": error_message,
     }
 
     return AgentTaskResult(
@@ -597,22 +641,6 @@ def run_agent_suite(
 # ---------------------------------------------------------------------------
 # CLI.
 # ---------------------------------------------------------------------------
-
-
-def _git_sha() -> str:
-    """The current commit's full SHA, or `""` when it can't be determined.
-
-    Mirrors `app.eval.groundedness._git_sha`'s exact never-raises contract — duplicated rather
-    than imported since that helper is private to its own module and this task's Files list does
-    not modify `groundedness.py`.
-    """
-    try:
-        result = subprocess.run(
-            ["git", "rev-parse", "HEAD"], capture_output=True, text=True, timeout=5, check=False
-        )
-    except (OSError, subprocess.SubprocessError):
-        return ""
-    return result.stdout.strip() if result.returncode == 0 else ""
 
 
 def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
@@ -726,7 +754,7 @@ def _run_from_cli(argv: list[str] | None = None) -> None:
             print(f"recorded eval_runs id={run.id}")
     finally:
         session.close()
-    engine.dispose()
+        engine.dispose()
 
 
 if __name__ == "__main__":

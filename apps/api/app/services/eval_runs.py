@@ -1,0 +1,323 @@
+"""Eval-run persistence: `corpus_fingerprint`, `record_run`, `latest_runs`, `compare_runs`
+(phase-9 DESIGN §B1) — `app.eval.groundedness`'s CLI calls these to make every harness run data,
+and `compare_runs` is the evidence behind "validated before acceptance".
+
+Plain, session-first functions (CONVENTIONS.md §3) — no retrieval, no LLM calls, no YAML loading:
+those live in `app.eval`/`app.rag`, which `app.services` may never import (CONVENTIONS.md §2
+layering: "app.services imports only app.models and app.config"; `apps/api/pyproject.toml`'s
+import-linter contract for this package now names `app.eval` in its `forbidden_modules` — the
+layering is a gate here, not a habit). `record_run`/`compare_runs` therefore accept
+`EvalReportLike`/`EvalRowLike`, structural Protocols the real `app.eval.groundedness.EvalReport`/
+`EvalRow` (frozen dataclasses) satisfy by shape, with no inheritance relationship — the same seam
+pattern `app.services.chat.RetrievedChunkLike`/`RetrievalResultLike` use for `app.rag`.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import uuid
+from collections.abc import Sequence
+from dataclasses import dataclass
+from datetime import datetime
+from typing import Protocol
+
+from sqlalchemy import func, select
+from sqlalchemy.orm import Session
+
+from app.models import Chunk, Content, EvalResult, EvalRun
+from app.services.errors import NotFoundError
+from app.services.queries import active_select
+
+
+class EvalRowLike(Protocol):
+    """The subset of `app.eval.groundedness.EvalRow`'s shape this module persists.
+
+    Structural, read-only `@property` members — the same seam pattern `app.services.chat.
+    RetrievedChunkLike` uses, and for the same reason: the import-linter contract "app.services
+    imports only app.models and app.config" forbids importing `app.eval` from here, and `EvalRow`
+    is a frozen dataclass that satisfies this by shape.
+    """
+
+    @property
+    def question(self) -> str: ...
+    @property
+    def question_class(self) -> str | None: ...
+    @property
+    def persona(self) -> str | None: ...
+    @property
+    def answerable(self) -> bool: ...
+    @property
+    def expected_slugs(self) -> Sequence[str]: ...
+    @property
+    def cited_slugs(self) -> Sequence[str]: ...
+    @property
+    def slugs_hit(self) -> bool: ...
+    @property
+    def fully_supported(self) -> bool | None: ...
+    @property
+    def refused(self) -> bool: ...
+    @property
+    def verdict(self) -> str: ...
+    @property
+    def top_similarity(self) -> float | None: ...
+    @property
+    def answer_text(self) -> str: ...
+    @property
+    def metrics(self) -> dict[str, object] | None: ...
+
+
+class EvalReportLike(Protocol):
+    """The subset of `app.eval.groundedness.EvalReport`'s shape `record_run` persists."""
+
+    @property
+    def rows(self) -> Sequence[EvalRowLike]: ...
+    @property
+    def pct_fully_supported(self) -> float: ...
+    @property
+    def refusal_correct(self) -> int: ...
+    @property
+    def refusal_total(self) -> int: ...
+
+
+@dataclass(frozen=True)
+class CorpusFingerprint:
+    """Identifies the corpus a run measured (DESIGN §B1/§D: `Content.updated_at` is stamped on
+    every write, so no corpus-version column is needed)."""
+
+    content_count: int
+    chunk_count: int
+    max_updated_at: datetime | None
+    digest: str
+
+
+@dataclass(frozen=True)
+class RunDiff:
+    """`compare_runs`' answer, joined on question text."""
+
+    before_id: uuid.UUID
+    after_id: uuid.UUID
+    regressions: list[str]  # questions that went PASS -> FAIL
+    improvements: list[str]  # FAIL -> PASS
+    unchanged: list[str]  # same verdict in both
+    added: list[str]  # present only in `after`
+    removed: list[str]  # present only in `before`
+    pct_delta: float  # after.pct_fully_supported - before.pct_fully_supported
+
+
+def corpus_fingerprint(session: Session) -> CorpusFingerprint:
+    """Fingerprint the corpus retrieval can currently see (PRD §4.1 active-row rule).
+
+    Counts only rows retrieval can see: published, non-deleted `Content` (`active_select` +
+    `status == "published"`) and the `Chunk` rows that belong to them. `digest` hashes
+    `(slug, updated_at)` pairs ordered by slug, so it changes exactly when a published row's
+    content or its `updated_at` stamp moves — the content-only half of "what did this run
+    measure", independent of the code version (`git_sha`, recorded separately by `record_run`).
+
+    Args:
+        session: the caller's `Session` (CONVENTIONS.md §3 session-first).
+
+    Returns:
+        A `CorpusFingerprint` describing the corpus as of right now.
+    """
+    published = session.scalars(
+        active_select(Content).where(Content.status == "published").order_by(Content.slug)
+    ).all()
+
+    content_count = len(published)
+    max_updated_at = max((row.updated_at for row in published), default=None)
+
+    if published:
+        content_ids = [row.id for row in published]
+        chunk_count = (
+            session.scalar(
+                select(func.count()).select_from(Chunk).where(Chunk.content_id.in_(content_ids))
+            )
+            or 0
+        )
+    else:
+        chunk_count = 0
+
+    digest_source = "\n".join(f"{row.slug}\t{row.updated_at.isoformat()}" for row in published)
+    digest = hashlib.sha256(digest_source.encode("utf-8")).hexdigest()[:16]
+
+    return CorpusFingerprint(
+        content_count=content_count,
+        chunk_count=chunk_count,
+        max_updated_at=max_updated_at,
+        digest=digest,
+    )
+
+
+def record_run(
+    session: Session,
+    report: EvalReportLike,
+    *,
+    label: str,
+    kind: str = "answer",
+    embedding_model: str,
+    chat_model: str,
+    judge_model: str,
+    similarity_threshold: float,
+    retrieval_k: int,
+    git_sha: str = "",
+) -> EvalRun:
+    """Persist one harness invocation: one `EvalRun` row plus one `EvalResult` per `report.rows`
+    entry (DESIGN §B1).
+
+    Computes its own `corpus_fingerprint` — callers never pass one in, so the fingerprint always
+    describes the corpus AT RECORD TIME. Flushes only; never commits (CONVENTIONS.md §3 — the
+    CLI, not this service function, owns the transaction boundary).
+
+    Args:
+        session: the caller's `Session`.
+        report: the run's outcome (real `EvalReport` or anything `EvalReportLike`-shaped).
+        label: the run family this invocation belongs to (e.g. `"baseline-2026-09"`).
+        kind: `"answer"` (default) or `"agent"` — which harness produced `report`.
+        embedding_model: the embedding model name the run used.
+        chat_model: the answering chat model name the run used.
+        judge_model: the judge model name the run used.
+        similarity_threshold: the retrieval similarity threshold the run used.
+        retrieval_k: the retrieval `k` the run used.
+        git_sha: the code version that produced `report`, or `""` when unknown.
+
+    Returns:
+        The newly created (and flushed) `EvalRun` row.
+    """
+    fingerprint = corpus_fingerprint(session)
+    run = EvalRun(
+        kind=kind,
+        label=label,
+        git_sha=git_sha,
+        embedding_model=embedding_model,
+        chat_model=chat_model,
+        judge_model=judge_model,
+        similarity_threshold=similarity_threshold,
+        retrieval_k=retrieval_k,
+        corpus_content_count=fingerprint.content_count,
+        corpus_chunk_count=fingerprint.chunk_count,
+        corpus_max_updated_at=fingerprint.max_updated_at,
+        corpus_digest=fingerprint.digest,
+        total_questions=len(report.rows),
+        pct_fully_supported=report.pct_fully_supported,
+        refusal_correct=report.refusal_correct,
+        refusal_total=report.refusal_total,
+    )
+    session.add(run)
+    session.flush()
+
+    for row in report.rows:
+        session.add(
+            EvalResult(
+                run_id=run.id,
+                question=row.question,
+                question_class=row.question_class,
+                persona=row.persona,
+                answerable=row.answerable,
+                expected_slugs=list(row.expected_slugs),
+                cited_slugs=list(row.cited_slugs),
+                slugs_hit=row.slugs_hit,
+                fully_supported=row.fully_supported,
+                refused=row.refused,
+                verdict=row.verdict,
+                top_similarity=row.top_similarity,
+                answer_text=row.answer_text,
+                # `EvalResult.metrics` is plain JSONB (no `MutableDict`) — always a freshly built
+                # dict, never an alias to the caller's own `row.metrics` object, so nothing later
+                # mutates this column's value in place (SQLAlchemy would never notice such a
+                # mutation without `MutableDict`).
+                metrics=dict(row.metrics) if row.metrics is not None else None,
+            )
+        )
+    session.flush()
+    return run
+
+
+def latest_runs(
+    session: Session, *, kind: str = "answer", label: str | None = None, limit: int = 10
+) -> list[EvalRun]:
+    """The `limit` most recent `EvalRun`s of `kind` (optionally filtered further by `label`).
+
+    Orders `created_at DESC, id DESC` — `created_at` is Postgres' transaction timestamp, so
+    several runs written in one transaction (e.g. `--runs 3`) tie on it; the `id` tiebreaker keeps
+    ordering deterministic instead of depending on incidental row-fetch order.
+
+    Args:
+        session: the caller's `Session`.
+        kind: `"answer"` (default) or `"agent"`.
+        label: when given, only runs with this exact label.
+        limit: caps the number of runs returned.
+
+    Returns:
+        `EvalRun`s newest-first, at most `limit` of them.
+    """
+    stmt = select(EvalRun).where(EvalRun.kind == kind)
+    if label is not None:
+        stmt = stmt.where(EvalRun.label == label)
+    stmt = stmt.order_by(EvalRun.created_at.desc(), EvalRun.id.desc()).limit(limit)
+    return list(session.scalars(stmt).all())
+
+
+def compare_runs(session: Session, before_id: uuid.UUID, after_id: uuid.UUID) -> RunDiff:
+    """Diff two runs' `EvalResult` verdicts, joined on question text (DESIGN §B1 — the evidence
+    behind "validated before acceptance").
+
+    Every list in the returned `RunDiff` is sorted by question text so output is stable.
+
+    Args:
+        session: the caller's `Session`.
+        before_id: the `EvalRun.id` to diff from.
+        after_id: the `EvalRun.id` to diff to.
+
+    Returns:
+        A `RunDiff` classifying every question in either run's results as a regression,
+        improvement, unchanged, added, or removed.
+
+    Raises:
+        NotFoundError: `before_id` or `after_id` names no `EvalRun` row.
+    """
+    before = session.get(EvalRun, before_id)
+    if before is None:
+        raise NotFoundError(f"No eval run {before_id}.")
+    after = session.get(EvalRun, after_id)
+    if after is None:
+        raise NotFoundError(f"No eval run {after_id}.")
+
+    before_verdicts = {
+        result.question: result.verdict
+        for result in session.scalars(
+            select(EvalResult).where(EvalResult.run_id == before_id)
+        ).all()
+    }
+    after_verdicts = {
+        result.question: result.verdict
+        for result in session.scalars(select(EvalResult).where(EvalResult.run_id == after_id)).all()
+    }
+
+    before_questions = set(before_verdicts)
+    after_questions = set(after_verdicts)
+    common = before_questions & after_questions
+
+    regressions = sorted(
+        question
+        for question in common
+        if before_verdicts[question] == "PASS" and after_verdicts[question] == "FAIL"
+    )
+    improvements = sorted(
+        question
+        for question in common
+        if before_verdicts[question] == "FAIL" and after_verdicts[question] == "PASS"
+    )
+    unchanged = sorted(
+        question for question in common if before_verdicts[question] == after_verdicts[question]
+    )
+
+    return RunDiff(
+        before_id=before_id,
+        after_id=after_id,
+        regressions=regressions,
+        improvements=improvements,
+        unchanged=unchanged,
+        added=sorted(after_questions - before_questions),
+        removed=sorted(before_questions - after_questions),
+        pct_delta=after.pct_fully_supported - before.pct_fully_supported,
+    )

@@ -7,12 +7,12 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 
 import pytest
-from app.services.eval_runs import compare_runs, corpus_fingerprint, latest_runs, record_run
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.models import Chunk, Content, EvalResult
 from app.services.errors import NotFoundError
+from app.services.eval_runs import compare_runs, corpus_fingerprint, latest_runs, record_run
 
 
 @dataclass(frozen=True)

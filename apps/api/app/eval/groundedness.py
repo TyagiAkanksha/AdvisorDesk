@@ -29,7 +29,10 @@ Controller rulings this module builds to (see the task-02 report for the full ra
 
 from __future__ import annotations
 
+import argparse
 import re
+import subprocess
+import uuid
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -41,10 +44,12 @@ from sqlalchemy.orm import Session
 
 from app.config import Settings
 from app.db import make_engine, make_session_factory
+from app.models import EvalRun
 from app.rag.embeddings import Embedder, OpenAICompatibleEmbedder
 from app.rag.retrieval import retrieve
 from app.rag.synthesis import SYSTEM_PROMPT, ChatLLM, OpenAICompatibleChatLLM
 from app.seed_paths import seed_data_dir
+from app.services.eval_runs import compare_runs, latest_runs, record_run
 
 __all__ = [
     "EvalReport",
@@ -72,7 +77,11 @@ _SENTENCE_BOUNDARY_RE = re.compile(r"(?<=[.!?])\s+")
 
 @dataclass(frozen=True)
 class EvalRow:
-    """One eval question's outcome (task-02 brief Interfaces)."""
+    """One eval question's outcome (task-02 brief Interfaces; `top_similarity`/`answer_text`/
+    `question_class`/`persona`/`metrics` added phase-9 task-03 so `app.services.eval_runs.
+    record_run` has a full row to persist). The three defaulted fields stay `None` here — tasks
+    04/05/06 fill them in.
+    """
 
     question: str
     answerable: bool
@@ -82,6 +91,11 @@ class EvalRow:
     fully_supported: bool | None
     refused: bool
     verdict: str
+    top_similarity: float | None
+    answer_text: str
+    question_class: str | None = None
+    persona: str | None = None
+    metrics: dict[str, object] | None = None
 
 
 @dataclass(frozen=True)
@@ -291,6 +305,8 @@ def _evaluate_question(
         fully_supported=fully_supported,
         refused=refused,
         verdict=verdict,
+        top_similarity=retrieval.top_similarity,
+        answer_text=answer_text,
     )
 
 
@@ -380,17 +396,102 @@ def _print_table(rows: Sequence[EvalRow]) -> None:
         )
 
 
+def _git_sha() -> str:
+    """The current commit's full SHA, or `""` when it can't be determined (phase-9 task-03).
+
+    Never raises: `check=False` means a non-zero exit (e.g. a container/tarball checkout with no
+    `.git`) is reported via `returncode`, not an exception — the caller gets `""` back instead.
+    """
+    result = subprocess.run(
+        ["git", "rev-parse", "HEAD"], capture_output=True, text=True, timeout=5, check=False
+    )
+    return result.stdout.strip() if result.returncode == 0 else ""
+
+
+def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
+    """Parse the harness CLI's flags (phase-9 task-03 Interfaces).
+
+    `--runs` doesn't use `choices=range(1, 11)` — it just validates `>= 1` itself via
+    `parser.error` (an explicit, un-numerically-capped floor beats an arbitrary ceiling).
+    """
+    parser = argparse.ArgumentParser(
+        description="Run seed/eval_questions.yaml through the real retrieval + synthesis path."
+    )
+    parser.add_argument("--label", default="adhoc", help="Run family label (default: adhoc).")
+    parser.add_argument(
+        "--questions",
+        type=Path,
+        default=_DEFAULT_QUESTIONS_PATH,
+        help="Path to a PRD §8.1-shaped questions YAML file.",
+    )
+    parser.add_argument(
+        "--no-persist", action="store_true", help="Don't write EvalRun/EvalResult rows."
+    )
+    parser.add_argument(
+        "--compare-to",
+        default=None,
+        help="A run-id UUID, or the literal 'latest', to diff the last run against.",
+    )
+    parser.add_argument(
+        "--runs", type=int, default=1, help="How many times to run the eval (default: 1)."
+    )
+    args = parser.parse_args(argv)
+    if args.runs < 1:
+        parser.error("--runs must be >= 1")
+    return args
+
+
+def _print_report(report: EvalReport) -> None:
+    """Print one run's per-question table plus the phase-7 summary line (byte-identical to the
+    phase-7 stdout — `docs/plans/phase-7-evaluation/verification-record.md` §1 and task-09 both
+    depend on this exact line).
+    """
+    _print_table(report.rows)
+    print(
+        f"groundedness: {report.pct_fully_supported:.1f}% fully supported; "
+        f"refusals {report.refusal_correct}/{report.refusal_total} correct"
+    )
+
+
+def _print_stability(reports: Sequence[EvalReport], *, label: str) -> None:
+    """Print a `--runs N` (`N > 1`) family's mean/spread block for `pct_fully_supported` and
+    `refusal_correct` (phase-9 task-03 Interfaces).
+
+    `mean` is the arithmetic mean formatted `.1f` for both rows; `spread` is `max - min`,
+    formatted `.1f` for the percentage row and left as a plain `int` for the count row.
+    """
+    print(f"stability over {len(reports)} runs (label={label}):")
+
+    pct_values = [report.pct_fully_supported for report in reports]
+    pct_mean = sum(pct_values) / len(pct_values)
+    pct_spread = max(pct_values) - min(pct_values)
+    print(
+        f"  {'pct_fully_supported':<21}mean {pct_mean:.1f}  spread {pct_spread:.1f}  {pct_values}"
+    )
+
+    refusal_values = [report.refusal_correct for report in reports]
+    refusal_mean = sum(refusal_values) / len(refusal_values)
+    refusal_spread = max(refusal_values) - min(refusal_values)
+    print(
+        f"  {'refusal_correct':<21}mean {refusal_mean:.1f}  spread {refusal_spread}  "
+        f"{refusal_values}"
+    )
+
+
 def _run_from_cli() -> None:
-    """`python -m app.eval.groundedness`: wire the REAL embedder/chat LLM/judge from `Settings`
-    and run the real recorded eval against the seeded local-db stack (task-02 brief Step 5 —
-    deferred to task-03's separate real run, not exercised by unit tests, ruling H: DO NOT run a
-    full scored eval against the DB from an automated test/import — the local corpus is not
-    seeded yet at the time this module is authored).
+    """`python -m app.eval.groundedness`: wire the REAL embedder/chat LLM/judge from `Settings`,
+    run `args.runs` real recorded eval(s) against the seeded local-db stack, persist by default,
+    and optionally print a stability block and a `compare_runs` diff (phase-9 task-03).
 
     Builds its own engine/session (mirrors `app/seed.py::_run_from_cli`'s same self-contained CLI
     wiring pattern — `app.eval` is a standalone script, not a FastAPI route, so it has no
     `app.state` to read `app.routes.deps.get_session`/`get_embedder`/`get_chat_llm` from).
+
+    `--compare-to latest` resolves to the most recent `kind="answer"` run EXCLUDING the run(s)
+    this invocation is about to write — resolved once, up front, before any `record_run` call in
+    this invocation can appear in `latest_runs`' own result.
     """
+    args = _parse_args()
     settings = Settings()
     engine = make_engine(settings.database_url.get_secret_value())
     session_factory = make_session_factory(engine)
@@ -400,22 +501,63 @@ def _run_from_cli() -> None:
 
     session = session_factory()
     try:
-        report = run_eval(
-            session,
-            embedder=embedder,
-            chat_llm=chat_llm,
-            judge=judge,
-            questions_path=_DEFAULT_QUESTIONS_PATH,
-        )
+        # Resolved BEFORE any run in this invocation is written, so `latest` never sees a run
+        # this same invocation just persisted. An explicit, unknown compare-to id is left to
+        # `compare_runs`'s own `NotFoundError` below rather than silently skipped here.
+        before_id: uuid.UUID | None = None
+        if args.compare_to == "latest":
+            previous = latest_runs(session, kind="answer", limit=1)
+            before_id = previous[0].id if previous else None
+        elif args.compare_to is not None:
+            before_id = uuid.UUID(args.compare_to)
+
+        reports: list[EvalReport] = []
+        last_run: EvalRun | None = None
+        for _ in range(args.runs):
+            report = run_eval(
+                session,
+                embedder=embedder,
+                chat_llm=chat_llm,
+                judge=judge,
+                questions_path=args.questions,
+            )
+            _print_report(report)
+            reports.append(report)
+            if not args.no_persist:
+                last_run = record_run(
+                    session,
+                    report,
+                    label=args.label,
+                    embedding_model=settings.embedding_model,
+                    chat_model=settings.chat_model,
+                    judge_model=settings.chat_model,
+                    similarity_threshold=settings.similarity_threshold,
+                    retrieval_k=6,
+                    git_sha=_git_sha(),
+                )
+
+        if not args.no_persist:
+            session.commit()
+
+        if args.runs > 1:
+            _print_stability(reports, label=args.label)
+
+        if before_id is not None and last_run is not None:
+            diff = compare_runs(session, before_id, last_run.id)
+            before_run = session.get(EvalRun, before_id)
+            assert before_run is not None  # compare_runs already proved this id exists
+            print(
+                f"compare {diff.before_id} -> {diff.after_id}: "
+                f"pct {before_run.pct_fully_supported:.1f} -> "
+                f"{last_run.pct_fully_supported:.1f} ({diff.pct_delta:+.1f}); "
+                f"regressions {len(diff.regressions)}; improvements {len(diff.improvements)}; "
+                f"added {len(diff.added)}; removed {len(diff.removed)}"
+            )
+            for question in diff.regressions:
+                print(f"  regression: {question}")
     finally:
         session.close()
     engine.dispose()
-
-    _print_table(report.rows)
-    print(
-        f"groundedness: {report.pct_fully_supported:.1f}% fully supported; "
-        f"refusals {report.refusal_correct}/{report.refusal_total} correct"
-    )
 
 
 if __name__ == "__main__":

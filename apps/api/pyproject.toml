@@ -89,7 +89,12 @@ forbidden_modules = [
     "app.main",
     "app.db",
     "app.factory",
+    "app.eval",
 ]
+# Phase-9 task-03 (controller ruling): the INDEX already claimed this direction was forbidden, but
+# `app.eval` was missing from this list until now — `app.services.eval_runs` accepts
+# `EvalRowLike`/`EvalReportLike` Protocols (structural typing, no `app.eval` import) precisely so
+# this newly-enforced entry stays green; the layering is now a gate, not just a habit.
 
 [[tool.importlinter.contracts]]
 name = "app.auth imports only app.services, app.models, and app.config"

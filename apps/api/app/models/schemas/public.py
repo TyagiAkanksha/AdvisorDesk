@@ -9,6 +9,7 @@ to leave the server (task-03 brief Interfaces block).
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel
 
@@ -34,3 +35,14 @@ class PublicContentDetail(BaseModel):
     body_md: str
     tags: list[str]
     published_at: datetime
+
+
+class ChatFeedbackRequest(BaseModel):
+    """`POST /public/chat/{message_id}/feedback`'s body (phase-9 DESIGN §A, D2).
+
+    `Literal[-1, 1]` is the whole validation: `0` ("neutral") is deliberately NOT a legal value —
+    a row with no feedback stays NULL, so "never asked" and "asked, felt neutral" are never
+    conflated. Anything else is a 422 before the service or the DB CHECK is ever reached.
+    """
+
+    value: Literal[-1, 1]

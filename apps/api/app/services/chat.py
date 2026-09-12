@@ -25,6 +25,7 @@ from sqlalchemy import and_, func, select
 from sqlalchemy.orm import Session, aliased
 
 from app.models import ChatMessage, ChatSession
+from app.services.errors import NotFoundError
 
 
 class RetrievedChunkLike(Protocol):
@@ -166,6 +167,30 @@ def record_assistant_message(
         latency_ms=latency_ms,
     )
     session.add(message)
+    session.flush()
+    return message
+
+
+def set_message_feedback(session: Session, message_id: uuid.UUID, value: int) -> ChatMessage:
+    """Record 👍/👎 on one assistant turn (phase-9 DESIGN §A).
+
+    Args:
+        session: the caller's `Session` (CONVENTIONS.md §3 session-first; flush only).
+        message_id: the `ChatMessage.id` the `done` SSE event handed the client.
+        value: `-1` or `1` — already validated on the wire by `ChatFeedbackRequest`.
+
+    Returns:
+        The updated `ChatMessage` row.
+
+    Raises:
+        NotFoundError: no such row, or the row is not an assistant turn — a user message has no
+            answer to rate, and the two cases are deliberately indistinguishable to the caller
+            (same §9 envelope), since the client never legitimately holds a user-row id.
+    """
+    message = session.get(ChatMessage, message_id)
+    if message is None or message.role != "assistant":
+        raise NotFoundError(f"No assistant message {message_id}.")
+    message.feedback = value
     session.flush()
     return message
 

@@ -44,7 +44,7 @@ from collections.abc import Iterator
 from datetime import datetime
 from typing import cast
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, Request, Response
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
@@ -52,7 +52,11 @@ from app.config import Settings
 from app.models import ChatSession, Content
 from app.models.schemas.chat import ChatRequest
 from app.models.schemas.common import ErrorEnvelope
-from app.models.schemas.public import PublicContentDetail, PublicContentSummary
+from app.models.schemas.public import (
+    ChatFeedbackRequest,
+    PublicContentDetail,
+    PublicContentSummary,
+)
 from app.rag.embeddings import Embedder
 from app.rag.retrieval import retrieve
 from app.rag.synthesis import SYSTEM_PROMPT, ChatLLM, dedupe_citations
@@ -68,7 +72,12 @@ from app.routes.metrics import LatencyTracker, observe_and_maybe_log_chat_latenc
 from app.routes.ratelimit import RateLimiter
 from app.routes.sse import sse_event, sse_response
 from app.services import content as content_service
-from app.services.chat import get_or_create_session, record_assistant_message, record_user_message
+from app.services.chat import (
+    get_or_create_session,
+    record_assistant_message,
+    record_user_message,
+    set_message_feedback,
+)
 from app.services.errors import AppError
 from app.services.tags import tags_for_contents
 
@@ -96,6 +105,10 @@ router = APIRouter(responses={422: {"model": ErrorEnvelope}})
 # Only the by-slug route can raise `NotFoundError` — merged onto that route
 # alone via FastAPI's router-then-route `responses` merge.
 _DETAIL_RESPONSES: dict[int | str, dict[str, object]] = {404: {"model": ErrorEnvelope}}
+
+# Same shape as `_DETAIL_RESPONSES`, declared separately for `public_chat_feedback` (phase-9
+# task-02) — its own `NotFoundError` case (an unknown or `role='user'` `message_id`).
+_FEEDBACK_RESPONSES: dict[int | str, dict[str, object]] = {404: {"model": ErrorEnvelope}}
 
 
 def _to_summary(content: Content, tags: list[str]) -> PublicContentSummary:
@@ -426,3 +439,35 @@ def public_chat(
         _generate_chat_stream(session, chat_llm, embedder, settings, body, started_at=_start),
         on_first_event=_on_first_event,
     )
+
+
+@router.post(
+    "/public/chat/{message_id}/feedback",
+    operation_id="public_chat_feedback",
+    status_code=204,
+    responses=_FEEDBACK_RESPONSES,
+)
+def public_chat_feedback(
+    message_id: uuid.UUID,
+    body: ChatFeedbackRequest,
+    session: Session = Depends(get_session),
+) -> Response:
+    """PRD §5.3 surface, phase-9 DESIGN §A: record 👍/👎 on one assistant answer.
+
+    Unauthenticated like every other route in this module; the `message_id` from the `done` SSE
+    event is the only capability required. Not rate-limited — see the ruling below.
+
+    Ruling — rate limiting (decide-and-justify, per the task brief): NOT rate-limited.
+    `rate_limiter.check_message` is the wrong instrument: it charges the per-minute *chat* bucket
+    (`RATE_LIMIT_PER_MIN=10`) and a per-day *session* bucket, so ten thumb clicks would deny the
+    user's own next question — a self-inflicted denial of service on the demo's most-clicked
+    control. The endpoint is also cheap and un-enumerable: one indexed PK lookup plus a
+    one-column UPDATE, addressed by a server-minted UUIDv4 the caller must already possess,
+    writing a value constrained to ±1 by both Pydantic and the DB CHECK, and creating no rows.
+    The blast radius of abuse is "someone flips their own answer's rating repeatedly", which the
+    last-write-wins semantics already absorb. If replay traffic (task 18) or prod logs ever show
+    abuse, the follow-up is a *separate* cheap per-IP counter on `RateLimiter`, never sharing the
+    chat buckets — recorded as a controller-visible decision, not deferred silently.
+    """
+    set_message_feedback(session, message_id, body.value)
+    return Response(status_code=204)

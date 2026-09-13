@@ -22,14 +22,21 @@ services:
       MCP_HTTP_ENABLED: "true"
       OAUTH_ISSUER_URL: https://api.advisordesk.tyagiakanksha.com
       # LLM provider — switched to OpenAI 2026-09-06 (NVIDIA NIM embedding + chat
-      # models both reached end-of-life Aug 2026). text-embedding-3-small@1024 dims
-      # is a drop-in for the existing vector(1024) schema; gpt-4o-mini handles chat
-      # + agent tool-calling. Boot guard (app/main.py) validates OPENAI_API_KEY.
+      # models both reached end-of-life Aug 2026). Boot guard (app/main.py) validates
+      # OPENAI_API_KEY.
+      #
+      # p9 fix wave A1 (final-review C1): CHAT_MODEL/JUDGE_MODEL/EMBEDDING_MODEL are
+      # deliberately NOT pinned here. Compose's `environment:` takes precedence over
+      # `env_file: /opt/advisordesk/.env` (line 14-15 above), so a value hard-coded in
+      # this block would silently override both the box's .env AND the code default
+      # (`Settings.chat_model`/`judge_model`/`embedding_model`) — which is exactly how
+      # this box kept answering with a stale `gpt-4o-mini` after the code default moved
+      # to `gpt-5.4-mini`. EMBEDDING_DIMENSIONS stays pinned (`vector(1024)` is a schema
+      # fact, not a model choice — a model swap that changes dimensionality needs a
+      # migration regardless of where the model name itself is set).
       LLM_PROVIDER: openai
       LLM_BASE_URL: https://api.openai.com/v1
-      EMBEDDING_MODEL: text-embedding-3-small
       EMBEDDING_DIMENSIONS: "1024"
-      CHAT_MODEL: gpt-4o-mini
       SIMILARITY_THRESHOLD: "0.5"
       RATE_LIMIT_PER_MIN: "10"
       RATE_LIMIT_PER_DAY: "50"

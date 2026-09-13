@@ -404,3 +404,11 @@ The deployed steps for phase 9's evaluated/self-improving loop — publish the 1
 via MCP, verify the published count, run the traffic replay, and read `report_weak_queries` back
 — are an owner-gated checklist kept with the phase plan, not duplicated here:
 **see `docs/plans/phase-9-eval-data-loop/rehearsal.md` §4.**
+
+**Model config, since this fix wave (p9 fix-wave A1):** `docker-compose.yml`'s `environment:`
+block no longer pins `CHAT_MODEL`/`JUDGE_MODEL`/`EMBEDDING_MODEL` — Compose gives `environment:`
+precedence over `env_file:`, so a value hard-coded there would silently override
+`/opt/advisordesk/.env` and the code default alike. After this merge, the box's `.env` needs **no**
+`CHAT_MODEL` line for the code default (`gpt-5.4-mini`) to take effect — remove one if present so
+it cannot shadow the default. `JUDGE_MODEL` is not needed on the box (the judge only runs locally,
+never on prod).

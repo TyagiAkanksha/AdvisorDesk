@@ -176,8 +176,8 @@ def _all_seed_records() -> list[dict[str, Any]]:
 
 # Phase-9 wave 1 (DESIGN §C2) grows the phase-4 corpus of 21 files by four per batch. Exact
 # counts, not bands: a content wave that lands three of its four files must fail loudly.
-_EXPECTED_SEED_FILE_COUNT = 25
-_EXPECTED_PUBLISHED_COUNT = 21
+_EXPECTED_SEED_FILE_COUNT = 29
+_EXPECTED_PUBLISHED_COUNT = 25
 _EXPECTED_DRAFT_COUNT = 4
 
 # Tag vocabulary = PRD §8's six + the wave-1 additions (INDEX Global Constraints: the vocabulary is
@@ -247,6 +247,19 @@ def test_seed_corpus_each_of_the_six_tags_is_used_at_least_twice() -> None:
                 counts[tag] += 1
     under_used = {tag: n for tag, n in counts.items() if n < 2}
     assert not under_used, f"tags used fewer than 2 times across the corpus: {under_used}"
+
+
+def test_seed_corpus_each_wave_1_tag_is_used_at_least_twice() -> None:
+    """The PRD-six pin above does not cover the wave-1 additions (INDEX Global Constraints). A tag
+    used once is a typo risk and a useless filter facet, so each wave-1 tag earns its place the
+    same way: at least two articles."""
+    counts: dict[str, int] = dict.fromkeys(_WAVE1_TAGS, 0)
+    for record in _all_seed_records():
+        for tag in record["frontmatter"].get("tags") or []:
+            if tag in counts:
+                counts[tag] += 1
+    under_used = {tag: n for tag, n in counts.items() if n < 2}
+    assert not under_used, f"wave-1 tags used fewer than 2 times: {under_used}"
 
 
 def test_seed_corpus_every_body_ends_with_the_verbatim_disclaimer_footer_line() -> None:
@@ -557,6 +570,22 @@ _WAVE1_ARTICLES: dict[str, tuple[str, frozenset[str]]] = {
         "How We Work and What We Charge",
         frozenset({"our-firm"}),
     ),
+    "isos-and-nsos-how-each-one-is-taxed": (
+        "ISOs and NSOs: How Each One Is Taxed",
+        frozenset({"equity-compensation", "tax-planning"}),
+    ),
+    "amt-after-an-iso-exercise-and-the-credit-that-follows": (
+        "AMT After an ISO Exercise, and the Credit That Follows",
+        frozenset({"equity-compensation", "tax-planning"}),
+    ),
+    "the-83-b-election-on-restricted-stock": (
+        "The 83(b) Election on Restricted Stock",
+        frozenset({"equity-compensation", "tax-planning"}),
+    ),
+    "onboarding-with-us-and-what-to-bring": (
+        "Onboarding With Us and What to Bring",
+        frozenset({"our-firm"}),
+    ),
 }
 
 _KEY_NUMBERS_HEADING = "Key numbers (2026)"
@@ -690,14 +719,14 @@ def test_wave_1_expected_chunks_refs_name_real_headings_in_their_file() -> None:
 # (both by the loader's default rule — those rows carry no explicit `class`). Batch A adds
 # 6 answerable + 2 multi_source + 1 near_miss + 1 threshold + 1 stale_number.
 _EXPECTED_CLASS_COUNTS = {
-    "answerable": 23,
-    "multi_source": 2,
-    "near_miss": 1,
+    "answerable": 29,
+    "multi_source": 4,
+    "near_miss": 2,
     "off_domain": 4,
-    "threshold": 1,
-    "stale_number": 1,
+    "threshold": 2,
+    "stale_number": 2,
 }
-_EXPECTED_QUESTION_TOTAL = 32
+_EXPECTED_QUESTION_TOTAL = 43
 
 
 def _question_class(item: dict[str, Any]) -> str:

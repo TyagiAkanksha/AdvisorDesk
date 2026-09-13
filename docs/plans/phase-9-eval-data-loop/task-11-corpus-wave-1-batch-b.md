@@ -411,7 +411,7 @@ Then exactly these 11 rows, in this order, unedited:
   expected_chunks:
     - "onboarding-with-us-and-what-to-bring#what-documents-should-i-bring-to-our-first-meeting"
   reference_answer: >-
-    Bring your recent pay statements and W-2, last year's tax return, statements for your
+    Bring your recent pay statements and W-2, your last two tax returns, statements for your
     retirement and brokerage accounts, and your benefits summary. If you have equity, bring the
     grant agreements, the plan document and any Form 3921 or 3922 you received.
 
@@ -425,7 +425,7 @@ Then exactly these 11 rows, in this order, unedited:
     - "isos-and-nsos-how-each-one-is-taxed#what-do-i-owe-when-i-exercise-an-iso"
   reference_answer: >-
     The firm asks for your grant agreement, the plan document, your exercise history, any Form 3921
-    and your latest tax return. Those show the strike price, the exercise dates and the holding
+    and your last two tax returns. Those show the strike price, the exercise dates and the holding
     periods that decide whether an exercise is an AMT item or ordinary income.
 ```
 

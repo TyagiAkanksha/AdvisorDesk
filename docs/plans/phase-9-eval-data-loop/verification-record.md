@@ -425,6 +425,97 @@ parsimonious explanation is the answerer/agent model swap itself (`gpt-4o-mini` 
 the same swap noted in §8/task 05d), not a corpus or tool change — **this is a finding for the
 controller, not something this measurement-only task is positioned to fix.**
 
+### 9a. Task-07b: `any_of` credit fix + three-run stability (supersedes §9's single 80.0% number)
+
+`.superpowers/sdd/phase-9-eval-data-loop/reports/agent-suite-regression.md` diagnosed the §9 8/10
+as **noise, not a stable regression**: three identical-code probe runs scored 8/10, 10/10, 9/10, and
+one of the two recurring failures — `propose-a-fix-from-a-gap` — was partly **our own scoring bug**:
+its reference trajectory demanded a literal `create_draft`, but `propose_content_fix` (registered by
+task 16, after task 07 froze that reference) now creates the draft itself and is what the system
+prompt teaches the agent to call — so a run that correctly used `propose_content_fix` was scored
+`tool_recall = 0.5` regardless of model. Task-07b (commit `d5ac13c34273fa8a219d0a72dcd40d610dcb725c`,
+`fix(api): agent suite credits propose_content_fix; prompt completes a draft+publish request (p9
+t07b)`) fixed this: `ReferenceStep` gained an optional `any_of: list[str]` so a step matches either
+its primary `tool` or any listed alternative (`create_draft`'s step for this task now lists
+`any_of: [propose_content_fix]`; both tools take the same `title` argument, so the existing
+`args_contains: {title: "crypto"}` needed no relaxation). It also added one sentence to
+`SYSTEM_PROMPT` making explicit that a single message asking for both a draft and a publish is
+itself the explicit request to do both, targeting the `draft-publish-verify` stall.
+
+Per our own rule (task-07b Ruling 3 — a metric without a spread is not reported), the suite was run
+**three times, each against its own freshly built scratch DB** (`advisordesk_p9agentstab1`,
+`…stab2`, `…stab3` — drop/create, `CREATE EXTENSION vector`, `alembic upgrade head`, `python -m
+app.seed`, one `users` row inserted, then `python -m app.eval.agent_suite --label
+agent-stability-N`), never reusing a DB the suite had already mutated. All three runs recorded
+`chat_model='gpt-5.4-mini'` and the identical `git_sha` above — so all variance below is pure
+model/sampling variance, not a code or corpus difference:
+
+```
+run 1 (agent-stability-1, eval_runs id c8dc7644-2d44-4ca1-8a20-8275c9bf454a): 90.0% (9/10)
+run 2 (agent-stability-2, eval_runs id 351f225b-e558-4790-ac9b-1f87babf3383): 80.0% (8/10)
+run 3 (agent-stability-3, eval_runs id d4e5472b-8493-4c4c-8674-35872f67c3ba): 80.0% (8/10)
+
+pct_fully_supported  mean 83.3  spread 10.0  [90.0, 80.0, 80.0]
+```
+
+**mean 83.3% ± 10.0 (min 80.0%, max 90.0%)** over the three runs (raw scores 9/10, 8/10, 8/10).
+§9's single `agent-rebaseline-2026-09` measurement (80.0%) sits inside this same spread — it was one
+draw from this distribution, not a separately-real number.
+
+**Per-task pass pattern across the three runs:**
+
+```
+draft-and-tag                PASS  PASS  PASS   (1.00/1.00 every run)
+count-published-by-tag       PASS  PASS  PASS   (1.00/1.00 every run)
+publish-drafts-with-tag      PASS  PASS  PASS   (1.00/1.00 every run)
+archive-by-title             PASS  PASS  PASS   (1.00/1.00 every run)
+edit-a-body                  PASS  PASS  PASS   (recall 0.50 in run 1 only; end-state held anyway)
+add-and-remove-tags          PASS  PASS  PASS   (1.00/1.00 every run)
+report-weak-queries          PASS  PASS  PASS   (1.00/1.00 every run)
+propose-a-fix-from-a-gap     FAIL  FAIL  FAIL   (steps=2, recall=0.50 every run)
+draft-publish-verify         PASS  FAIL  FAIL   (run1 1.00/1.00; runs 2-3 steps=1, recall=0.50)
+ambiguous-cleanup-should-ask PASS  PASS  PASS   (1.00/1.00 every run)
+```
+
+**The `propose-a-fix-from-a-gap` recall=0.50 figures recorded before this commit (§9 and the
+regression report's probes) were partly an artefact of the stale reference trajectory** — a run
+that correctly called `propose_content_fix` was wrongly scored 0.5. That scoring bug is fixed and
+directly proven by unit test (`test_propose_content_fix_trajectory_scores_full_recall_against_
+create_draft_any_of`), but it is reported honestly, not oversold: in **all three** of these fresh
+runs the agent called only `report_weak_queries` then `report_content_gaps` (confirmed from each
+run's persisted `metrics.trajectory`) and stopped without calling `create_draft` or
+`propose_content_fix` at all — the same "asks/offers instead of acting" behavior the regression
+report already catalogued and deliberately left unfixed (task-07b Ruling 2's "rejected,
+deliberately" note: steering the agent to act on an unverified premise is a real behavior
+trade-off, not a bug this task closes). So this batch's 0.50s are **genuine** partial trajectories,
+not the stale-reference miscount — the fix's benefit here is proven by the unit tests, not by a live
+draw in this particular batch of three.
+
+**`draft-publish-verify` still stalled in 2 of these 3 runs, after Ruling 2's added sentence.** The
+model's own stated reasoning shows it engaging with the new sentence without complying with it —
+run 2: *"I drafted the article, but I did not publish it because your request included both
+drafting and publishing, and I need to complete the publish step explicitly after the draft is
+created."* Run 3: *"I created the draft article, but I did not publish it because your request
+included both drafting and publishing, and I need to complete the publish step separately only when
+explicitly instructed to do so in the same turn."* Both responses now name the "both drafting and
+publishing" premise the new sentence introduced — the model reads it — and then reach the opposite
+conclusion, requiring a second turn anyway. One added sentence changed the model's stated reasoning
+without reliably changing its tool-calling behavior.
+
+**`temperature=0` does not make `gpt-5.4-mini`'s tool calling deterministic — this is a finding, not
+a footnote.** Six measurements now exist across two adjacent code states, same corpus/temperature
+throughout: pre-this-fix, the regression report's three runs (its `agent-rebaseline-2026-09` probe
+*is* §9's own run, not a fourth one) scored 80/100/90 (percent); post-this-fix, this task's three
+runs scored 90/80/80 (percent). No prompt wording tried so far — neither §9's original prompt nor
+this task's one added sentence — has produced three identical runs. Any future single-run number
+for this suite should be read as one draw from a real spread, not a stable measurement, until proven
+otherwise by repeated runs.
+
+The three scratch databases (`advisordesk_p9agentstab1/2/3`) are left in place, local-only, not
+committed — same convention as the regression report's own probe databases. No DSN or API key
+appears above; database names and the one non-secret confirmation line each script printed are the
+only db-identifying values shown.
+
 ## 10. Judge scorecards
 
 Two scorecards, run back to back (only one judge-calling harness at a time, per

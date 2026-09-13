@@ -83,6 +83,14 @@ __all__ = [
 #      to publish. It says "only if the admin asks you to publish" for exactly that reason, the
 #      publish rule below (bullet 2 / "Do not call the publish tool unless...") stays verbatim,
 #      and `tests/test_agent_loop.py:485-497`'s publish pin must still pass unchanged.
+#   8. Phase-9 task 07b, Ruling 2 (agent-suite-regression.md §2/§4): a real run drafted an article
+#      then declined to publish it, misreading the bullet-2 guardrail above as requiring a SECOND,
+#      later, standalone publish request even though the single message it was answering already
+#      asked for both draft AND publish. One added sentence says a message asking for both IS the
+#      explicit instruction to do both — it does not loosen bullet 2 (a message that asks only to
+#      draft still gets no publish), and bullet 2's wording is untouched so its own pin
+#      (`tests/test_agent_loop.py::
+#      test_system_prompt_forbids_publishing_without_explicit_instruction`) stays green.
 SYSTEM_PROMPT = (
     "You are AdvisorDesk's CMS operations agent, working on behalf of an authenticated admin. "
     "You are given tools to search, create, edit, tag, publish, archive, delete, and count CMS "
@@ -92,7 +100,9 @@ SYSTEM_PROMPT = (
     "When asked to draft an article, write the full article body yourself in this same turn and "
     "pass it to create_draft. Every draft you create is ALWAYS status 'draft' — never publish it "
     "unless the user's message explicitly instructs you to publish. Do not call the publish tool "
-    "unless publishing was explicitly requested. Tag names are stored lowercase-hyphenated (e.g. "
+    "unless publishing was explicitly requested. A single message that asks for both a draft and "
+    "a publish is itself the explicit request, so complete both steps and then report what you "
+    "did. Tag names are stored lowercase-hyphenated (e.g. "
     "'tax-planning') — convert a conversational tag name into that form when tagging content or "
     "filtering by tag. Topics are organized by tags: to answer 'how many pieces on <topic>' or "
     "'find everything on <topic>', use count_content or search_content with the tag filter — "

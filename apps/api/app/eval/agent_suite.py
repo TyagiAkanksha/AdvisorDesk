@@ -30,7 +30,7 @@ from __future__ import annotations
 import argparse
 import uuid
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -94,10 +94,20 @@ _DEFAULT_TASKS_PATH: Path = seed_data_dir() / "agent_tasks.yaml"
 
 @dataclass(frozen=True)
 class ReferenceStep:
-    """One step of a task's reference tool trajectory."""
+    """One step of a task's reference tool trajectory.
+
+    `tool` is the primary tool name, matched exactly as before. `any_of` (phase-9 task-07b Ruling
+    1) is an optional list of alternate tool names that satisfy this step just as well — a step
+    matches an actual call whose tool is `tool` OR appears in `any_of`, with `args_contains`
+    enforced against that actual call either way. Added because `propose_content_fix` (task-16)
+    now creates a draft directly, so a step that used to demand a literal `create_draft` can name
+    it as an alternative instead of scoring a correct run's `tool_recall` as stale
+    (agent-suite-regression.md §4c).
+    """
 
     tool: str
     args_contains: dict[str, object]
+    any_of: list[str] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -156,22 +166,50 @@ class AgentSuiteReport:
 
 
 def _parse_reference_step(raw: object, *, task_id: str) -> ReferenceStep:
-    """Parse one `reference_trajectory` entry, raising `ValueError` naming `tool` if missing."""
-    if not isinstance(raw, dict) or "tool" not in raw:
+    """Parse one `reference_trajectory` entry.
+
+    Raises:
+        ValueError: naming `task_id`, when `raw` isn't a mapping, has neither `tool` nor `any_of`
+            (phase-9 task-07b Ruling 1 — a step must name at least one candidate tool), or either
+            key's value has the wrong shape.
+    """
+    if not isinstance(raw, dict):
+        raise ValueError(f"{task_id}: a reference_trajectory step must be a mapping: {raw!r}")
+
+    raw_tool = raw.get("tool")
+    raw_any_of = raw.get("any_of")
+    if raw_tool is None and raw_any_of is None:
         raise ValueError(
-            f"{task_id}: a reference_trajectory step is missing required 'tool': {raw!r}"
+            f"{task_id}: a reference_trajectory step is missing required 'tool' (or 'any_of'): "
+            f"{raw!r}"
         )
-    tool = raw["tool"]
-    if not isinstance(tool, str) or not tool.strip():
-        raise ValueError(
-            f"{task_id}: a reference_trajectory step's 'tool' must be a non-empty string: {raw!r}"
-        )
+
+    tool = ""
+    if raw_tool is not None:
+        if not isinstance(raw_tool, str) or not raw_tool.strip():
+            raise ValueError(
+                f"{task_id}: a reference_trajectory step's 'tool' must be a non-empty string: "
+                f"{raw!r}"
+            )
+        tool = raw_tool
+
+    any_of: list[str] = []
+    if raw_any_of is not None:
+        if not isinstance(raw_any_of, list) or not all(
+            isinstance(item, str) and item.strip() for item in raw_any_of
+        ):
+            raise ValueError(
+                f"{task_id}: a reference_trajectory step's 'any_of' must be a list of "
+                f"non-empty strings: {raw!r}"
+            )
+        any_of = list(raw_any_of)
+
     args_contains = raw.get("args_contains", {})
     if not isinstance(args_contains, dict):
         raise ValueError(
             f"{task_id}: a reference_trajectory step's 'args_contains' must be a mapping: {raw!r}"
         )
-    return ReferenceStep(tool=tool, args_contains=dict(args_contains))
+    return ReferenceStep(tool=tool, args_contains=dict(args_contains), any_of=any_of)
 
 
 def _validate_end_state_assertion(raw: object, *, task_id: str) -> dict[str, object]:
@@ -329,8 +367,9 @@ def score_trajectory(
     """Greedily match `reference` against `actual`, in order (task file "Matching" section).
 
     Walks `reference`, keeping a cursor into `actual`; a reference step matches the first actual
-    call at/after the cursor with the same `tool` whose arguments satisfy every `args_contains`
-    entry — on a match, the cursor advances past it.
+    call at/after the cursor whose tool is `step.tool` OR appears in `step.any_of` (phase-9
+    task-07b Ruling 1) and whose arguments satisfy every `args_contains` entry — on a match, the
+    cursor advances past it.
 
     Returns:
         `(tool_precision, tool_recall, looped)` — `tool_recall` is `matched / len(reference)`
@@ -341,9 +380,12 @@ def score_trajectory(
     cursor = 0
     matched = 0
     for step in reference:
+        allowed_tools = {step.tool, *step.any_of}
         for index in range(cursor, len(actual)):
             candidate = actual[index]
-            if candidate.tool == step.tool and _args_match(step.args_contains, candidate.arguments):
+            if candidate.tool in allowed_tools and _args_match(
+                step.args_contains, candidate.arguments
+            ):
                 matched += 1
                 cursor = index + 1
                 break

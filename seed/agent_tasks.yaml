@@ -89,6 +89,7 @@
   reference_trajectory:
     - tool: report_content_gaps
     - tool: create_draft
+      any_of: [propose_content_fix]
       args_contains: {title: "crypto"}
   min_steps: 2
   end_state:

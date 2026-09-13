@@ -105,7 +105,7 @@ received at all — it is only a contractual promise — so there is nothing to 
 - **Long-term holding period** — a later sale of settled shares qualifies for long-term capital gains
   treatment once you have held them for more than one year from settlement (IRS Topic No. 409).
 - **Social Security wage base** — Social Security withholding stops once your year-to-date wages
-  cross the annual wage base, a dollar amount adjusted every year (SSA 2026 COLA fact sheet).
+  cross the 2026 Social Security wage base of $184,500 (IRS Pub 15).
 
 _Current as of 2026-09_
 
@@ -114,6 +114,5 @@ _Current as of 2026-09_
 - IRS Publication 15 (Circular E), Employer's Tax Guide — https://www.irs.gov/publications/p15
 - IRS Publication 525, Taxable and Nontaxable Income — https://www.irs.gov/publications/p525
 - IRS Topic No. 409, Capital Gains and Losses — https://www.irs.gov/taxtopics/tc409
-- Social Security Administration, 2026 COLA Fact Sheet — https://www.ssa.gov/news/press/factsheets/colafacts2026.pdf
 
 Sample content for demonstration purposes — not financial advice.

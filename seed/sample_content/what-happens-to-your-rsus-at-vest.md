@@ -100,8 +100,7 @@ market value used at vest — and correct the basis on your return whenever the 
   $1,000,000, the excess must be withheld at a mandatory flat rate of 37%, the top individual
   income-tax bracket, instead of the standard 22% (IRS Pub 15).
 - **Social Security wage base** — Social Security withholding stops once your year-to-date wages
-  cross the annual Social Security wage base, a dollar amount the Social Security Administration
-  adjusts every year (SSA 2026 COLA fact sheet).
+  cross the 2026 Social Security wage base of $184,500 (IRS Pub 15).
 - **Additional Medicare Tax** — an extra 0.9% Medicare tax applies to wages above $200,000 in a
   calendar year, regardless of filing status, and your employer must begin withholding it once your
   wages from that employer cross the threshold (IRS Pub 15).
@@ -115,6 +114,5 @@ _Current as of 2026-09_
 - IRS Publication 15 (Circular E), Employer's Tax Guide — https://www.irs.gov/publications/p15
 - IRS Publication 525, Taxable and Nontaxable Income — https://www.irs.gov/publications/p525
 - IRS Topic No. 409, Capital Gains and Losses — https://www.irs.gov/taxtopics/tc409
-- Social Security Administration, 2026 COLA Fact Sheet — https://www.ssa.gov/news/press/factsheets/colafacts2026.pdf
 
 Sample content for demonstration purposes — not financial advice.

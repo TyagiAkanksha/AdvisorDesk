@@ -70,11 +70,11 @@ a week of concentrated exposure to a single company's stock, on top of the expos
 through your salary and any RSUs or options from the same employer. If the stock is volatile, the
 potential gain from qualifying treatment can be wiped out many times over by a price decline during
 the holding period, while selling immediately locks in the discount as a known, realized amount with
-no further stock-price risk. The firm's approach starts from a concentration limit: once a single
-stock, including ESPP shares, grows past a set share of your overall investable net worth, further
-holding for tax optimization typically stops being worth the added risk, and a plan to reduce the
-position takes priority over waiting out the qualifying-disposition clock. There is no universally
-correct answer — it depends on how large the ESPP holding is relative to your total portfolio.
+no further stock-price risk. Our policy is to flag any single stock above 10% of investable net worth — ESPP shares included —
+and to bring it back under that level within 12–24 months using vest-date sales and tax-lot
+selection, so once a position crosses that line, further holding for tax optimization typically
+stops being worth the added risk. There is no universally correct answer — it depends on how large
+the ESPP holding is relative to your total portfolio.
 
 ## Which tax forms will I get?
 
@@ -102,8 +102,8 @@ trusting the 1099-B number by itself.
 - **Qualifying holding periods** — a sale qualifies only once you have held the shares more than two
   years from the offering (grant) date and more than one year from the purchase (transfer) date (IRC
   §423(a)(1); IRS Pub 525).
-- **Form 3922** — your employer is required to furnish you a Form 3922 for every ESPP purchase, on a
-  deadline set by the IRS's information-return rules for employee statements.
+- **Form 3922 deadline** — your employer must furnish Form 3922 to you by January 31 of the year
+  following the calendar year of the purchase (IRS Pub 525).
 
 _Current as of 2026-09_
 
@@ -111,6 +111,7 @@ _Current as of 2026-09_
 
 - IRS Publication 525, Taxable and Nontaxable Income (Employee Stock Purchase Plans) —
   https://www.irs.gov/publications/p525
+- Instructions for Forms 3921 and 3922 — https://www.irs.gov/instructions/i3921
 - Internal Revenue Code §423, Employee Stock Purchase Plans —
   https://www.law.cornell.edu/uscode/text/26/423
 

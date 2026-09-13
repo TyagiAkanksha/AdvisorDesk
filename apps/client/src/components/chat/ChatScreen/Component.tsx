@@ -5,6 +5,7 @@ import { CHAT_TITLE, RETRY_LABEL } from '@/lib/copy';
 
 import { MessageBubble } from '../MessageBubble';
 import { useChatStream } from '../useChatStream';
+import { useMessageFeedback } from '../useMessageFeedback';
 import { ChatComposer } from './components/ChatComposer';
 import { ChatWelcome } from './components/ChatWelcome';
 import { ThinkingIndicator } from './components/ThinkingIndicator';
@@ -22,6 +23,7 @@ import { useChatComposer } from './useChatComposer';
 // (`variant="h4" component="h1"`) once there is a conversation, but stays an `h1` either way.
 export default function Component() {
   const { messages, streaming, error, send, stop, reset, retry } = useChatStream();
+  const feedback = useMessageFeedback();
   const composer = useChatComposer({ disabled: streaming, onSend: send });
   const awaitingFirstToken = streaming && messages[messages.length - 1]?.role === 'user';
   const hasConversation = messages.length > 0;
@@ -38,15 +40,30 @@ export default function Component() {
         </Typography>
       )}
       {hasConversation ? (
-        messages.map((message, index) => (
+        messages.map((message, index) => {
           // fix round 1 (M-3): index-as-key is safe here because every surviving index keeps
           // identical content across re-renders — `retry` (task 11) slices the array back to
           // (but not including) the last user message and then re-sends that exact same text,
           // so indices 0..n-1 are untouched and only new indices are appended; `reset` empties
           // the array outright, so no stale index survives at all. Neither path reorders or
           // mutates content in place at an existing index.
-          <MessageBubble key={index} message={message} />
-        ))
+          const messageId = message.messageId;
+          return (
+            <MessageBubble
+              key={index}
+              message={message}
+              feedback={
+                message.role === 'assistant' && messageId !== undefined
+                  ? {
+                      value: feedback.valueFor(messageId),
+                      disabled: feedback.pendingFor(messageId),
+                      onSelect: (value) => feedback.select(messageId, value),
+                    }
+                  : undefined
+              }
+            />
+          );
+        })
       ) : (
         <ChatWelcome onAsk={send} />
       )}
@@ -65,6 +82,11 @@ export default function Component() {
         >
           {error}
         </Alert>
+      )}
+      {feedback.error !== null && (
+        // phase-9 task-17 (DESIGN §A/D2): a failed rating must not look like a failed answer —
+        // its own banner, no `retry` action (the reader can simply click the thumb again).
+        <Alert severity="error">{feedback.error}</Alert>
       )}
       <Box
         sx={{

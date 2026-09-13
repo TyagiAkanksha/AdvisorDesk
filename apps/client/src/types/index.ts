@@ -12,4 +12,12 @@ export type {
 } from './api/content';
 // task-05 (phase-4): mirrors the block above's Dto/plain-alias barrel pattern for the chat
 // wire types (`./api/chat.ts`).
-export type { ChatRequest, ChatRequestDto, Citation, CitationDto } from './api/chat';
+export type {
+  ChatFeedbackRequest,
+  ChatFeedbackRequestDto,
+  ChatFeedbackValue,
+  ChatRequest,
+  ChatRequestDto,
+  Citation,
+  CitationDto,
+} from './api/chat';

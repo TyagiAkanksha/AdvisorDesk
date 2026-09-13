@@ -113,9 +113,55 @@ class Settings(BaseSettings):
     # §7.5) and the admin agent loop (§5.4) — both talk to the same
     # OpenAI-compatible endpoint (`llm_base_url` above). `gpt-4o-mini` (PRD
     # §7.2, v1.6) — controller-verified live: responds and supports
-    # tool-calling (the admin agent needs it). `CHAT_MODEL` env-overridable
-    # per PRD §9 so a provider swap never touches code.
-    chat_model: str = "gpt-4o-mini"
+    # tool-calling (the admin agent needs it).
+    #
+    # Phase-9 task-05d brief, ruling 3 (owner decision 2026-09-13, after the controller probed the
+    # account): switched to `gpt-5.4-mini`. The newer `gpt-5.6-terra`/`-luna`/`-sol` and
+    # `gpt-5`/`gpt-5.5` families REJECT `temperature=0` ("Only the default (1) value is
+    # supported"), which would end the reproducibility story the whole eval phase rests on
+    # (`OpenAICompatibleChatLLM.stream_answer` below pins `temperature=0`); `gpt-5.4-mini` accepts
+    # it, answers in ~0.8s on this account (same as `gpt-4o-mini`), and cites `[n]` per sentence.
+    # Rate limits are the other win: `gpt-4o`/`gpt-4o-mini` are capped at 30,000 TPM on this
+    # account (the ceiling that killed three harness runs with 429s) against 200,000 TPM for
+    # `gpt-5.4-mini`. `CHAT_MODEL` env-overridable per PRD §9 so a provider swap never touches
+    # code.
+    chat_model: str = "gpt-5.4-mini"
+
+    # DESIGN D7 (2026-09-12): recorded eval numbers are judged by a STRONGER model than the
+    # answerer (`chat_model`) — a same-family caveat the human-labelled scorecard (task 08)
+    # covers.
+    #
+    # Phase-9 task-05d brief, ruling 3 (owner decision 2026-09-13): switched from `gpt-4o` to
+    # `gpt-5.4` for the same reason as `chat_model` above — `gpt-5.4` accepts `temperature=0`
+    # (unlike `gpt-5.6-terra`/`-luna`/`-sol`/`gpt-5`/`gpt-5.5`, which reject an explicit
+    # temperature outright on this account) and carries a 500,000 TPM ceiling against
+    # `gpt-4o`'s 30,000 TPM. Judges in ~1.1s on this account. Zero-env constructible like every
+    # other setting (CONVENTIONS.md §5).
+    judge_model: str = "gpt-5.4"
+
+    # Phase-9 task-05d brief, ruling 4 (owner decision 2026-09-13): the judge's sampling
+    # temperature, independently overridable from the answerer's — the answerer stays hard-pinned
+    # at `temperature=0` in `OpenAICompatibleChatLLM.stream_answer`, since only the judge has a
+    # genuine cross-check use for a model that forbids an explicit temperature (re-judging the
+    # same labels with e.g. `gpt-5.6-terra`). `0.0` is the default so every existing recorded
+    # judge call is unchanged (deterministic verdicts); `None` means "omit the `temperature`
+    # request parameter entirely" — required for a model that only accepts its own default
+    # sampling temperature, and it makes that judge run non-deterministic by definition. Zero-env
+    # constructible (CONVENTIONS.md §5).
+    judge_temperature: float | None = 0.0
+
+    # Fix wave D1 (t03 review, the 30k-TPM incident's proper fix): a DEDICATED retry budget for
+    # the judge client, rather than reusing `embedding_max_retries` below. Task 09's incident
+    # (global-constraints.md) needed `EMBEDDING_MAX_RETRIES=12` as an env override on every judge
+    # harness run to survive the org's 30,000-TPM ceiling on the (now-retired) `gpt-4o` judge —
+    # borrowing a SETTING NAMED FOR EMBEDDINGS to fix a JUDGE rate-limit problem, discoverable only
+    # by reading the CLI's own source. `judge_max_retries` gives the judge client its own,
+    # correctly-named knob, defaulting to the same `12` the incident already established as
+    # sufficient headroom (`gpt-5.4`'s 500,000-TPM ceiling has since removed the pressure that
+    # made this urgent, but the setting is the right fix regardless). Zero-env constructible
+    # (CONVENTIONS.md §5); `OpenAIJudge.from_settings` uses this instead of
+    # `embedding_max_retries`.
+    judge_max_retries: int = 12
 
     # Not part of the PRD §9 env roster (phase-3 task-02 review round 1,
     # finding I1): the `openai` SDK's own defaults for an unconfigured

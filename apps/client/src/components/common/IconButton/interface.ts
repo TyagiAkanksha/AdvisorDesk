@@ -15,4 +15,8 @@ export interface IconButtonProps {
   size?: 'small' | 'medium' | 'large';
   color?: 'default' | 'primary';
   disabled?: boolean;
+  /** Toggle state for a button that represents an on/off choice — renders `aria-pressed`
+   * (FRONTEND-CONVENTIONS.md §9: an assistive-tech user must be able to tell which thumb is
+   * chosen). Omit for a plain action button. */
+  pressed?: boolean;
 }

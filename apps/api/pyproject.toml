@@ -76,6 +76,13 @@ forbidden_modules = [
     "app.factory",
 ]
 
+# Phase-9 task-03 (controller ruling), fix round 1 M11: moved above `name =` — this comment was
+# previously placed AFTER `forbidden_modules`'s closing `]`, where it read as documenting the
+# NEXT contract block instead of this one. The INDEX already claimed this direction was
+# forbidden, but `app.eval` was missing from `forbidden_modules` until now —
+# `app.services.eval_runs` accepts `EvalRowLike`/`EvalReportLike` Protocols (structural typing, no
+# `app.eval` import) precisely so this newly-enforced entry stays green; the layering is now a
+# gate, not just a habit.
 [[tool.importlinter.contracts]]
 name = "app.services imports only app.models and app.config"
 type = "forbidden"
@@ -89,6 +96,7 @@ forbidden_modules = [
     "app.main",
     "app.db",
     "app.factory",
+    "app.eval",
 ]
 
 [[tool.importlinter.contracts]]

@@ -765,6 +765,41 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/public/chat/{message_id}/feedback": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Public Chat Feedback
+         * @description PRD §5.3 surface, phase-9 DESIGN §A: record 👍/👎 on one assistant answer.
+         *
+         *     Unauthenticated like every other route in this module; the `message_id` from the `done` SSE
+         *     event is the only capability required. Not rate-limited — see the ruling below.
+         *
+         *     Ruling — rate limiting (decide-and-justify, per the task brief): NOT rate-limited.
+         *     `rate_limiter.check_message` is the wrong instrument: it charges the per-minute *chat* bucket
+         *     (`RATE_LIMIT_PER_MIN=10`) and a per-day *session* bucket, so ten thumb clicks would deny the
+         *     user's own next question — a self-inflicted denial of service on the demo's most-clicked
+         *     control. The endpoint is also cheap and un-enumerable: one indexed PK lookup plus a
+         *     one-column UPDATE, addressed by a server-minted UUIDv4 the caller must already possess,
+         *     writing a value constrained to ±1 by both Pydantic and the DB CHECK, and creating no rows.
+         *     The blast radius of abuse is "someone flips their own answer's rating repeatedly", which the
+         *     last-write-wins semantics already absorb. If replay traffic (task 18) or prod logs ever show
+         *     abuse, the follow-up is a *separate* cheap per-IP counter on `RateLimiter`, never sharing the
+         *     chat buckets — recorded as a controller-visible decision, not deferred silently.
+         */
+        post: operations["public_chat_feedback"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/public/content": {
         parameters: {
             query?: never;
@@ -915,6 +950,21 @@ export interface components {
             resource?: string | null;
             /** Scope */
             scope?: string | null;
+        };
+        /**
+         * ChatFeedbackRequest
+         * @description `POST /public/chat/{message_id}/feedback`'s body (phase-9 DESIGN §A, D2).
+         *
+         *     `Literal[-1, 1]` is the whole validation: `0` ("neutral") is deliberately NOT a legal value —
+         *     a row with no feedback stays NULL, so "never asked" and "asked, felt neutral" are never
+         *     conflated. Anything else is a 422 before the service or the DB CHECK is ever reached.
+         */
+        ChatFeedbackRequest: {
+            /**
+             * Value
+             * @enum {integer}
+             */
+            value: -1 | 1;
         };
         /**
          * ChatRequest
@@ -2364,6 +2414,48 @@ export interface operations {
             };
             /** @description Too Many Requests */
             429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    public_chat_feedback: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                message_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ChatFeedbackRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
                 headers: {
                     [name: string]: unknown;
                 };

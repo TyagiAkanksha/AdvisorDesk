@@ -188,13 +188,19 @@ def _content_level_citation(content: Content) -> dict[str, str]:
     return {"content_id": str(content.id), "title": content.title, "slug": content.slug}
 
 
-def _chunk_level_citation(content: Content, chunk: Chunk) -> dict[str, str]:
-    """The chunk-level DB shape PRD §4 pins for the persisted assistant row's `citations` column."""
+def _chunk_level_citation(content: Content, chunk: Chunk, similarity: float) -> dict[str, object]:
+    """The chunk-level DB shape PRD §4 pins for the persisted assistant row's `citations` column.
+
+    Phase-9 DESIGN §A: each entry now also carries the retriever's own `similarity` (rounded to
+    4 dp), so every stored answer is a retrieval trace. Compared with `pytest.approx` because the
+    value comes back through pgvector's float arithmetic.
+    """
     return {
         "content_id": str(content.id),
         "title": content.title,
         "slug": content.slug,
         "chunk_id": str(chunk.id),
+        "similarity": pytest.approx(similarity, abs=1e-3),
     }
 
 
@@ -459,9 +465,9 @@ def test_citation_asymmetry_wire_deduped_content_level_row_chunk_level_from_one_
         assistant_row = fresh.get(ChatMessage, message_id)
         assert assistant_row is not None
         assert assistant_row.citations == [
-            _chunk_level_citation(content_a, chunk_a1),
-            _chunk_level_citation(content_b, chunk_b1),
-            _chunk_level_citation(content_a, chunk_a2),
+            _chunk_level_citation(content_a, chunk_a1, 0.9),
+            _chunk_level_citation(content_b, chunk_b1, 0.7),
+            _chunk_level_citation(content_a, chunk_a2, 0.5),
         ]
 
 
@@ -635,3 +641,36 @@ def test_llm_failure_mid_stream_emits_error_event_and_still_persists_user_messag
     assert len(rows) == 1, rows
     assert rows[0].role == "user"
     assert rows[0].content == question
+
+
+# ---------------------------------------------------------------------------
+# 7. Latency signal (phase-9 task-01; DESIGN §A).
+# ---------------------------------------------------------------------------
+
+
+def test_assistant_row_records_latency_ms_for_the_exchange(
+    tmp_engine: Engine, db_session: Session
+) -> None:
+    """Phase-9 DESIGN §A: `latency_ms` comes from the route's own monotonic clock."""
+    content = _add_content(db_session, slug="latency-content")
+    _add_chunk(db_session, content.id, chunk_index=0, text="latency chunk", cos_theta=0.9)
+    db_session.commit()
+
+    client = _build_client(
+        tmp_engine,
+        chat_llm=FakeChatLLM(answer_tokens=["Grounded ", "answer."]),
+        embedder=FakeEmbedder(vector=QUERY_VECTOR),
+    )
+    status, _content_type, body = _post_chat(client, {"message": "How long did that take?"})
+    assert status == 200, body
+
+    events = _parse_sse_events(body)
+    done_event = next(e for e in events if e.name == "done")
+    message_id = uuid.UUID(str(done_event.data["message_id"]))
+
+    with make_session_factory(tmp_engine)() as fresh:
+        assistant_row = fresh.get(ChatMessage, message_id)
+        assert assistant_row is not None
+        assert assistant_row.latency_ms is not None
+        assert 0 <= assistant_row.latency_ms < 60_000
+        assert assistant_row.feedback is None

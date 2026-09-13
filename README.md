@@ -264,25 +264,35 @@ pnpm -C apps/client test
 
 ## Metrics
 
-PRD §9.1's four metrics, **measured on the local seeded stack** (dedicated database
-`advisordesk_p7verify`, OpenAI provider — `text-embedding-3-small@1024` + `gpt-4o-mini`,
-`SIMILARITY_THRESHOLD=0.5`), captured 2026-09-07. Raw command output:
-`.superpowers/sdd/phase-7-evaluation/task-03a-metrics-capture.md` (gitignored working notes) and
-`docs/plans/phase-7-evaluation/verification-record.md` (the committed record).
+PRD §9.1's four metrics, **measured on the local seeded stack** (OpenAI provider —
+`text-embedding-3-small@1024`, `SIMILARITY_THRESHOLD=0.5`). The corpus, groundedness and
+agent-suite rows are phase 9's `rebaseline-2026-09` (2026-09-13, `gpt-5.4-mini` answerer /
+`gpt-5.4` judge, dedicated database `advisordesk_p9rebaseline`; committed record:
+`docs/plans/phase-9-eval-data-loop/verification-record.md`). The latency row is phase 7's capture
+(2026-09-07, `gpt-4o-mini`, `docs/plans/phase-7-evaluation/verification-record.md`) and has not
+been re-measured since the model change.
 
 | Metric | Value |
 |---|---|
-| Seeded documents (content) | 21 total (17 published + 4 drafts) |
-| Seeded chunks | 100 |
-| MCP tools | 9 (8 core + `report_content_gaps`) |
-| Groundedness | 58.8% fully supported (10/17 answerable); refusals 4/4 correct |
+| Seeded documents (content) | 37 total (33 published + 4 drafts) |
+| Seeded chunks | 228 |
+| MCP tools | 14 (8 core + `report_content_gaps`, `report_weak_queries`, and the four proposal tools `propose_content_fix`/`list_proposals`/`accept_proposal`/`reject_proposal`) |
+| Groundedness | 93.0% ± 1.6 fully supported over 3 runs (label `rebaseline-2026-09`, `gpt-5.4-mini` answerer / `gpt-5.4` judge); refusals 18/18 correct |
+| Agent suite baseline | 83.3% ± 10.0 over 3 fresh-DB runs (9/10, 8/10, 8/10) — temperature 0 does not make this model's tool-calling deterministic; see verification-record §9a |
 | First-token latency, `/public/chat` | p50 = 717 ms, p95 = 1602 ms (n=30, nearest-rank) |
 
-**Groundedness note:** all 17 answerable eval questions retrieved the correct source article —
-retrieval is sound. The sub-100% figure comes from the `gpt-4o-mini` judge scoring some answer
-sentences as unsupported by the cited chunks; this is an evaluation signal the harness is
-designed to surface (PRD §7 phase 7), not a retrieval bug, and is flagged for owner review rather
-than hidden or rounded up.
+**Groundedness note (updated 2026-09, phase 9):** the previously published 58.8% was a single,
+unpersisted run measured while the answerer still ran at `temperature=1.0` (fixed 2026-09-11) and
+was judged by the same `gpt-4o-mini` model that wrote the answers — it was sampling noise, not a
+measurement, and it is retired rather than silently overwritten. Evaluation runs are now persisted
+(`eval_runs`/`eval_results`) and every metric is reported with its spread over three runs; the
+baseline above is the label `rebaseline-2026-09`, judged by `gpt-5.4` (the answerer is
+`gpt-5.4-mini`). The earlier `baseline-2026-09` figure (72.5% ± 5.9) is itself now superseded
+(2026-09-13): it measured the older `gpt-4o-mini`/`gpt-4o` pair, a judge that still scored
+markdown/citation markers and abbreviation-split sentences as unsupported claims, and a
+21-question set over a smaller, since-expanded corpus, so it is retired rather than compared
+against directly. Full method, run ids and per-class/failure-cause breakdowns:
+[`docs/plans/phase-9-eval-data-loop/verification-record.md`](docs/plans/phase-9-eval-data-loop/verification-record.md).
 
 ## Deployment
 

@@ -97,3 +97,21 @@ def test_compose_forwarded_allow_ips_is_the_docker_bridge_range() -> None:
     compose = yaml.safe_load(_COMPOSE_PATH.read_text())
     environment = compose["services"]["api"]["environment"]
     assert environment["FORWARDED_ALLOW_IPS"] == "172.16.0.0/12"
+
+
+def test_compose_does_not_pin_the_answerer_or_judge_model() -> None:
+    """Fix-wave A1 (final-review C1): `environment:` in Compose takes precedence over `env_file:`
+    (`/opt/advisordesk/.env`), so a hard-coded `CHAT_MODEL`/`JUDGE_MODEL`/`EMBEDDING_MODEL` here
+    would silently override the code default (`Settings.chat_model`, currently `gpt-5.4-mini`) and
+    the box's `.env`, however either is set. These three must stay code defaults (or box `.env`
+    overrides) — never pinned in the committed compose file, where a stale value cannot be
+    overridden without editing and redeploying this file itself.
+    """
+    _skip_if_absent()
+    compose = yaml.safe_load(_COMPOSE_PATH.read_text())
+    environment = compose["services"]["api"]["environment"]
+    for key in ("CHAT_MODEL", "JUDGE_MODEL", "EMBEDDING_MODEL"):
+        assert key not in environment, (
+            f"{key} must not be pinned in docker-compose.yml's environment: block — it "
+            "overrides env_file (the box's .env) and the code default, silently."
+        )

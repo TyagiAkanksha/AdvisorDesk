@@ -41,6 +41,7 @@ fails these tests loudly rather than silently matching on title text.
 from __future__ import annotations
 
 import re
+from collections import Counter
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
@@ -52,6 +53,7 @@ from sqlalchemy import Engine, func, select
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.db import make_session_factory
+from app.eval.questions import load_questions, resolve_expected_chunks, slugify_heading
 from app.models import Chunk, Content
 from app.rag.pipeline import EmbeddingChunkPipeline
 from app.seed import SeedReport, seed_all
@@ -172,12 +174,25 @@ def _all_seed_records() -> list[dict[str, Any]]:
 
 # ---- corpus invariants (PRD §8 / brief Interfaces pin) ----
 
+# Phase-9 wave 1 (DESIGN §C2) grows the phase-4 corpus of 21 files by four per batch. Exact
+# counts, not bands: a content wave that lands three of its four files must fail loudly.
+_EXPECTED_SEED_FILE_COUNT = 37
+_EXPECTED_PUBLISHED_COUNT = 33
+_EXPECTED_DRAFT_COUNT = 4
+
+# Tag vocabulary = PRD §8's six + the wave-1 additions (INDEX Global Constraints: the vocabulary is
+# widened in the same task as the first article that uses a new tag). `north-carolina` belongs to
+# the two "where you live" articles, which are wave 2 — it is deliberately NOT allowed yet.
+_WAVE1_TAGS = {"equity-compensation", "our-firm"}
+_ALLOWED_TAGS = _SIX_TAGS | _WAVE1_TAGS
+
 
 def test_seed_corpus_directory_exists_and_file_count_is_in_expected_band() -> None:
-    """~20 files total (brief's pinned band: 19-21)."""
+    """21 phase-4 basics + 4 files per landed wave-1 batch (task 10 = batch A)."""
     files = _seed_md_files()
-    assert 19 <= len(files) <= 21, (
-        f"expected 19-21 seed files, found {len(files)}: {[f.name for f in files]}"
+    assert len(files) == _EXPECTED_SEED_FILE_COUNT, (
+        f"expected {_EXPECTED_SEED_FILE_COUNT} seed files, found {len(files)}: "
+        f"{[f.name for f in files]}"
     )
 
 
@@ -199,22 +214,29 @@ def test_seed_corpus_status_is_published_or_draft() -> None:
         assert status in ("published", "draft"), f"{record['path'].name}: status={status!r}"
 
 
-def test_seed_corpus_tags_are_subset_of_the_six_prd_tags() -> None:
-    for record in _all_seed_records():
-        tags = set(record["frontmatter"].get("tags") or [])
-        unknown = tags - _SIX_TAGS
-        assert not unknown, f"{record['path'].name}: tags {unknown} are not among the six §8 tags"
-
-
 def test_seed_corpus_published_and_draft_counts_are_in_expected_bands() -> None:
     records = _all_seed_records()
     published = [r for r in records if r["frontmatter"].get("status") == "published"]
     drafts = [r for r in records if r["frontmatter"].get("status") == "draft"]
-    assert 16 <= len(published) <= 17, f"expected 16-17 published, found {len(published)}"
-    assert 3 <= len(drafts) <= 4, f"expected 3-4 drafts, found {len(drafts)}"
+    assert len(published) == _EXPECTED_PUBLISHED_COUNT, (
+        f"expected {_EXPECTED_PUBLISHED_COUNT} published, found {len(published)}"
+    )
+    assert len(drafts) == _EXPECTED_DRAFT_COUNT, (
+        f"expected {_EXPECTED_DRAFT_COUNT} drafts, found {len(drafts)}"
+    )
     assert len(published) + len(drafts) == len(records), (
         "every seed file must be either published or draft"
     )
+
+
+def test_seed_corpus_tags_are_subset_of_the_allowed_vocabulary() -> None:
+    for record in _all_seed_records():
+        tags = set(record["frontmatter"].get("tags") or [])
+        unknown = tags - _ALLOWED_TAGS
+        assert not unknown, (
+            f"{record['path'].name}: tags {unknown} are outside the allowed vocabulary "
+            f"{sorted(_ALLOWED_TAGS)}"
+        )
 
 
 def test_seed_corpus_each_of_the_six_tags_is_used_at_least_twice() -> None:
@@ -225,6 +247,19 @@ def test_seed_corpus_each_of_the_six_tags_is_used_at_least_twice() -> None:
                 counts[tag] += 1
     under_used = {tag: n for tag, n in counts.items() if n < 2}
     assert not under_used, f"tags used fewer than 2 times across the corpus: {under_used}"
+
+
+def test_seed_corpus_each_wave_1_tag_is_used_at_least_twice() -> None:
+    """The PRD-six pin above does not cover the wave-1 additions (INDEX Global Constraints). A tag
+    used once is a typo risk and a useless filter facet, so each wave-1 tag earns its place the
+    same way: at least two articles."""
+    counts: dict[str, int] = dict.fromkeys(_WAVE1_TAGS, 0)
+    for record in _all_seed_records():
+        for tag in record["frontmatter"].get("tags") or []:
+            if tag in counts:
+                counts[tag] += 1
+    under_used = {tag: n for tag, n in counts.items() if n < 2}
+    assert not under_used, f"wave-1 tags used fewer than 2 times: {under_used}"
 
 
 def test_seed_corpus_every_body_ends_with_the_verbatim_disclaimer_footer_line() -> None:
@@ -391,15 +426,30 @@ def _load_eval_questions() -> list[dict[str, Any]]:
     return data
 
 
-def test_eval_questions_yaml_parses_as_a_list_of_dicts_with_exactly_the_three_keys() -> None:
+_REQUIRED_EVAL_KEYS = {"question", "expected_slugs", "answerable"}
+_OPTIONAL_EVAL_KEYS = {"class", "persona", "expected_chunks", "reference_answer"}
+_EVAL_CLASSES = {
+    "answerable",
+    "multi_source",
+    "near_miss",
+    "off_domain",
+    "threshold",
+    "stale_number",
+}
+
+
+def test_eval_questions_yaml_items_carry_the_required_keys_and_only_known_optional_ones() -> None:
+    """Phase-9 DESIGN §B2: v2 widens the shape from "exactly three keys" to
+    REQUIRED ⊆ keys ⊆ REQUIRED ∪ OPTIONAL, with class membership and an
+    `off_domain ⇒ not answerable` rule."""
     items = _load_eval_questions()
     assert items, "eval_questions.yaml is empty"
-    expected_keys = {"question", "expected_slugs", "answerable"}
     for item in items:
         assert isinstance(item, dict), f"item is not a mapping: {item!r}"
-        assert set(item.keys()) == expected_keys, (
-            f"item has keys {set(item.keys())}, expected exactly {expected_keys}"
-        )
+        keys = set(item.keys())
+        assert _REQUIRED_EVAL_KEYS <= keys, f"item is missing required keys: {item!r}"
+        unknown = keys - _REQUIRED_EVAL_KEYS - _OPTIONAL_EVAL_KEYS
+        assert not unknown, f"item has unknown keys {unknown}: {item!r}"
         assert isinstance(item["question"], str) and item["question"].strip(), (
             f"item has a blank/non-string question: {item!r}"
         )
@@ -407,6 +457,23 @@ def test_eval_questions_yaml_parses_as_a_list_of_dicts_with_exactly_the_three_ke
             f"item's expected_slugs is not a list: {item!r}"
         )
         assert isinstance(item["answerable"], bool), f"item's answerable is not a bool: {item!r}"
+        question_class = item.get("class", "answerable" if item["answerable"] else "off_domain")
+        assert question_class in _EVAL_CLASSES, (
+            f"item's class {question_class!r} is not one of {_EVAL_CLASSES}: {item!r}"
+        )
+        if question_class == "off_domain":
+            assert item["answerable"] is False, f"off_domain question marked answerable: {item!r}"
+        for ref in item.get("expected_chunks", []):
+            assert isinstance(ref, str) and "#" in ref, (
+                f"expected_chunks entry is not '<slug>#<heading-slug>': {ref!r}"
+            )
+            assert ref.split("#", 1)[0] in item["expected_slugs"], (
+                f"expected_chunks entry {ref!r} names a slug outside expected_slugs: {item!r}"
+            )
+        if "persona" in item:
+            assert isinstance(item["persona"], str) and item["persona"].strip()
+        if "reference_answer" in item:
+            assert isinstance(item["reference_answer"], str) and item["reference_answer"].strip()
 
 
 def test_eval_questions_answerable_entries_expected_slugs_all_exist_in_published_seed_corpus() -> (
@@ -437,3 +504,343 @@ def test_eval_questions_unanswerable_entries_have_empty_expected_slugs() -> None
             f"question {item['question']!r} is unanswerable but expected_slugs="
             f"{item['expected_slugs']!r}, expected []"
         )
+
+
+def test_eval_questions_have_no_duplicate_question_text() -> None:
+    """Fix round 1, I2: `app.eval.groundedness._load_questions` now rejects a duplicate
+    `question` string with a `ValueError` naming it (the `(run_id, question)` unique constraint
+    would otherwise reject the whole run at `record_run`'s final flush). This pins the real
+    `seed/eval_questions.yaml` corpus itself — clean today (21/21 unique) — as DESIGN §B2 grows
+    it to 80 hand-authored questions across six classes.
+    """
+    items = _load_eval_questions()
+    questions = [item["question"] for item in items]
+    duplicates = {question for question in questions if questions.count(question) > 1}
+    assert not duplicates, f"eval_questions.yaml has duplicate questions: {duplicates}"
+
+
+def test_eval_questions_expected_chunks_refs_all_resolve_against_the_seeded_corpus(
+    session_factory: sessionmaker[Session],
+) -> None:
+    """Controller ruling (phase-9 task-04 review, Minor 1 —
+    `.superpowers/sdd/phase-9-eval-data-loop/progress.md`): `resolve_expected_chunks`
+    (`app/eval/questions.py`) silently skips an `expected_chunks` ref that matches no chunk — its
+    own documented decision, so a stale/typo'd ref in a golden question never aborts a whole eval
+    run. That silence means a broken ref in the COMMITTED `seed/eval_questions.yaml` could ship
+    unnoticed to task 09's baseline run. This is the DB pin closing that gap: seed the real corpus
+    (`seed/sample_content/`) on the throwaway schema, then require every `expected_chunks` ref the
+    committed YAML carries to resolve to at least one chunk id.
+
+    Today's committed file has zero `expected_chunks` refs (phase-9 task 04 shipped the loader
+    before the golden question set was authored) — `all(... for ref in [])` is vacuously `True`,
+    so this pin passes trivially now and becomes a real check the moment refs are added.
+    """
+    pipeline = EmbeddingChunkPipeline(FakeEmbedder())
+    with _script_session(session_factory) as session:
+        seed_all(session, pipeline, content_dir=_SEED_CONTENT_DIR)
+
+    questions = load_questions(_EVAL_YAML_PATH)
+    all_refs = [ref for question in questions for ref in question.expected_chunks]
+
+    with _script_session(session_factory) as fresh:
+        unresolved = [ref for ref in all_refs if not resolve_expected_chunks(fresh, [ref])]
+
+    assert not unresolved, f"expected_chunks refs that resolved to no chunk: {unresolved}"
+
+
+# ---- phase-9 wave-1 corpus (DESIGN §C1: H2 section == chunk == retrieval unit) ----
+
+# slug -> (exact frontmatter title, exact frontmatter tag set). One entry per wave-1 article,
+# added by the batch task that authored it (task 10 = batch A). Titles are pinned verbatim because
+# `app.seed` is idempotent BY TITLE: a retitled file would silently create a second row on prod.
+_WAVE1_ARTICLES: dict[str, tuple[str, frozenset[str]]] = {
+    "what-happens-to-your-rsus-at-vest": (
+        "What Happens to Your RSUs at Vest",
+        frozenset({"equity-compensation", "tax-planning"}),
+    ),
+    "double-trigger-rsus-and-an-ipo": (
+        "Double-Trigger RSUs and an IPO",
+        frozenset({"equity-compensation", "tax-planning"}),
+    ),
+    "espp-qualifying-and-disqualifying-dispositions": (
+        "ESPP Qualifying and Disqualifying Dispositions",
+        frozenset({"equity-compensation", "tax-planning"}),
+    ),
+    "how-we-work-and-what-we-charge": (
+        "How We Work and What We Charge",
+        frozenset({"our-firm"}),
+    ),
+    "isos-and-nsos-how-each-one-is-taxed": (
+        "ISOs and NSOs: How Each One Is Taxed",
+        frozenset({"equity-compensation", "tax-planning"}),
+    ),
+    "amt-after-an-iso-exercise-and-the-credit-that-follows": (
+        "AMT After an ISO Exercise, and the Credit That Follows",
+        frozenset({"equity-compensation", "tax-planning"}),
+    ),
+    "the-83-b-election-on-restricted-stock": (
+        "The 83(b) Election on Restricted Stock",
+        frozenset({"equity-compensation", "tax-planning"}),
+    ),
+    "onboarding-with-us-and-what-to-bring": (
+        "Onboarding With Us and What to Bring",
+        frozenset({"our-firm"}),
+    ),
+    "concentrated-employer-stock-and-our-10-rule": (
+        "Concentrated Employer Stock and Our 10% Rule",
+        frozenset({"our-firm", "investing-basics", "equity-compensation"}),
+    ),
+    "tender-offers-and-lock-up-periods": (
+        "Tender Offers and Lock-Up Periods",
+        frozenset({"equity-compensation", "tax-planning"}),
+    ),
+    "the-mega-backdoor-roth-step-by-step": (
+        "The Mega-Backdoor Roth, Step by Step",
+        frozenset({"retirement", "tax-planning"}),
+    ),
+    "our-rebalancing-policy-and-the-20-drawdown-rule": (
+        "Our Rebalancing Policy and the 20% Drawdown Rule",
+        frozenset({"our-firm", "investing-basics"}),
+    ),
+    "donating-appreciated-stock-and-using-a-daf": (
+        "Donating Appreciated Stock and Using a DAF",
+        frozenset({"tax-planning", "equity-compensation"}),
+    ),
+    "leaving-your-employer-with-equity-on-the-table": (
+        "Leaving Your Employer With Equity on the Table",
+        frozenset({"equity-compensation", "retirement"}),
+    ),
+    "wash-sales-across-rsu-and-espp-lots": (
+        "Wash Sales Across RSU and ESPP Lots",
+        frozenset({"tax-planning", "equity-compensation"}),
+    ),
+    "what-we-do-not-do-and-why": (
+        "What We Do Not Do, and Why",
+        frozenset({"our-firm"}),
+    ),
+}
+
+_KEY_NUMBERS_HEADING = "Key numbers (2026)"
+_SOURCES_HEADING = "Sources"
+_CURRENT_AS_OF_LINE = "_Current as of 2026-09_"
+# Structural H2s carry lists, not prose: capped, but exempt from the 150-token floor.
+_STRUCTURAL_H2 = {_KEY_NUMBERS_HEADING, _SOURCES_HEADING}
+_H2_MIN_TOKENS = 150
+_H2_MAX_TOKENS = 350
+
+_H2_RE = re.compile(r"^## (?P<text>.+)$", re.MULTILINE)
+# Any ATX heading that is NOT an H2: H1 (`# `) or H3-H6 (`### ` .. `###### `).
+_NON_H2_HEADING_RE = re.compile(r"^(?:#|#{3,6}) .*$", re.MULTILINE)
+
+
+def _wave1_records() -> dict[str, dict[str, Any]]:
+    """The parsed seed record for every wave-1 slug, keyed by slug (asserts each file exists)."""
+    by_slug = {record["path"].stem: record for record in _all_seed_records()}
+    missing = sorted(set(_WAVE1_ARTICLES) - set(by_slug))
+    assert not missing, f"wave-1 article files missing from seed/sample_content/: {missing}"
+    return {slug: by_slug[slug] for slug in _WAVE1_ARTICLES}
+
+
+def _h2_sections(body: str) -> list[tuple[str, str]]:
+    """(heading text, section text including its heading line) per H2, in document order."""
+    matches = list(_H2_RE.finditer(body))
+    sections: list[tuple[str, str]] = []
+    for index, match in enumerate(matches):
+        end = matches[index + 1].start() if index + 1 < len(matches) else len(body)
+        sections.append((match.group("text").strip(), body[match.start() : end]))
+    return sections
+
+
+def test_wave_1_articles_carry_their_pinned_title_tags_and_status() -> None:
+    for slug, (title, tags) in _WAVE1_ARTICLES.items():
+        frontmatter = _wave1_records()[slug]["frontmatter"]
+        assert frontmatter["title"] == title, (
+            f"{slug}: title is {frontmatter['title']!r}, brief pins {title!r} "
+            "(seed is idempotent by title — a drifted title creates a duplicate row)"
+        )
+        assert set(frontmatter["tags"]) == set(tags), (
+            f"{slug}: tags are {sorted(frontmatter['tags'])}, brief pins {sorted(tags)}"
+        )
+        assert frontmatter["status"] == "published", f"{slug}: wave-1 articles ship published"
+
+
+def test_wave_1_articles_use_h2_headings_only() -> None:
+    """Every ATX heading is a chunk boundary (`app.rag.chunking._HEADING_RE`), so an H1 or H3
+    would split an authored section and break its `expected_chunks` reference."""
+    for slug, record in _wave1_records().items():
+        stray = _NON_H2_HEADING_RE.findall(record["body"])
+        assert not stray, f"{slug}: non-H2 headings found: {stray}"
+
+
+def test_wave_1_articles_have_key_numbers_sources_and_the_current_as_of_line() -> None:
+    for slug, record in _wave1_records().items():
+        headings = [heading for heading, _ in _h2_sections(record["body"])]
+        assert _KEY_NUMBERS_HEADING in headings, f"{slug}: missing '## {_KEY_NUMBERS_HEADING}'"
+        assert _SOURCES_HEADING in headings, f"{slug}: missing '## {_SOURCES_HEADING}'"
+        assert headings[-2:] == [_KEY_NUMBERS_HEADING, _SOURCES_HEADING], (
+            f"{slug}: the last two H2s must be Key numbers then Sources, got {headings[-2:]}"
+        )
+        key_numbers = dict(_h2_sections(record["body"]))[_KEY_NUMBERS_HEADING]
+        non_blank = [line.strip() for line in key_numbers.splitlines() if line.strip()]
+        assert non_blank[-1] == _CURRENT_AS_OF_LINE, (
+            f"{slug}: Key numbers must end with {_CURRENT_AS_OF_LINE!r}, got {non_blank[-1]!r}"
+        )
+        sources = dict(_h2_sections(record["body"]))[_SOURCES_HEADING]
+        assert "http" in sources, f"{slug}: Sources section lists no URL"
+
+
+def test_wave_1_question_sections_are_inside_the_retrieval_token_band() -> None:
+    """DESIGN §C1: an H2 section is the retrieval unit — 150-350 tokens, comfortably under
+    `chunk_markdown`'s 400-token budget so it is never split."""
+    from app.rag.chunking import count_tokens
+
+    for slug, record in _wave1_records().items():
+        body = record["body"]
+        sections = _h2_sections(body)
+        question_sections = [
+            (heading, text) for heading, text in sections if heading not in _STRUCTURAL_H2
+        ]
+        assert 4 <= len(question_sections) <= 6, (
+            f"{slug}: expected 4-6 question H2 sections, found {len(question_sections)}"
+        )
+        first_h2 = _H2_RE.search(body)
+        lead = body[: first_h2.start()] if first_h2 else body
+        assert count_tokens(lead) <= _H2_MAX_TOKENS, (
+            f"{slug}: lead paragraph is {count_tokens(lead)} tokens, max {_H2_MAX_TOKENS}"
+        )
+        for heading, text in sections:
+            tokens = count_tokens(text)
+            assert tokens <= _H2_MAX_TOKENS, (
+                f"{slug} / '{heading}': {tokens} tokens, max {_H2_MAX_TOKENS}"
+            )
+            if heading not in _STRUCTURAL_H2:
+                assert tokens >= _H2_MIN_TOKENS, (
+                    f"{slug} / '{heading}': {tokens} tokens, min {_H2_MIN_TOKENS}"
+                )
+
+
+def test_wave_1_h2_heading_slugs_are_unique_within_each_article() -> None:
+    """`resolve_expected_chunks` takes the first matching heading; two H2s with the same slug
+    would make an `expected_chunks` reference ambiguous."""
+    for slug, record in _wave1_records().items():
+        slugs = [slugify_heading(heading) for heading, _ in _h2_sections(record["body"])]
+        duplicates = {value for value in slugs if slugs.count(value) > 1}
+        assert not duplicates, f"{slug}: duplicate heading slugs {duplicates}"
+
+
+def test_wave_1_expected_chunks_refs_name_real_headings_in_their_file() -> None:
+    """The fast, pure-file twin of the DB resolver pin: catches a typo'd ref without seeding."""
+    headings_by_slug = {
+        slug: {slugify_heading(heading) for heading, _ in _h2_sections(record["body"])}
+        for slug, record in _wave1_records().items()
+    }
+    for item in _load_eval_questions():
+        for ref in item.get("expected_chunks", []):
+            ref_slug, _, heading_slug = ref.partition("#")
+            if ref_slug not in headings_by_slug:
+                continue
+            assert heading_slug in headings_by_slug[ref_slug], (
+                f"{ref}: {ref_slug}.md has no H2 whose slug is {heading_slug!r} "
+                f"(its headings: {sorted(headings_by_slug[ref_slug])})"
+            )
+
+
+# DESIGN §C2's four firm pages, by slug. Pinned by slug rather than by the `our-firm` tag because
+# `concentrated-employer-stock-and-our-10-rule` also carries that tag (it states a firm policy)
+# while being one of the twelve equity/benefits explainers.
+_WAVE1_FIRM_PAGES = {
+    "how-we-work-and-what-we-charge",
+    "onboarding-with-us-and-what-to-bring",
+    "our-rebalancing-policy-and-the-20-drawdown-rule",
+    "what-we-do-not-do-and-why",
+}
+
+
+def test_wave_1_is_complete_at_sixteen_articles() -> None:
+    """DESIGN §C2: wave 1 is 12 equity/benefits explainers + 4 firm pages. The two "where you live"
+    articles and the fundamentals upgrade are wave 2 — `north-carolina` stays out of the tag
+    vocabulary until then."""
+    assert len(_WAVE1_ARTICLES) == 16
+    assert _WAVE1_FIRM_PAGES <= set(_WAVE1_ARTICLES), (
+        f"missing firm pages: {sorted(_WAVE1_FIRM_PAGES - set(_WAVE1_ARTICLES))}"
+    )
+    assert len(set(_WAVE1_ARTICLES) - _WAVE1_FIRM_PAGES) == 12
+    assert all("our-firm" in _WAVE1_ARTICLES[slug][1] for slug in _WAVE1_FIRM_PAGES)
+    assert "north-carolina" not in _ALLOWED_TAGS
+
+
+# ---- eval-question class balance (DESIGN §B2: 80 rows at the end of task 14) ----
+
+# Final DESIGN §B2 counts: phase-4's 21 rows + wave-1 batches A-D's 44 rows + task 14's 15
+# persona-first rows. The golden set is frozen at 80 after task 14.
+_EXPECTED_CLASS_COUNTS = {
+    "answerable": 45,
+    "multi_source": 8,
+    "near_miss": 10,
+    "off_domain": 8,
+    "threshold": 5,
+    "stale_number": 4,
+}
+_EXPECTED_QUESTION_TOTAL = 80
+
+
+def _question_class(item: dict[str, Any]) -> str:
+    """The class a row resolves to, using `app.eval.questions.load_questions`' default rule."""
+    return item.get("class", "answerable" if item["answerable"] else "off_domain")
+
+
+def test_eval_questions_class_counts_match_the_authored_plan() -> None:
+    items = _load_eval_questions()
+    counts = dict(Counter(_question_class(item) for item in items))
+    assert counts == _EXPECTED_CLASS_COUNTS, (
+        f"class counts {counts} != planned {_EXPECTED_CLASS_COUNTS} (DESIGN §B2)"
+    )
+    assert len(items) == _EXPECTED_QUESTION_TOTAL
+
+
+def test_eval_questions_unanswerable_rows_never_carry_a_reference_answer() -> None:
+    """Phase-9 N5 ruling: a `reference_answer` on an `answerable: false` row hands the
+    context-recall and answer-relevance judges a target the corpus must NOT contain, which would
+    score a correct refusal as a miss. Task 14 adds the loader-level guard; this is the file pin."""
+    offenders = [
+        item["question"]
+        for item in _load_eval_questions()
+        if item["answerable"] is False and "reference_answer" in item
+    ]
+    assert not offenders, f"answerable:false rows carrying a reference_answer: {offenders}"
+
+
+def test_eval_questions_near_miss_rows_are_unanswerable_and_uncited() -> None:
+    """A near_miss row points at a planted gap (DESIGN §C2): no expected slugs, no expected
+    chunks — the corpus is supposed to miss it."""
+    for item in _load_eval_questions():
+        if _question_class(item) != "near_miss":
+            continue
+        assert item["answerable"] is False, f"near_miss row marked answerable: {item['question']!r}"
+        assert item["expected_slugs"] == [], f"near_miss row has expected_slugs: {item!r}"
+        assert not item.get("expected_chunks"), f"near_miss row has expected_chunks: {item!r}"
+
+
+# DESIGN §C2's three personas, verbatim. A typo'd persona silently empties a per-persona rollup.
+_PERSONAS = {"Sam", "Priya", "Marcus"}
+
+
+def test_eval_questions_personas_are_the_three_design_personas() -> None:
+    used = {item["persona"] for item in _load_eval_questions() if "persona" in item}
+    unknown = used - _PERSONAS
+    assert not unknown, f"unknown personas {unknown}; DESIGN §C2 names {sorted(_PERSONAS)}"
+    assert used == _PERSONAS, f"every persona must appear at least once; missing {_PERSONAS - used}"
+
+
+def test_eval_questions_authored_class_rows_carry_a_reference_answer() -> None:
+    """`multi_source`, `threshold` and `stale_number` rows exist only in the phase-9 waves, and the
+    answer-relevance and context-recall judges score against `reference_answer` — a row in one of
+    those classes without one is silently unscored. (The 17 phase-4 rows default to class
+    `answerable` and carry no reference answer; backfilling those is wave 2's job, DESIGN §C2.)"""
+    missing = [
+        item["question"]
+        for item in _load_eval_questions()
+        if item.get("class") in {"multi_source", "threshold", "stale_number"}
+        and not item.get("reference_answer")
+    ]
+    assert not missing, f"authored-class rows missing a reference_answer: {missing}"

@@ -303,5 +303,202 @@
       "type": "object"
     },
     "name": "report_content_gaps"
+  },
+  {
+    "description": "Report client questions the system answered BADLY, grouped and classified: negative_feedback (a client pressed thumbs-down), refused (nothing in the corpus was close), near_miss (a source was just under the retrieval threshold, or retrieval succeeded and the answer still declined \u2014 either way the corpus nearly had it), low_confidence (answered, but only just above the threshold). Newest `days` days, most-asked first. Use this to decide what content to write or expand next.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "description": "`report_weak_queries`'s arguments (phase-9 DESIGN \u00a7D): `days`/`limit`, both optional.\n\nDeliberately NO `threshold` argument: the band boundaries are only meaningful against the\nthreshold the answers were actually SERVED under, which is deployment config\n(`Settings.similarity_threshold`), not a caller's choice. Exposing it would let the agent\n(or a curious connector) re-score history against a threshold that never ran.",
+      "properties": {
+        "days": {
+          "default": 30,
+          "minimum": 1,
+          "title": "Days",
+          "type": "integer"
+        },
+        "limit": {
+          "default": 20,
+          "maximum": 100,
+          "minimum": 1,
+          "title": "Limit",
+          "type": "integer"
+        }
+      },
+      "title": "ReportWeakQueriesArgs",
+      "type": "object"
+    },
+    "name": "report_weak_queries"
+  },
+  {
+    "description": "Record a proposed content fix for detected weak queries and create its draft. Pass either kind (new_article/expand_article/retune) or failure_cause (from the eval failure taxonomy) and the weak-query rows as evidence. Creates a DRAFT only \u2014 publishing is a separate, explicitly requested step.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "description": "`propose_content_fix`'s arguments (phase-9 DESIGN \u00a7D).",
+      "properties": {
+        "evidence": {
+          "default": [],
+          "items": {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          "title": "Evidence",
+          "type": "array"
+        },
+        "failure_cause": {
+          "anyOf": [
+            {
+              "enum": [
+                "retrieval_miss",
+                "corpus_gap",
+                "threshold_refusal",
+                "generation_unfaithful",
+                "judge_disagreement"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Failure Cause"
+        },
+        "kind": {
+          "anyOf": [
+            {
+              "enum": [
+                "new_article",
+                "expand_article",
+                "retune"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Kind"
+        },
+        "rationale": {
+          "minLength": 1,
+          "title": "Rationale",
+          "type": "string"
+        },
+        "target_content_id": {
+          "anyOf": [
+            {
+              "format": "uuid",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Target Content Id"
+        },
+        "title": {
+          "minLength": 1,
+          "title": "Title",
+          "type": "string"
+        }
+      },
+      "required": [
+        "title",
+        "rationale"
+      ],
+      "title": "ProposeContentFixArgs",
+      "type": "object"
+    },
+    "name": "propose_content_fix"
+  },
+  {
+    "description": "List content-fix proposals, newest first, optionally filtered by status (proposed/accepted/rejected).",
+    "inputSchema": {
+      "additionalProperties": false,
+      "description": "`list_proposals`'s arguments. `limit` defaults to 20, not the service's own 50: a tool\nresult lands in a model's context window, so the MCP default mirrors\n`tools_gaps._DEFAULT_LIMIT`/`_MAX_LIMIT` (20/100) rather than the service default. Deliberate,\nnot a drift.",
+      "properties": {
+        "limit": {
+          "default": 20,
+          "maximum": 100,
+          "minimum": 1,
+          "title": "Limit",
+          "type": "integer"
+        },
+        "status": {
+          "anyOf": [
+            {
+              "enum": [
+                "proposed",
+                "accepted",
+                "rejected"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Status"
+        }
+      },
+      "title": "ListProposalsArgs",
+      "type": "object"
+    },
+    "name": "list_proposals"
+  },
+  {
+    "description": "Accept a proposal \u2014 allowed ONLY when the eval data supports it: a baseline run and the eval_run_after_id run must both exist, the after-run must have measured a changed corpus, pct_fully_supported must not have dropped, and the run must show no regressions. When eval_run_after_id belongs to a run family (multiple runs sharing a label and corpus, e.g. from --runs N), every run in that family must individually qualify (same corpus, newer than the baseline, full coverage), and pct_fully_supported and regressions are judged by majority across the family \u2014 a single flaky run can neither force nor block acceptance, but a regression that reproduces in a majority of N runs still refuses. The family is every run sharing this label and corpus digest, not just the runs just written, so re-running under the same label until a regression is outvoted counts against the fix, not for it: an even split on the after side still refuses. Otherwise this fails with a conflict explaining which check said no.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "description": "`accept_proposal`'s arguments (phase-9 DESIGN \u00a7D).",
+      "properties": {
+        "eval_run_after_id": {
+          "format": "uuid",
+          "title": "Eval Run After Id",
+          "type": "string"
+        },
+        "proposal_id": {
+          "format": "uuid",
+          "title": "Proposal Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "proposal_id",
+        "eval_run_after_id"
+      ],
+      "title": "AcceptProposalArgs",
+      "type": "object"
+    },
+    "name": "accept_proposal"
+  },
+  {
+    "description": "Reject a proposal with a reason; if its draft was published, it is archived so the change leaves the corpus.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "description": "`reject_proposal`'s arguments (phase-9 DESIGN \u00a7D).",
+      "properties": {
+        "proposal_id": {
+          "format": "uuid",
+          "title": "Proposal Id",
+          "type": "string"
+        },
+        "reason": {
+          "minLength": 1,
+          "title": "Reason",
+          "type": "string"
+        }
+      },
+      "required": [
+        "proposal_id",
+        "reason"
+      ],
+      "title": "RejectProposalArgs",
+      "type": "object"
+    },
+    "name": "reject_proposal"
   }
 ]

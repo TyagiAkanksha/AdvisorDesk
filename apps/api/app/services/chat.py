@@ -10,11 +10,15 @@ inheritance relationship, the same seam pattern `app.rag.embeddings.Embedder` us
 direction.
 
 Phase-7's `report_content_gaps` MCP tool reads `retrieval_found`/`top_similarity` back off the
-rows this module writes — those column semantics (PRD §7.4) are pinned here, once.
+rows this module writes — those column semantics (PRD §7.4) are pinned here, once. Phase-9 task 15
+adds a second, broader reader of the same rows: `weak_queries` (DESIGN §D), which classifies every
+paired turn instead of only the refusals `content_gaps` sees — both share one private pairing,
+`_paired_turns`.
 """
 
 from __future__ import annotations
 
+import re
 import uuid
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -25,6 +29,8 @@ from sqlalchemy import and_, func, select
 from sqlalchemy.orm import Session, aliased
 
 from app.models import ChatMessage, ChatSession
+from app.services.errors import NotFoundError
+from app.services.eval_policy import LOW_CONFIDENCE_BAND, NEAR_MISS_BAND
 
 
 class RetrievedChunkLike(Protocol):
@@ -45,6 +51,8 @@ class RetrievedChunkLike(Protocol):
     def title(self) -> str: ...
     @property
     def slug(self) -> str: ...
+    @property
+    def similarity(self) -> float: ...
 
 
 class RetrievalResultLike(Protocol):
@@ -105,7 +113,12 @@ def record_user_message(session: Session, chat_session_id: uuid.UUID, text: str)
 
 
 def record_assistant_message(
-    session: Session, chat_session_id: uuid.UUID, text: str, retrieval: RetrievalResultLike
+    session: Session,
+    chat_session_id: uuid.UUID,
+    text: str,
+    retrieval: RetrievalResultLike,
+    *,
+    latency_ms: int | None = None,
 ) -> ChatMessage:
     """Persist one `role="assistant"` turn with its retrieval outcome (PRD §7.4, §7.7, §4).
 
@@ -120,12 +133,19 @@ def record_assistant_message(
     exactly when `app.rag.retrieval.retrieve()` says so (its own docstring's None-iff-empty-index
     semantics), never recomputed here.
 
+    Phase-9 DESIGN §A: each chunk-level citation entry also carries the retriever's own
+    `similarity`, rounded to 4 dp — so every stored answer doubles as a retrieval trace. Readers
+    must use `.get("similarity")` (pre-0009 rows have none). `latency_ms` is keyword-only and
+    defaults to `None` so every existing call site keeps working unchanged.
+
     Args:
         session: the caller's `Session`.
         chat_session_id: the owning `ChatSession.id`.
         text: the assistant's full answer text (already accumulated from the token stream).
         retrieval: the `RetrievalResult` (or any structurally-compatible `RetrievalResultLike`)
             this answer was grounded in.
+        latency_ms: the route's own whole-answer `time.monotonic()` measurement, or `None` when
+            the caller has none to report.
 
     Returns:
         The newly created (and flushed) `ChatMessage` row.
@@ -138,6 +158,7 @@ def record_assistant_message(
             "title": chunk.title,
             "slug": chunk.slug,
             "chunk_id": str(chunk.chunk_id),
+            "similarity": round(chunk.similarity, 4),
         }
         for chunk in retrieval.chunks
     ]
@@ -148,8 +169,33 @@ def record_assistant_message(
         citations=citations,
         retrieval_found=bool(retrieval.chunks),
         top_similarity=retrieval.top_similarity,
+        latency_ms=latency_ms,
     )
     session.add(message)
+    session.flush()
+    return message
+
+
+def set_message_feedback(session: Session, message_id: uuid.UUID, value: int) -> ChatMessage:
+    """Record 👍/👎 on one assistant turn (phase-9 DESIGN §A).
+
+    Args:
+        session: the caller's `Session` (CONVENTIONS.md §3 session-first; flush only).
+        message_id: the `ChatMessage.id` the `done` SSE event handed the client.
+        value: `-1` or `1` — already validated on the wire by `ChatFeedbackRequest`.
+
+    Returns:
+        The updated `ChatMessage` row.
+
+    Raises:
+        NotFoundError: no such row, or the row is not an assistant turn — a user message has no
+            answer to rate, and the two cases are deliberately indistinguishable to the caller
+            (same §9 envelope), since the client never legitimately holds a user-row id.
+    """
+    message = session.get(ChatMessage, message_id)
+    if message is None or message.role != "assistant":
+        raise NotFoundError(f"No assistant message {message_id}.")
+    message.feedback = value
     session.flush()
     return message
 
@@ -163,9 +209,35 @@ class GapRow:
     session_id: uuid.UUID
 
 
-def content_gaps(session: Session, *, days: int = 30, limit: int = 20) -> list[GapRow]:
-    """`report_content_gaps`'s query (PRD §6, normative): user messages whose following
-    assistant message (same session, next by `created_at`) has `retrieval_found = False`.
+@dataclass(frozen=True)
+class _PairedTurn:
+    """One user question joined to its next assistant reply, with that reply's outcome columns.
+
+    Private: the ONE shape both `content_gaps` (PRD §6, frozen) and `weak_queries` (phase-9
+    DESIGN §D) read the §6 pairing through. Adding a consumer must not re-derive the join.
+
+    `answer` (controller ruling, 2026-09-12 — an authorized extension beyond the task file's
+    Interfaces, which named only `retrieval_found`/`top_similarity`/`feedback`): the paired
+    assistant reply's own `content`. Without it, `weak_queries`' declining-answer rule (see its
+    own docstring) has no way to see a row where retrieval cleared the threshold but the
+    answerer declined anyway — `retrieval_found` alone cannot distinguish that case from a
+    confident answer. Internal to this module either way: `content_gaps`'s public `GapRow`
+    never carries it, so this extension is invisible outside `app.services.chat`.
+    """
+
+    question: str
+    asked_at: datetime
+    session_id: uuid.UUID
+    retrieval_found: bool | None
+    top_similarity: float | None
+    feedback: int | None
+    answer: str
+
+
+def _paired_turns(
+    session: Session, *, days: int, limit: int, uncovered_only: bool
+) -> list[_PairedTurn]:
+    """The §6 user↔reply pairing, newest question first, at most `limit` rows.
 
     Pairing: for each `role="user"` row, its partner is the `role="assistant"` row in the
     SAME `session_id` with the smallest `created_at` strictly greater than the user row's own
@@ -178,10 +250,13 @@ def content_gaps(session: Session, *, days: int = 30, limit: int = 20) -> list[G
     excludes it from the join for free, which is exactly the "no following assistant message
     -> not a gap" rule (task-01 brief Step 1).
 
-    The join's `retrieval_found.is_(False)` (not `.isnot(True)`, which NULL would also satisfy)
-    is what keeps a lone user message — one with no assistant row anywhere, hence no partner
-    row's `retrieval_found` to inspect at all — out of the result, and separately guards
-    against ever treating NULL as "uncovered" if this predicate is ever reused elsewhere.
+    When `uncovered_only` is `True`, the join also requires `retrieval_found.is_(False)` (not
+    `.isnot(True)`, which NULL would also satisfy) — what keeps a lone user message — one with
+    no assistant row anywhere, hence no partner row's `retrieval_found` to inspect at all — out
+    of the result, and separately guards against ever treating NULL as "uncovered". When
+    `uncovered_only` is `False`, every paired turn in the window comes back whatever its
+    outcome, for a caller (`weak_queries`) that classifies rows itself instead of pre-filtering
+    them in SQL.
 
     The `days` window applies to the user message's own `created_at` (the question's
     `asked_at`, not the paired reply's) — the brief's "last `days` days" reads on when the
@@ -189,11 +264,14 @@ def content_gaps(session: Session, *, days: int = 30, limit: int = 20) -> list[G
 
     Args:
         session: the caller's `Session`.
-        days: only gaps asked within the last `days` days (from now) are returned.
-        limit: caps the number of gaps returned, newest-first.
+        days: window on the USER row's `created_at` (the question's `asked_at`), per §6.
+        limit: SQL `LIMIT` on ROWS (not groups) — applied in SQL, before any Python filtering,
+            so a caller that filters afterwards must pass a limit that accounts for it.
+        uncovered_only: `True` adds `reply.retrieval_found.is_(False)` to the join (the §6 gap
+            definition); `False` returns every paired turn in the window whatever its outcome.
 
     Returns:
-        `GapRow`s ordered newest-`asked_at`-first, at most `limit` of them.
+        `_PairedTurn`s ordered newest-`asked_at`-first, at most `limit` of them.
     """
     user_msg = aliased(ChatMessage)
     reply_msg = aliased(ChatMessage)
@@ -212,7 +290,15 @@ def content_gaps(session: Session, *, days: int = 30, limit: int = 20) -> list[G
     cutoff = datetime.now(UTC) - timedelta(days=days)
 
     stmt = (
-        select(user_msg.content, user_msg.created_at, user_msg.session_id)
+        select(
+            user_msg.content.label("question"),
+            user_msg.created_at.label("asked_at"),
+            user_msg.session_id.label("session_id"),
+            reply_msg.retrieval_found.label("retrieval_found"),
+            reply_msg.top_similarity.label("top_similarity"),
+            reply_msg.feedback.label("feedback"),
+            reply_msg.content.label("answer"),
+        )
         .join(
             reply_msg,
             and_(
@@ -224,14 +310,289 @@ def content_gaps(session: Session, *, days: int = 30, limit: int = 20) -> list[G
         .where(
             user_msg.role == "user",
             user_msg.created_at >= cutoff,
-            reply_msg.retrieval_found.is_(False),
         )
         .order_by(user_msg.created_at.desc())
         .limit(limit)
     )
+    if uncovered_only:
+        stmt = stmt.where(reply_msg.retrieval_found.is_(False))
 
     rows = session.execute(stmt).all()
     return [
-        GapRow(question=row.content, asked_at=row.created_at, session_id=row.session_id)
+        _PairedTurn(
+            question=row.question,
+            asked_at=row.asked_at,
+            session_id=row.session_id,
+            retrieval_found=row.retrieval_found,
+            top_similarity=row.top_similarity,
+            feedback=row.feedback,
+            answer=row.answer,
+        )
         for row in rows
     ]
+
+
+def content_gaps(session: Session, *, days: int = 30, limit: int = 20) -> list[GapRow]:
+    """`report_content_gaps`'s query (PRD §6, normative) — unchanged behaviour, one line thick.
+
+    A wrapper over `_paired_turns(..., uncovered_only=True)` since phase-9 task 15: the pairing it
+    used to own inline is now shared with `weak_queries` (DESIGN §D). Signature, ordering, window
+    and result rows are byte-identical to phase 7's — `tests/test_content_gaps.py`'s 12 tests and
+    `mcp-tools.json` are the proof and must not move.
+    """
+    return [
+        GapRow(question=turn.question, asked_at=turn.asked_at, session_id=turn.session_id)
+        for turn in _paired_turns(session, days=days, limit=limit, uncovered_only=True)
+    ]
+
+
+# ---------------------------------------------------------------------------
+# `weak_queries` (phase-9 task 15, DESIGN §D): a refusal is not the only way an answer can be
+# weak — this is the second consumer of `_paired_turns`, above.
+# ---------------------------------------------------------------------------
+
+NEGATIVE_FEEDBACK = "negative_feedback"
+REFUSED = "refused"
+NEAR_MISS = "near_miss"
+LOW_CONFIDENCE = "low_confidence"
+
+#: Canonical order: the classification ladder itself (DESIGN §D, first match wins). Also the order
+#: `WeakQueryGroup.kinds` lists the distinct kinds it saw, so two reports of the same group are
+#: textually comparable.
+WEAK_QUERY_KINDS: tuple[str, ...] = (NEGATIVE_FEEDBACK, REFUSED, NEAR_MISS, LOW_CONFIDENCE)
+
+#: Hard ceiling on ROWS `weak_queries` pulls out of SQL before grouping. Grouping and
+#: classification happen in Python (the `feedback`/band ladder is not expressible as one portable
+#: GROUP BY over a correlated join), so `limit` cannot be pushed down: it caps GROUPS. This caps
+#: the scan instead — orders of magnitude above this app's real 30-day volume (a single demo
+#: session is tens of turns), and it keeps one pathological window from pulling the whole
+#: `chat_messages` table into memory.
+_WEAK_QUERY_SCAN_LIMIT = 2000
+
+# Controller ruling (2026-09-12) + fix round 1 (2026-09-13, Opus review of 0c5b509, I-2/I-3): the
+# refusal wording an answer emits when it declines (PRD §7.4 / `app.rag.synthesis.SYSTEM_PROMPT`'s
+# own instruction to the model — "reply that no published guidance covers this"), probed as a
+# casefolded SUBSTRING against only the answer's FIRST SENTENCE (see `_first_sentence_prefix`).
+# This is a documented REPORTING heuristic, not a judge call: it exists to let a report read
+# history cheaply, with no LLM call of its own. `app.eval.groundedness`'s `_model_declined` (task
+# 05c, backed by `MetricsJudge.is_refusal`) is the semantic, judge-based counterpart the eval
+# harness uses instead — naming both here, in one place, is what keeps a future phrasing change in
+# `app.rag.synthesis` from silently blinding this heuristic without either side ever raising an
+# error.
+#
+# Fix round 1 narrowed the ORIGINAL match (the full phrase "no published guidance covers this",
+# anywhere in the answer) two ways the review's boundary probe proved were both wrong:
+#   - RECALL (I-2): the real answerer paraphrases freely. Task 14's own persisted run recorded
+#     "No published guidance in the provided context covers how much cash to set aside..." and "No
+#     published guidance covers whether exercising early is right for you." verbatim, alongside
+#     the canonical "...covers this. Please ask the advisory team." — only the last of the three
+#     contained the old, longer phrase. Shortening the probed phrase to "no published guidance"
+#     (the part every recorded variant shares) catches all three.
+#   - PRECISION (I-3): a genuine, substantively-answered question can still emit that phrase as a
+#     HEDGING CLOSER, never as the opening — recorded example (task-12-review.md:224): "...it
+#     would be best to consult the advisory team, as no published guidance covers this aspect in
+#     detail." appended after real, cited content ("prompt bleed"). Every recorded REFUSAL, by
+#     contrast, OPENS with the phrase. Restricting the probe to the answer's first sentence catches
+#     every recorded refusal while excluding a mid-or-late-answer closer.
+_DECLINE_PHRASE = "no published guidance"
+
+#: Upper bound, in characters, on how far `_first_sentence_prefix` looks for a sentence-ending
+#: `.`/`!`/`?` before giving up and treating the whole window as "the first sentence" — a generous
+#: multiple of every recorded refusal's length (all well under 120 chars), so a real refusal is
+#: never truncated mid-phrase, while a long substantive opening sentence still bounds the scan.
+_DECLINE_PROBE_WINDOW = 160
+
+#: A `.`/`!`/`?` followed by whitespace or end-of-string — "the end of a sentence", for this
+#: probe's purposes only (see `_first_sentence_prefix`'s docstring for why this is not a general
+#: sentence splitter).
+_SENTENCE_END_RE = re.compile(r"[.!?](?=\s|$)")
+
+
+def _first_sentence_prefix(answer: str) -> str:
+    """A minimal, LOCAL "first sentence" approximation for `_is_declining_answer` — deliberately
+    NOT `app.eval.metrics.split_sentences` (the repo's real, abbreviation-aware sentence
+    splitter): that module lives in `app.eval`, and the import-linter contract "app.services
+    imports only app.models and app.config" (`apps/api/pyproject.toml`) forbids `app.services`
+    from importing it. This probe needs none of that splitter's abbreviation handling — only "does
+    the answer OPEN with a decline" — so it uses the first `.`/`!`/`?` followed by whitespace or
+    end-of-string, within the first `_DECLINE_PROBE_WINDOW` characters; if none is found in that
+    window, the window itself (not the whole answer) stands in for "the first sentence". Not a
+    general-purpose sentence splitter — do not reuse this for anything else.
+    """
+    window = answer.strip()[:_DECLINE_PROBE_WINDOW]
+    match = _SENTENCE_END_RE.search(window)
+    return window[: match.end()] if match else window
+
+
+def _is_declining_answer(answer: str) -> bool:
+    """True when `answer`'s FIRST SENTENCE (see `_first_sentence_prefix`) matches the canonical
+    refusal phrasing (see `_DECLINE_PHRASE`'s own comment for why this is a reporting heuristic,
+    not a judge call, and why the match is scoped to the first sentence). Casefolded substring
+    match, not exact-case."""
+    return _DECLINE_PHRASE in _first_sentence_prefix(answer).casefold()
+
+
+@dataclass(frozen=True)
+class WeakQueryExample:
+    """One concrete turn behind a `WeakQueryGroup` — verbatim text, for the report/slide."""
+
+    question: str
+    kind: str
+    top_similarity: float | None
+    created_at: datetime
+
+
+@dataclass(frozen=True)
+class WeakQueryGroup:
+    """One normalised question and every weak turn that asked it (DESIGN §D)."""
+
+    normalized: str
+    count: int
+    kinds: list[str]  # distinct, in `WEAK_QUERY_KINDS` order
+    worst_top_similarity: float | None  # min over non-None similarities; None iff all were None
+    examples: list[WeakQueryExample]  # at most 3, newest `created_at` first
+
+
+def _normalize_question(text: str) -> str:
+    """DESIGN §D grouping rule: casefold, collapse internal whitespace, strip trailing
+    `?`/`!`/`.` (and the spaces that stripping order leaves behind)."""
+    return " ".join(text.split()).casefold().rstrip("?!. ")
+
+
+def _classify_turn(turn: _PairedTurn, *, threshold: float) -> str | None:
+    """Classify one paired turn per `weak_queries`' decision ladder, first match wins.
+
+    One `if`/`return` per ladder rung, each commented with its row number from `weak_queries`'
+    own docstring table — mirrors `app.eval.taxonomy.classify_failure`'s style.
+    """
+    # Row 1: a human thumbs-down outranks every inferred signal.
+    if turn.feedback == -1:
+        return NEGATIVE_FEEDBACK
+
+    # Row 2 (controller ruling, 2026-09-12): retrieval CLEARED the threshold and the answerer
+    # declined anyway — the case `retrieval_found` alone cannot see (task 05c's most interesting
+    # weak query). Fires ONLY when `retrieval_found IS True` (not merely truthy): a NULL
+    # `retrieval_found` must stay invisible to this rule exactly as it is to rows 3-5 below, and
+    # a `retrieval_found is False` row is untouched by a declining answer here — "something was
+    # close" (or wasn't) is information about RETRIEVAL, which rows 3-4 already classify on their
+    # own; a decline adds nothing there.
+    if turn.retrieval_found is True and _is_declining_answer(turn.answer):
+        return NEAR_MISS
+
+    # Row 3: nothing retrieved close enough to call it a near miss.
+    if turn.retrieval_found is False and (
+        turn.top_similarity is None or turn.top_similarity < threshold - NEAR_MISS_BAND
+    ):
+        return REFUSED
+
+    # Row 4: nothing cleared the threshold, but something came close — the corpus almost had it.
+    if turn.retrieval_found is False:
+        return NEAR_MISS
+
+    # Row 5: an answer was given, but only just above the threshold.
+    if (
+        turn.retrieval_found is True
+        and turn.top_similarity is not None
+        and turn.top_similarity < threshold + LOW_CONFIDENCE_BAND
+    ):
+        return LOW_CONFIDENCE
+
+    return None
+
+
+def weak_queries(
+    session: Session, *, days: int = 30, limit: int = 20, threshold: float
+) -> list[WeakQueryGroup]:
+    """Client questions the system answered badly — not just the ones it refused (DESIGN §D).
+
+    Every paired turn in the window is classified, FIRST MATCH WINS:
+
+    | # | Kind | Condition |
+    |---|---|---|
+    | 1 | `negative_feedback` | `feedback == -1` |
+    | 2 | `near_miss` | `retrieval_found is True` and the stored answer DECLINES |
+    | 3 | `refused` | not found, and (`top_similarity is None` or `< threshold - NEAR_MISS_BAND`) |
+    | 4 | `near_miss` | not found, and `top_similarity >= threshold - NEAR_MISS_BAND` |
+    | 5 | `low_confidence` | found, and `top_similarity < threshold + LOW_CONFIDENCE_BAND` |
+
+    Row 1 outranks every inferred signal — a human said so. Row 2 (controller ruling,
+    2026-09-12) is the case `retrieval_found` alone cannot see: retrieval cleared the threshold
+    and the answerer declined anyway (see `_is_declining_answer`). Narrower than it looks: this
+    fires ONLY when `retrieval_found IS True` — a not-found row's classification (rows 3-4) is
+    unaffected by a declining answer, because "something was close" is information about
+    RETRIEVAL, and a decline adds nothing there.
+
+    Anything else is not weak and is dropped. "found" means `retrieval_found is True` and "not
+    found" means `retrieval_found is False` — a NULL `retrieval_found` (a pre-0009 row, whose
+    outcome was never recorded) satisfies NEITHER, so such a row is weak only through rule 1. That
+    mirrors `content_gaps`' deliberate `.is_(False)`-not-`.isnot(True)` choice: NULL is never read
+    as "uncovered".
+
+    Precedence, in one line: `negative_feedback` -> (`retrieval_found` and the answer declines ->
+    `near_miss`) -> `refused` -> `near_miss` -> `low_confidence`.
+
+    Turns are then grouped by normalised text (casefold, collapse whitespace, strip trailing
+    `?`/`!`/`.`), ordered `count` desc, then `worst_top_similarity` asc (a group whose worst
+    similarity is `None` sorts FIRST within its count — nothing was retrieved at all, which is as
+    weak as it gets), then `normalized` asc as a deterministic final tiebreaker.
+
+    Args:
+        session: the caller's `Session` (CONVENTIONS.md §3 session-first; reads only).
+        days: window on when the question was ASKED (same rule as `content_gaps`).
+        limit: maximum number of GROUPS returned (not rows — see `_WEAK_QUERY_SCAN_LIMIT`).
+        threshold: the retrieval similarity threshold the answers were served under —
+            `Settings.similarity_threshold`, passed in by the caller. Keyword-only with NO
+            default: a band is meaningless against a guessed threshold, and `app.services` must
+            not reach for `Settings` on its own (the MCP tool layer owns that wiring).
+
+    Returns:
+        `WeakQueryGroup`s, at most `limit` of them, in the order described above.
+    """
+    turns = _paired_turns(session, days=days, limit=_WEAK_QUERY_SCAN_LIMIT, uncovered_only=False)
+
+    # Bucket by normalised question text. Insertion order into each bucket's list follows the
+    # SQL's own newest-first order (see `_paired_turns`), so each bucket's entries are already
+    # newest-first — `examples` below needs only a `[:3]` slice, never a re-sort.
+    buckets: dict[str, list[tuple[_PairedTurn, str]]] = {}
+    for turn in turns:
+        kind = _classify_turn(turn, threshold=threshold)
+        if kind is None:
+            continue
+        buckets.setdefault(_normalize_question(turn.question), []).append((turn, kind))
+
+    groups = [_build_group(normalized, entries) for normalized, entries in buckets.items()]
+
+    # Sorting key straight from the Interfaces notes: count desc, then worst-similarity asc with
+    # `None` sorting first (nothing retrieved at all is at least as weak as any real number),
+    # then normalized text asc as a final, fully deterministic tiebreaker.
+    groups.sort(
+        key=lambda group: (
+            -group.count,
+            group.worst_top_similarity if group.worst_top_similarity is not None else -1.0,
+            group.normalized,
+        )
+    )
+    return groups[:limit]
+
+
+def _build_group(normalized: str, entries: list[tuple[_PairedTurn, str]]) -> WeakQueryGroup:
+    """Fold one bucket of `(turn, kind)` entries (already newest-first, see `weak_queries`) into
+    its `WeakQueryGroup`: distinct kinds in ladder order, the worst (minimum) similarity seen —
+    `None` only when every turn in the bucket had `top_similarity is None` — and at most 3
+    examples, newest first (a `[:3]` slice needs no re-sort; see `weak_queries`)."""
+    similarities = [turn.top_similarity for turn, _ in entries if turn.top_similarity is not None]
+    return WeakQueryGroup(
+        normalized=normalized,
+        count=len(entries),
+        kinds=[kind for kind in WEAK_QUERY_KINDS if any(entry[1] == kind for entry in entries)],
+        worst_top_similarity=min(similarities) if similarities else None,
+        examples=[
+            WeakQueryExample(
+                question=turn.question,
+                kind=kind,
+                top_similarity=turn.top_similarity,
+                created_at=turn.asked_at,
+            )
+            for turn, kind in entries[:3]
+        ],
+    )

@@ -11,10 +11,12 @@ export default function Component({
   size = 'medium',
   color = 'default',
   disabled,
+  pressed,
 }: IconButtonProps) {
   return (
     <MuiIconButton
       aria-label={label}
+      aria-pressed={pressed}
       onClick={onClick}
       type={type}
       size={size}

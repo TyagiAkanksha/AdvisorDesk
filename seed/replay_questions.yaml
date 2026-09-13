@@ -1,0 +1,105 @@
+# Traffic replay set (phase-9 DESIGN §C4). ~40 realistic persona questions replayed against the
+# DEPLOYED public chat endpoint before the 2026-09-24 talk, so `report_weak_queries` has real rows.
+# `kind` records what we EXPECT, for reading the report afterwards — nothing asserts it: the whole
+# point is to see what the live system actually does. The ten `near_miss` questions aim at DESIGN
+# §C2's deliberately-unwritten planted gaps.
+
+# --- Sam: new-grad engineer, first RSU grant, first ESPP window ----------------
+- question: "My first RSU tranche vested and the tax withheld looked low. Why?"
+  persona: sam
+- question: "Should I sell my RSUs as soon as they vest or hold them?"
+  persona: sam
+- question: "My offer says my RSUs are double-trigger. What does that actually mean?"
+  persona: sam
+- question: "What happens to my RSUs if the company goes public?"
+  persona: sam
+- question: "How is the ESPP discount taxed when I sell the shares?"
+  persona: sam
+- question: "What makes an ESPP sale qualifying instead of disqualifying?"
+  persona: sam
+- question: "What is the difference between ISOs and NSOs on my grant?"
+  persona: sam
+- question: "How is exercising an NSO taxed?"
+  persona: sam
+- question: "What should I do with my 401(k) when I change jobs?"
+  persona: sam
+- question: "How do you charge for financial planning?"
+  persona: sam
+
+# --- Priya: senior IC at a pre-IPO startup, ISOs, tender offer, AMT ------------
+- question: "Will exercising my ISOs this year trigger AMT?"
+  persona: priya
+- question: "If I pay AMT on an ISO exercise, do I ever get that money back?"
+  persona: priya
+- question: "Should I file an 83(b) election on my restricted stock?"
+  persona: priya
+- question: "What is the deadline for filing an 83(b) election?"
+  persona: priya
+- question: "Our investors are running a tender offer. Should I sell some shares?"
+  persona: priya
+- question: "How does an IPO lock-up period affect when I can sell?"
+  persona: priya
+- question: "I am early exercising my options. What are the risks?"
+  persona: priya
+- question: "How much of my net worth should be in my employer's stock?"
+  persona: priya
+
+# --- Marcus: staff engineer, public company, concentrated stock, maxed 401(k) --
+- question: "How do I unwind a concentrated position in my employer's stock without a huge tax bill?"
+  persona: marcus
+- question: "What is a mega-backdoor Roth and does it work with my 401(k)?"
+  persona: marcus
+- question: "How much can I put into after-tax 401(k) contributions this year?"
+  persona: marcus
+- question: "Why would I use my HSA as a retirement account instead of spending it?"
+  persona: marcus
+- question: "Is it better to donate appreciated stock than to donate cash?"
+  persona: marcus
+- question: "I am now considered an insider. What is a 10b5-1 plan?"
+  persona: marcus
+- question: "If I leave before my next vest, what happens to my unvested RSUs?"
+  persona: marcus
+- question: "Can the wash-sale rule apply across my RSU and ESPP lots?"
+  persona: marcus
+
+# --- Planted gaps (DESIGN §C2): expected near-misses, deliberately unwritten ---
+- question: "I am transferring to our Berlin office. How are my RSUs taxed once I am not a US employee?"
+  persona: marcus
+  kind: near_miss
+- question: "Does your equity compensation guidance apply to employees outside the United States?"
+  persona: sam
+  kind: near_miss
+- question: "Part of my compensation is paid in USDC. How is that taxed?"
+  persona: priya
+  kind: near_miss
+- question: "My startup wants to pay my bonus in crypto. What should I watch out for?"
+  persona: priya
+  kind: near_miss
+- question: "I am getting divorced. How are my unvested stock options split?"
+  persona: marcus
+  kind: near_miss
+- question: "Can stock options be divided in a divorce settlement?"
+  persona: marcus
+  kind: near_miss
+- question: "Can I borrow from my 401(k) if most of it is employer stock?"
+  persona: marcus
+  kind: near_miss
+- question: "What happens to my 401(k) loan if my employer's stock price drops?"
+  persona: marcus
+  kind: near_miss
+- question: "Does my startup stock qualify for QSBS?"
+  persona: priya
+  kind: near_miss
+- question: "How long do I have to hold QSBS shares before the gain is excluded?"
+  persona: priya
+  kind: near_miss
+
+# --- Off-domain: the refusal beat ---------------------------------------------
+- question: "What is the weather in Charlotte tomorrow?"
+  kind: off_domain
+- question: "Can you recommend a good Italian restaurant near your office?"
+  kind: off_domain
+- question: "Who won the basketball game last night?"
+  kind: off_domain
+- question: "Write me a Python script that scrapes job listings."
+  kind: off_domain

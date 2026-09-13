@@ -97,3 +97,654 @@
 - question: "How do I structure a real estate investment trust syndication for a rental property?"
   expected_slugs: []
   answerable: false
+
+# --- phase-9 wave 1, batch A (task 10): RSU vest · double-trigger IPO · ESPP · firm fees ---
+
+- question: "My first RSU tranche vests next month — what actually happens on the vest date?"
+  expected_slugs: ["what-happens-to-your-rsus-at-vest"]
+  answerable: true
+  class: answerable
+  persona: "Sam"
+  expected_chunks: ["what-happens-to-your-rsus-at-vest#what-happens-when-my-rsus-vest"]
+  reference_answer: >-
+    On the vest date the shares are delivered to you and their full market value that day is
+    ordinary compensation income reported on your W-2. Your employer withholds tax on that
+    amount, most often by holding back some of the vesting shares.
+
+- question: "Why was the tax withheld on my RSU vest less than what I actually owe?"
+  expected_slugs: ["what-happens-to-your-rsus-at-vest"]
+  answerable: true
+  class: answerable
+  persona: "Sam"
+  expected_chunks: ["what-happens-to-your-rsus-at-vest#why-was-so-little-tax-withheld-on-my-vest"]
+  reference_answer: >-
+    RSU income is withheld at the flat supplemental-wage rate rather than at your marginal rate,
+    so if your marginal rate is higher the withholding covers only part of the bill. The
+    difference is due with your return unless you pre-pay it.
+
+- question: "What flat rate does my employer withhold on an RSU vest this year?"
+  expected_slugs: ["what-happens-to-your-rsus-at-vest"]
+  answerable: true
+  class: stale_number
+  persona: "Sam"
+  expected_chunks: ["what-happens-to-your-rsus-at-vest#key-numbers-2026"]
+  reference_answer: >-
+    Your employer withholds RSU vest income at a flat 22% federal rate for supplemental wages up
+    to $1,000,000 for the year. Once your cumulative supplemental wages cross $1,000,000, the
+    excess is withheld at a mandatory flat rate of 37%.
+
+- question: "What does double-trigger vesting actually mean for my RSUs?"
+  expected_slugs: ["double-trigger-rsus-and-an-ipo"]
+  answerable: true
+  class: answerable
+  persona: "Priya"
+  expected_chunks: ["double-trigger-rsus-and-an-ipo#what-does-double-trigger-vesting-mean"]
+  reference_answer: >-
+    Double-trigger RSUs need two conditions before you own shares: the time-based vesting
+    condition and a liquidity event such as an IPO or acquisition. Until both are met nothing is
+    delivered and nothing is taxed.
+
+- question: "My company just filed to go public — when will I owe tax on my RSUs?"
+  expected_slugs: ["double-trigger-rsus-and-an-ipo"]
+  answerable: true
+  class: answerable
+  persona: "Priya"
+  expected_chunks: ["double-trigger-rsus-and-an-ipo#when-do-i-owe-tax-if-my-company-goes-public"]
+  reference_answer: >-
+    Tax is due when the shares actually settle, which for double-trigger RSUs is when the
+    liquidity condition is met — at or shortly after the IPO, or at lock-up expiry if the plan
+    says so. The value at settlement is ordinary wage income.
+
+- question: "My RSUs settle at the IPO and then I am locked up for six months — how should I think about selling?"
+  expected_slugs: ["double-trigger-rsus-and-an-ipo", "what-happens-to-your-rsus-at-vest"]
+  answerable: true
+  class: multi_source
+  persona: "Priya"
+  expected_chunks:
+    - "double-trigger-rsus-and-an-ipo#how-does-the-lock-up-period-change-my-planning"
+    - "what-happens-to-your-rsus-at-vest#should-i-sell-my-shares-at-vest-or-hold-them"
+  reference_answer: >-
+    You already paid ordinary income tax on the settlement value, so selling soon after the
+    lock-up lifts usually creates little further gain or loss. Holding instead is a decision to
+    keep a concentrated position, which is a risk question rather than a tax question.
+
+- question: "How is my ESPP taxed if I sell the shares right after the purchase date?"
+  expected_slugs: ["espp-qualifying-and-disqualifying-dispositions"]
+  answerable: true
+  class: answerable
+  persona: "Sam"
+  expected_chunks:
+    - "espp-qualifying-and-disqualifying-dispositions#what-makes-a-sale-qualifying-or-disqualifying"
+    - "espp-qualifying-and-disqualifying-dispositions#how-much-of-my-espp-gain-is-ordinary-income"
+  reference_answer: >-
+    Selling that soon is a disqualifying disposition: the discount you received is ordinary income
+    on your W-2 and anything above the purchase price is a short-term capital gain. No part of the
+    sale gets long-term rates.
+
+- question: "I am on our Berlin payroll — how is my ESPP purchase taxed in Germany?"
+  expected_slugs: []
+  answerable: false
+  class: near_miss
+  persona: "Sam"
+
+- question: "I have been buying company shares through payroll deductions. What changes for me once I have held them a while?"
+  expected_slugs: ["espp-qualifying-and-disqualifying-dispositions"]
+  answerable: true
+  class: threshold
+  persona: "Sam"
+  expected_chunks:
+    - "espp-qualifying-and-disqualifying-dispositions#what-makes-a-sale-qualifying-or-disqualifying"
+  reference_answer: >-
+    An ESPP sale is qualifying only once both statutory holding periods are met, measured from the
+    offering date and from the purchase date; before that it is disqualifying. In a qualifying sale
+    a smaller part of the gain is ordinary income and the rest is long-term capital gain.
+
+- question: "How does Queen City Wealth Planning charge for its services?"
+  expected_slugs: ["how-we-work-and-what-we-charge"]
+  answerable: true
+  class: answerable
+  persona: "Marcus"
+  expected_chunks: ["how-we-work-and-what-we-charge#how-does-queen-city-wealth-planning-get-paid"]
+  reference_answer: >-
+    Queen City Wealth Planning is fee-only: it is paid directly by its clients and takes no
+    commissions or referral fees. Its published schedule sets out an ongoing advisory fee and a
+    flat-fee planning engagement.
+
+- question: "If I hire you, how do you help me decide whether to sell my RSUs at vest, and how are you paid for that?"
+  expected_slugs: ["how-we-work-and-what-we-charge", "what-happens-to-your-rsus-at-vest"]
+  answerable: true
+  class: multi_source
+  persona: "Marcus"
+  expected_chunks:
+    - "how-we-work-and-what-we-charge#how-does-queen-city-wealth-planning-get-paid"
+    - "how-we-work-and-what-we-charge#what-does-your-fee-cover"
+    - "what-happens-to-your-rsus-at-vest#should-i-sell-my-shares-at-vest-or-hold-them"
+  reference_answer: >-
+    The sell-or-hold decision sits inside the ongoing advisory relationship the firm's fee covers,
+    alongside the withholding check and the concentration review. Because the firm is fee-only,
+    the recommendation does not change based on whether you sell.
+
+# --- phase-9 wave 1, batch B (task 11): ISO/NSO · AMT + credit · 83(b) · onboarding ---
+
+- question: "What is the difference between an ISO and an NSO when I exercise?"
+  expected_slugs: ["isos-and-nsos-how-each-one-is-taxed"]
+  answerable: true
+  class: answerable
+  persona: "Priya"
+  expected_chunks:
+    - "isos-and-nsos-how-each-one-is-taxed#what-is-the-difference-between-an-iso-and-an-nso"
+    - "isos-and-nsos-how-each-one-is-taxed#what-do-i-owe-when-i-exercise-an-nso"
+  reference_answer: >-
+    Exercising an NSO creates ordinary compensation income equal to the spread between your strike
+    price and the share value, withheld through payroll. Exercising an ISO creates no regular-tax
+    income if you hold the shares, but the same spread is an alternative-minimum-tax item.
+
+- question: "If I exercise my incentive stock options and keep the shares, what do I owe that year?"
+  expected_slugs: ["isos-and-nsos-how-each-one-is-taxed"]
+  answerable: true
+  class: answerable
+  persona: "Priya"
+  expected_chunks: ["isos-and-nsos-how-each-one-is-taxed#what-do-i-owe-when-i-exercise-an-iso"]
+  reference_answer: >-
+    For regular tax, nothing is due at exercise when you hold the shares. The spread at exercise is
+    an AMT adjustment, so an exercise-and-hold can still produce a bill through the alternative
+    minimum tax.
+
+- question: "I have ISOs from my startup and RSUs from my old public employer — how is each one taxed?"
+  expected_slugs: ["isos-and-nsos-how-each-one-is-taxed", "what-happens-to-your-rsus-at-vest"]
+  answerable: true
+  class: multi_source
+  persona: "Priya"
+  expected_chunks:
+    - "isos-and-nsos-how-each-one-is-taxed#what-is-the-difference-between-an-iso-and-an-nso"
+    - "what-happens-to-your-rsus-at-vest#what-happens-when-my-rsus-vest"
+  reference_answer: >-
+    RSUs are taxed as ordinary wage income when they vest and settle, with no timing choice. ISOs
+    are not taxed at grant and, for regular tax, not at exercise; the tax depends on when you
+    exercise and when you sell, and an exercise can create an AMT item.
+
+- question: "Why would exercising my ISOs create an alternative minimum tax bill?"
+  expected_slugs: ["amt-after-an-iso-exercise-and-the-credit-that-follows"]
+  answerable: true
+  class: answerable
+  persona: "Priya"
+  expected_chunks:
+    - "amt-after-an-iso-exercise-and-the-credit-that-follows#why-does-exercising-an-iso-trigger-amt"
+  reference_answer: >-
+    The spread between your strike price and the share value at exercise is not regular-tax income,
+    but it is added back when you compute the alternative minimum tax. If the AMT result exceeds
+    your regular tax, you pay the difference.
+
+- question: "If I pay AMT because of an ISO exercise, do I ever get that money back?"
+  expected_slugs: ["amt-after-an-iso-exercise-and-the-credit-that-follows"]
+  answerable: true
+  class: answerable
+  persona: "Priya"
+  expected_chunks:
+    - "amt-after-an-iso-exercise-and-the-credit-that-follows#what-is-the-amt-credit-and-when-do-i-get-it-back"
+  reference_answer: >-
+    The AMT you pay on an ISO exercise creates a minimum tax credit that carries forward. You use
+    it in later years where your regular tax exceeds your AMT, claimed on Form 8801, usually
+    recovering it over several years rather than all at once.
+
+- question: "What is the AMT exemption for a married couple filing jointly this year?"
+  expected_slugs: ["amt-after-an-iso-exercise-and-the-credit-that-follows"]
+  answerable: true
+  class: stale_number
+  persona: "Priya"
+  expected_chunks: ["amt-after-an-iso-exercise-and-the-credit-that-follows#key-numbers-2026"]
+  reference_answer: >-
+    For 2026, the AMT exemption for married taxpayers filing jointly is $140,200. That exemption
+    begins to phase out once your alternative minimum taxable income reaches $1,000,000.
+
+- question: "What does filing an 83(b) election actually do for me?"
+  expected_slugs: ["the-83-b-election-on-restricted-stock"]
+  answerable: true
+  class: answerable
+  persona: "Priya"
+  expected_chunks: ["the-83-b-election-on-restricted-stock#what-does-an-83-b-election-actually-do"]
+  reference_answer: >-
+    An 83(b) election has you taxed on restricted stock at its value when you receive it instead of
+    as it vests. You pay ordinary income tax on a small amount up front, and later appreciation is
+    capital gain if you hold the shares.
+
+- question: "My divorce is being finalized — how do we split my stock options?"
+  expected_slugs: []
+  answerable: false
+  class: near_miss
+  persona: "Priya"
+
+- question: "I bought shares I do not fully own yet and a colleague said I have about a month to tell the IRS something. What is she talking about?"
+  expected_slugs: ["the-83-b-election-on-restricted-stock"]
+  answerable: true
+  class: threshold
+  persona: "Priya"
+  expected_chunks: ["the-83-b-election-on-restricted-stock#when-does-the-30-day-clock-start-and-end"]
+  reference_answer: >-
+    She means the 83(b) election, which must be filed within 30 days of the transfer of the
+    restricted stock. The deadline runs in calendar days from the transfer date and cannot be
+    extended.
+
+- question: "What should I bring to a first meeting with you?"
+  expected_slugs: ["onboarding-with-us-and-what-to-bring"]
+  answerable: true
+  class: answerable
+  persona: "Sam"
+  expected_chunks:
+    - "onboarding-with-us-and-what-to-bring#what-documents-should-i-bring-to-our-first-meeting"
+    - "onboarding-with-us-and-what-to-bring#what-do-you-need-from-my-equity-paperwork"
+  reference_answer: >-
+    Bring your recent pay statements and W-2, your last two tax returns, statements for your
+    retirement and brokerage accounts, and your benefits summary. If you have equity, bring the
+    grant agreements, the plan document and any Form 3921 or 3922 you received.
+
+- question: "What paperwork do you need from me to look at an ISO exercise?"
+  expected_slugs: ["onboarding-with-us-and-what-to-bring", "isos-and-nsos-how-each-one-is-taxed"]
+  answerable: true
+  class: multi_source
+  persona: "Priya"
+  expected_chunks:
+    - "onboarding-with-us-and-what-to-bring#what-documents-should-i-bring-to-our-first-meeting"
+    - "onboarding-with-us-and-what-to-bring#what-do-you-need-from-my-equity-paperwork"
+    - "isos-and-nsos-how-each-one-is-taxed#what-do-i-owe-when-i-exercise-an-iso"
+    - "isos-and-nsos-how-each-one-is-taxed#how-long-do-i-have-to-hold-iso-shares-for-the-best-tax-treatment"
+  reference_answer: >-
+    The firm asks for your grant agreement, the plan document, your exercise history, any Form 3921
+    and your last two tax returns. Those show the strike price, the exercise dates and the holding
+    periods that decide whether an exercise is an AMT item or ordinary income.
+
+# --- phase-9 wave 1, batch C (task 12): concentration · tender offers · mega-backdoor Roth · rebalancing ---
+
+- question: "How much of my net worth is too much in my company's stock?"
+  expected_slugs: ["concentrated-employer-stock-and-our-10-rule"]
+  answerable: true
+  class: answerable
+  persona: "Marcus"
+  expected_chunks:
+    - "concentrated-employer-stock-and-our-10-rule#how-much-of-my-net-worth-should-sit-in-company-stock"
+  reference_answer: >-
+    Queen City's policy is that a single company's stock should not exceed 10% of your investable
+    net worth. Above that, the firm treats the excess as a position to unwind on a written schedule
+    rather than a reason to guess at the share price.
+
+- question: "I can only trade in an open window — how do we sell down my position?"
+  expected_slugs: ["concentrated-employer-stock-and-our-10-rule"]
+  answerable: true
+  class: answerable
+  persona: "Marcus"
+  expected_chunks:
+    - "concentrated-employer-stock-and-our-10-rule#what-about-my-trading-window-and-blackout-periods"
+    - "concentrated-employer-stock-and-our-10-rule#how-do-we-unwind-a-concentrated-position"
+  reference_answer: >-
+    Sales are scheduled inside your company's open trading windows, in partial tranches rather than
+    one large sale. Where blackouts get in the way, a Rule 10b5-1 plan adopted while you hold no
+    material non-public information can let pre-scheduled sales run after its cooling-off period.
+
+- question: "I am over your concentration limit and my next RSU tranche vests in March — how do we bring it down?"
+  expected_slugs:
+    - "concentrated-employer-stock-and-our-10-rule"
+    - "what-happens-to-your-rsus-at-vest"
+  answerable: true
+  class: multi_source
+  persona: "Marcus"
+  expected_chunks:
+    - "concentrated-employer-stock-and-our-10-rule#how-do-we-unwind-a-concentrated-position"
+    - "what-happens-to-your-rsus-at-vest#should-i-sell-my-shares-at-vest-or-hold-them"
+  reference_answer: >-
+    The first lever is the new shares: selling each tranche at vest adds almost no tax cost because
+    you are already taxed on its full value. The existing position is unwound on a written schedule
+    inside your trading windows, with each lot's basis and holding period considered before it is
+    sold.
+
+- question: "My startup is running a tender offer — how will the proceeds be taxed?"
+  expected_slugs: ["tender-offers-and-lock-up-periods"]
+  answerable: true
+  class: answerable
+  persona: "Priya"
+  expected_chunks: ["tender-offers-and-lock-up-periods#how-is-the-money-i-get-from-a-tender-offer-taxed"]
+  reference_answer: >-
+    Selling into a tender offer is a sale: you owe capital gains tax on the difference between the
+    price and your basis, long-term only if you met the holding period. If the shares came from an
+    ISO exercise, the sale can also be a disqualifying disposition that turns part of the gain into
+    ordinary income.
+
+- question: "Part of my offer is paid in stablecoins and token grants — how is that taxed?"
+  expected_slugs: []
+  answerable: false
+  class: near_miss
+  persona: "Priya"
+
+- question: "After the listing I am told I cannot touch my shares for six months. What is that, and what should I be doing in the meantime?"
+  expected_slugs: ["tender-offers-and-lock-up-periods"]
+  answerable: true
+  class: threshold
+  persona: "Priya"
+  expected_chunks: ["tender-offers-and-lock-up-periods#what-does-a-lock-up-period-stop-me-from-doing"]
+  reference_answer: >-
+    That is a lock-up: a contractual restriction on selling for a set period after the offering,
+    imposed by the underwriting agreement rather than by tax law. Use the time to set the sale
+    schedule and the tax set-aside, because the restriction ends on a date you already know.
+
+- question: "What is a mega-backdoor Roth, and will my 401(k) let me do it?"
+  expected_slugs: ["the-mega-backdoor-roth-step-by-step"]
+  answerable: true
+  class: answerable
+  persona: "Marcus"
+  expected_chunks:
+    - "the-mega-backdoor-roth-step-by-step#what-is-a-mega-backdoor-roth"
+    - "the-mega-backdoor-roth-step-by-step#does-my-plan-even-allow-this"
+  reference_answer: >-
+    A mega-backdoor Roth means making after-tax, non-Roth contributions to your 401(k) and then
+    moving them into a Roth account through an in-plan conversion or a rollover. It only works if
+    your plan document allows both the after-tax contributions and the conversion or in-service
+    distribution.
+
+- question: "I already max out my 401(k) — how much more can I put in after tax?"
+  expected_slugs: ["the-mega-backdoor-roth-step-by-step"]
+  answerable: true
+  class: answerable
+  persona: "Marcus"
+  expected_chunks: ["the-mega-backdoor-roth-step-by-step#how-much-can-actually-go-in"]
+  reference_answer: >-
+    Your room is the overall annual limit on everything contributed to the plan for you, minus your
+    own elective deferrals and anything your employer contributes. Whatever is left is the most you
+    can add as after-tax contributions, and plan testing can reduce it further.
+
+- question: "What is the total amount that can go into my 401(k) from all sources this year?"
+  expected_slugs: ["the-mega-backdoor-roth-step-by-step"]
+  answerable: true
+  class: stale_number
+  persona: "Marcus"
+  expected_chunks: ["the-mega-backdoor-roth-step-by-step#key-numbers-2026"]
+  reference_answer: >-
+    The 2026 overall limit on annual additions to a defined-contribution plan like a 401(k) is
+    $72,000. That ceiling counts your own elective deferrals, your employer's contributions, and any
+    after-tax contributions you make, all added together.
+
+- question: "When do you rebalance my portfolio, and what happens in a big market drop?"
+  expected_slugs: ["our-rebalancing-policy-and-the-20-drawdown-rule"]
+  answerable: true
+  class: answerable
+  persona: "Sam"
+  expected_chunks:
+    - "our-rebalancing-policy-and-the-20-drawdown-rule#when-do-you-rebalance-my-portfolio"
+    - "our-rebalancing-policy-and-the-20-drawdown-rule#what-do-you-do-in-a-20-drawdown"
+  reference_answer: >-
+    The firm reviews allocations quarterly and rebalances when a holding drifts outside its policy
+    band. A drop of 20% or more triggers an out-of-cycle review that rebalances into what fell and
+    harvests losses in taxable accounts where doing so would not create a wash sale.
+
+- question: "If the market falls 20% while most of my money is in company stock, what do you do?"
+  expected_slugs:
+    - "our-rebalancing-policy-and-the-20-drawdown-rule"
+    - "concentrated-employer-stock-and-our-10-rule"
+  answerable: true
+  class: multi_source
+  persona: "Marcus"
+  expected_chunks:
+    - "our-rebalancing-policy-and-the-20-drawdown-rule#what-do-you-do-in-a-20-drawdown"
+    - "concentrated-employer-stock-and-our-10-rule#what-is-the-risk-i-am-actually-taking"
+  reference_answer: >-
+    The drawdown review still runs, but a concentrated position changes what it can do: one company
+    can fall much further than the market and need not recover with it. The firm keeps unwinding
+    the position on its schedule rather than pausing sales because the price is down.
+
+# --- phase-9 wave 1, batch D (task 13): donating stock + DAF · leaving · wash sales · what we do not do ---
+
+- question: "Why is donating appreciated company stock better than donating cash?"
+  expected_slugs: ["donating-appreciated-stock-and-using-a-daf"]
+  answerable: true
+  class: answerable
+  persona: "Marcus"
+  expected_chunks: ["donating-appreciated-stock-and-using-a-daf#why-donate-shares-instead-of-cash"]
+  reference_answer: >-
+    Giving shares you have held more than a year lets you deduct their full fair market value
+    without ever realizing the capital gain, so the charity receives the whole position. If you sell
+    first and donate the proceeds, the gain is yours to pay tax on.
+
+- question: "Can I donate shares I just received from an RSU vest?"
+  expected_slugs: ["donating-appreciated-stock-and-using-a-daf"]
+  answerable: true
+  class: answerable
+  persona: "Marcus"
+  expected_chunks:
+    - "donating-appreciated-stock-and-using-a-daf#can-i-donate-shares-i-just-received-from-a-vest"
+  reference_answer: >-
+    You can give them away immediately, but shares held a year or less are short-term property, so
+    the deduction is limited to your basis. For newly vested RSU shares that basis is close to
+    today's price, so little is lost — the tax saving comes from giving shares held more than a year.
+
+- question: "How much of my income can I deduct for a gift of appreciated stock, and what is this year's standard deduction?"
+  expected_slugs: ["donating-appreciated-stock-and-using-a-daf"]
+  answerable: true
+  class: stale_number
+  persona: "Marcus"
+  expected_chunks: ["donating-appreciated-stock-and-using-a-daf#key-numbers-2026"]
+  reference_answer: >-
+    A gift of appreciated stock to a public charity is capped at 30% of your adjusted gross income
+    for the year. The 2026 standard deduction is $32,200 for married filing jointly and $16,100 for
+    a single filer.
+
+- question: "I am resigning next month — what happens to my unvested RSUs and my vested options?"
+  expected_slugs: ["leaving-your-employer-with-equity-on-the-table"]
+  answerable: true
+  class: answerable
+  persona: "Marcus"
+  expected_chunks:
+    - "leaving-your-employer-with-equity-on-the-table#what-happens-to-my-unvested-equity-when-i-resign"
+    - "leaving-your-employer-with-equity-on-the-table#how-long-do-i-have-to-exercise-my-vested-options"
+  reference_answer: >-
+    Unvested RSUs and options are normally forfeited on your last day unless your grant says
+    otherwise. Vested options stay exercisable only for the post-termination window in the plan, and
+    an incentive stock option exercised after the statutory post-termination period is taxed as a
+    nonqualified option instead.
+
+- question: "Can I borrow from my 401(k) when the balance is mostly employer stock?"
+  expected_slugs: []
+  answerable: false
+  class: near_miss
+  persona: "Marcus"
+
+- question: "If I leave before my ISO shares are long-term, what does that cost me in tax?"
+  expected_slugs:
+    - "leaving-your-employer-with-equity-on-the-table"
+    - "isos-and-nsos-how-each-one-is-taxed"
+  answerable: true
+  class: multi_source
+  persona: "Marcus"
+  expected_chunks:
+    - "leaving-your-employer-with-equity-on-the-table#how-long-do-i-have-to-exercise-my-vested-options"
+    - "isos-and-nsos-how-each-one-is-taxed#how-long-do-i-have-to-hold-iso-shares-for-the-best-tax-treatment"
+  reference_answer: >-
+    ISO treatment needs the shares held past both statutory holding periods; selling earlier is a
+    disqualifying disposition and the spread becomes ordinary income. Leaving also starts the
+    statutory post-termination clock, after which an exercise no longer qualifies as an ISO exercise
+    at all.
+
+- question: "Can an RSU vest two weeks after I sell at a loss create a wash sale?"
+  expected_slugs: ["wash-sales-across-rsu-and-espp-lots"]
+  answerable: true
+  class: answerable
+  persona: "Marcus"
+  expected_chunks:
+    - "wash-sales-across-rsu-and-espp-lots#what-is-a-wash-sale-in-plain-terms"
+    - "wash-sales-across-rsu-and-espp-lots#how-can-my-own-vesting-schedule-cause-a-wash-sale"
+  reference_answer: >-
+    Yes. Shares delivered by a vest are an acquisition of the same stock, so a vest inside the
+    statutory window on either side of your loss sale disallows that loss for now. The disallowed
+    amount is added to the basis of the newly vested shares.
+
+- question: "Does my ESPP purchase count as buying replacement shares?"
+  expected_slugs: ["wash-sales-across-rsu-and-espp-lots"]
+  answerable: true
+  class: answerable
+  persona: "Sam"
+  expected_chunks:
+    - "wash-sales-across-rsu-and-espp-lots#does-my-espp-purchase-count-as-a-replacement-buy"
+  reference_answer: >-
+    Yes — an ESPP purchase is a purchase of the same stock, so it can trigger the wash-sale rule
+    against a loss taken within the window on either side. Because the purchase date is fixed by the
+    offering period, the lever you control is the timing of the loss sale.
+
+- question: "I sold company shares for less than I paid and my broker's form says the loss was not allowed. Why?"
+  expected_slugs: ["wash-sales-across-rsu-and-espp-lots"]
+  answerable: true
+  class: threshold
+  persona: "Marcus"
+  expected_chunks:
+    - "wash-sales-across-rsu-and-espp-lots#what-does-my-broker-report-and-what-do-i-have-to-fix"
+  reference_answer: >-
+    Your 1099-B is flagging a wash sale: you acquired the same stock within the statutory window
+    before or after the sale, so the loss is disallowed for now and added to the new lot's basis.
+    Brokers apply the rule per account, so a purchase elsewhere can make your return differ from
+    the form.
+
+- question: "Besides not picking my stocks, is there anything else you won't help me with?"
+  expected_slugs: ["what-we-do-not-do-and-why"]
+  answerable: true
+  class: answerable
+  persona: "Sam"
+  expected_chunks:
+    - "what-we-do-not-do-and-why#do-you-pick-individual-stocks-or-time-the-market"
+    - "what-we-do-not-do-and-why#will-you-prepare-my-tax-return-or-give-me-legal-advice"
+  reference_answer: >-
+    Queen City does not pick individual stocks or time the market, does not sell insurance or
+    annuities, and does not prepare tax returns or give legal advice. It plans around those things
+    and refers you to a CPA or an attorney when the work belongs to one.
+
+- question: "Can you do my tax return and handle the paperwork for my ISO exercise?"
+  expected_slugs: ["what-we-do-not-do-and-why", "onboarding-with-us-and-what-to-bring"]
+  answerable: true
+  class: multi_source
+  persona: "Marcus"
+  expected_chunks:
+    - "what-we-do-not-do-and-why#will-you-prepare-my-tax-return-or-give-me-legal-advice"
+    - "onboarding-with-us-and-what-to-bring#what-documents-should-i-bring-to-our-first-meeting"
+    - "onboarding-with-us-and-what-to-bring#what-do-you-need-from-my-equity-paperwork"
+  reference_answer: >-
+    The firm does not prepare returns; it works alongside your CPA and gives them the numbers they
+    need. It does collect and keep your equity paperwork — grant agreements, the plan document,
+    exercise records and Forms 3921 and 3922 — so an exercise is planned and documented before it
+    happens.
+
+# --- phase-9 golden set (task 14): persona-first questions + the class balance to 80 ---
+
+- question: "How much cash should I set aside for taxes on my stock comp?"
+  expected_slugs: ["what-happens-to-your-rsus-at-vest"]
+  answerable: true
+  class: answerable
+  persona: "Sam"
+  expected_chunks: ["what-happens-to-your-rsus-at-vest#how-do-i-cover-the-shortfall-before-april"]
+  reference_answer: >-
+    Set aside the difference between the flat supplemental rate your employer withheld and your own
+    marginal rate on the vested value. You can pre-pay it with an estimated payment or by raising
+    your payroll withholding instead of waiting for the return.
+
+- question: "Everyone at work says to exercise early. Is that right for me?"
+  expected_slugs: ["the-83-b-election-on-restricted-stock"]
+  answerable: true
+  class: answerable
+  persona: "Priya"
+  expected_chunks: ["the-83-b-election-on-restricted-stock#when-is-an-83-b-election-a-good-idea"]
+  reference_answer: >-
+    Early exercise with an 83(b) election works best when the spread at transfer is small, you plan
+    to hold the shares, and you can afford to lose the money. It backfires if the company fails or
+    you leave before vesting, because the tax you paid is not refundable.
+
+- question: "Half my money is in my employer's shares and I am nervous. What do you advise?"
+  expected_slugs: ["concentrated-employer-stock-and-our-10-rule"]
+  answerable: true
+  class: answerable
+  persona: "Marcus"
+  expected_chunks:
+    - "concentrated-employer-stock-and-our-10-rule#how-much-of-my-net-worth-should-sit-in-company-stock"
+    - "concentrated-employer-stock-and-our-10-rule#what-is-the-risk-i-am-actually-taking"
+  reference_answer: >-
+    The firm's policy ceiling is 10% of investable net worth in any single company, and at half your
+    portfolio the position is the dominant risk you carry alongside the salary it pays. The answer
+    is a written unwind schedule inside your trading windows rather than a judgement about the
+    share price.
+
+- question: "Is working with you worth it if I mostly just have a salary and some RSUs?"
+  expected_slugs: ["how-we-work-and-what-we-charge"]
+  answerable: true
+  class: answerable
+  persona: "Sam"
+  expected_chunks:
+    - "how-we-work-and-what-we-charge#who-do-you-work-with-and-who-are-you-not-a-fit-for"
+  reference_answer: >-
+    Queen City works with tech employees whose pay includes equity, which is exactly a salary plus
+    RSUs, and it offers a flat-fee planning engagement for people who do not want an ongoing
+    relationship yet. It is not a fit if you want stock picks or active trading.
+
+- question: "Nobody has touched my account mix in over a year and stocks ran up. Is that a problem?"
+  expected_slugs: ["our-rebalancing-policy-and-the-20-drawdown-rule"]
+  answerable: true
+  class: threshold
+  persona: "Marcus"
+  expected_chunks:
+    - "our-rebalancing-policy-and-the-20-drawdown-rule#when-do-you-rebalance-my-portfolio"
+  reference_answer: >-
+    After a run-up your allocation has drifted toward stocks, so the portfolio is riskier than the
+    plan it started from. The firm reviews allocations quarterly and rebalances when a holding
+    drifts outside its policy band, which is what a year of untouched growth tends to cause.
+
+- question: "My startup shares might qualify for the small business stock exclusion — do I owe nothing if I hold five years?"
+  expected_slugs: []
+  answerable: false
+  class: near_miss
+  persona: "Priya"
+
+- question: "Can I exclude the gain on my founder shares when we get acquired?"
+  expected_slugs: []
+  answerable: false
+  class: near_miss
+  persona: "Priya"
+
+- question: "I am relocating to our Dublin office next year — will my RSU vests still be taxed the same way?"
+  expected_slugs: []
+  answerable: false
+  class: near_miss
+  persona: "Sam"
+
+- question: "A crypto company is recruiting me and part of the pay is in tokens — how does that work?"
+  expected_slugs: []
+  answerable: false
+  class: near_miss
+  persona: "Marcus"
+
+- question: "We are separating and my options are on the table in the settlement — how are they valued?"
+  expected_slugs: []
+  answerable: false
+  class: near_miss
+  persona: "Marcus"
+
+- question: "If I take a loan from my 401(k), which investments get sold to fund it?"
+  expected_slugs: []
+  answerable: false
+  class: near_miss
+  persona: "Sam"
+
+- question: "What is the best credit card for travel rewards?"
+  expected_slugs: []
+  answerable: false
+  class: off_domain
+  persona: "Sam"
+
+- question: "How do I negotiate a higher signing bonus?"
+  expected_slugs: []
+  answerable: false
+  class: off_domain
+  persona: "Priya"
+
+- question: "Can you help me set up payroll and benefits for my side business?"
+  expected_slugs: []
+  answerable: false
+  class: off_domain
+  persona: "Marcus"
+
+- question: "Which mortgage lender should I use for my first home?"
+  expected_slugs: []
+  answerable: false
+  class: off_domain
+  persona: "Sam"

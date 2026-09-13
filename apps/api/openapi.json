@@ -203,6 +203,24 @@
         "title": "Body_oauth_token",
         "type": "object"
       },
+      "ChatFeedbackRequest": {
+        "description": "`POST /public/chat/{message_id}/feedback`'s body (phase-9 DESIGN \u00a7A, D2).\n\n`Literal[-1, 1]` is the whole validation: `0` (\"neutral\") is deliberately NOT a legal value \u2014\na row with no feedback stays NULL, so \"never asked\" and \"asked, felt neutral\" are never\nconflated. Anything else is a 422 before the service or the DB CHECK is ever reached.",
+        "properties": {
+          "value": {
+            "enum": [
+              -1,
+              1
+            ],
+            "title": "Value",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "value"
+        ],
+        "title": "ChatFeedbackRequest",
+        "type": "object"
+      },
       "ChatRequest": {
         "description": "`POST /public/chat`'s request body (PRD \u00a75.3, exact field set).\n\n`session_id` absent or referencing an unknown session both mean \"start a new session\" (\u00a75.3)\n\u2014 `app.services.chat.get_or_create_session` handles both cases identically once this schema\nhas parsed a syntactically valid UUID (or `None`) out of the request body.\n\n`message` is `min_length=1` plus a whitespace-only rejection (review round 1, finding M-5) \u2014\nmirrors `app.models.schemas.content.ContentCreate.title`'s established two-guard pattern\nexactly: `min_length=1` alone still lets a whitespace-only string (`\"   \"`) through, since\nPydantic's length check counts characters, not content. An empty/blank message would otherwise\nstill burn an LLM call and a \u00a79 rate-limit slot, and poison phase-7's `report_content_gaps`\nwith empty \"questions\" (probe P7).",
         "properties": {
@@ -2257,6 +2275,60 @@
           }
         },
         "summary": "Public Chat"
+      }
+    },
+    "/api/v1/public/chat/{message_id}/feedback": {
+      "post": {
+        "description": "PRD \u00a75.3 surface, phase-9 DESIGN \u00a7A: record \ud83d\udc4d/\ud83d\udc4e on one assistant answer.\n\nUnauthenticated like every other route in this module; the `message_id` from the `done` SSE\nevent is the only capability required. Not rate-limited \u2014 see the ruling below.\n\nRuling \u2014 rate limiting (decide-and-justify, per the task brief): NOT rate-limited.\n`rate_limiter.check_message` is the wrong instrument: it charges the per-minute *chat* bucket\n(`RATE_LIMIT_PER_MIN=10`) and a per-day *session* bucket, so ten thumb clicks would deny the\nuser's own next question \u2014 a self-inflicted denial of service on the demo's most-clicked\ncontrol. The endpoint is also cheap and un-enumerable: one indexed PK lookup plus a\none-column UPDATE, addressed by a server-minted UUIDv4 the caller must already possess,\nwriting a value constrained to \u00b11 by both Pydantic and the DB CHECK, and creating no rows.\nThe blast radius of abuse is \"someone flips their own answer's rating repeatedly\", which the\nlast-write-wins semantics already absorb. If replay traffic (task 18) or prod logs ever show\nabuse, the follow-up is a *separate* cheap per-IP counter on `RateLimiter`, never sharing the\nchat buckets \u2014 recorded as a controller-visible decision, not deferred silently.",
+        "operationId": "public_chat_feedback",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "message_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Message Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ChatFeedbackRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          }
+        },
+        "summary": "Public Chat Feedback"
       }
     },
     "/api/v1/public/content": {

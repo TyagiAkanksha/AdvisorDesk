@@ -39,7 +39,7 @@ from sqlalchemy.orm import Session
 from app.config import Settings
 from app.db import make_engine, make_session_factory
 from app.eval.groundedness import OpenAIJudge
-from app.eval.metrics import GroundednessJudge, split_sentences
+from app.eval.metrics import GroundednessJudge, split_sentences, strip_citation_markers
 from app.models import Chunk, EvalResult
 from app.seed_paths import seed_data_dir
 from app.services.errors import NotFoundError
@@ -138,11 +138,16 @@ def load_judge_labels(path: Path) -> list[JudgeLabel]:
 
 def judge_answer(judge: GroundednessJudge, answer: str, chunks: Sequence[str]) -> bool:
     """The harness's own "fully supported" definition (`app.eval.groundedness._evaluate_question`),
-    reused verbatim: every sentence of `answer` (via `app.eval.metrics.split_sentences`) must be
-    supported by the union of `chunks`. An empty answer is `True` (nothing unsupported was said) —
-    the one edge the harness itself never hits.
+    reused verbatim: every sentence of `answer` (via `app.eval.metrics.split_sentences`, after
+    `app.eval.metrics.strip_citation_markers`) must be supported by the union of `chunks`. An empty
+    answer is `True` (nothing unsupported was said) — the one edge the harness itself never hits.
+
+    Task-05b (task-10 re-review §3): same input hygiene as `_evaluate_question` — `[n]` citation
+    markers are stripped (the answerer's and judge's bracket-numbering spaces disagree) and the
+    ordinal-list-marker fragments `split_sentences` now drops are never judged as claims — so this
+    function and the harness share one definition of "fully supported".
     """
-    sentences = split_sentences(answer)
+    sentences = split_sentences(strip_citation_markers(answer))
     if not sentences:
         return True
     return all(judge.is_supported(sentence, chunks) for sentence in sentences)

@@ -33,6 +33,13 @@ from typing import Protocol
 # by call count/order.
 _SENTENCE_BOUNDARY_RE = re.compile(r"(?<=[.!?])\s+")
 
+# Task-05b (from the task-10 re-review §3, row 1): a markdown ordered-list marker such as `1.` or
+# `2.` is `.` + whitespace, which `_SENTENCE_BOUNDARY_RE` happily splits on — handing the
+# faithfulness judge a bare `"2."` as a "claim" it can never find support for, sinking an
+# otherwise-flawless answer. A fragment with no letter in it carries no claim, so it is dropped
+# post-split rather than judged.
+_HAS_ALPHA_RE = re.compile(r"[A-Za-z]")
+
 
 def split_sentences(text: str) -> list[str]:
     """Split `text` into sentences on `.`/`!`/`?` followed by whitespace.
@@ -41,11 +48,39 @@ def split_sentences(text: str) -> list[str]:
     `context_recall` below needs the identical splitter to turn a reference answer into claims,
     and the per-sentence faithfulness judge in `groundedness.py` now calls this copy instead of
     keeping a private one.
+
+    Task-05b: a fragment with no alphabetic character (e.g. an ordinal list marker `1.` / `(b)` /
+    `2)`) is never returned as a sentence — it is dropped, since the marker itself carries no
+    claim for the judge to score (task-10 re-review §3, row 1). Sentences that merely START with a
+    marker (`"Step 1. Sell."` splits to `["Step 1.", "Sell."]`) keep it — only markers that split
+    off into their OWN fragment are affected.
     """
     stripped = text.strip()
     if not stripped:
         return []
-    return [sentence for sentence in _SENTENCE_BOUNDARY_RE.split(stripped) if sentence]
+    return [
+        sentence
+        for sentence in _SENTENCE_BOUNDARY_RE.split(stripped)
+        if sentence and _HAS_ALPHA_RE.search(sentence)
+    ]
+
+
+# Task-05b (task-10 re-review §3, row 2): the answerer numbers `[n]` markers by content
+# first-use order (`app.rag.synthesis._format_sources`, deliberately, 1:1 with the wire
+# `citations` array), while `OpenAIJudge.is_supported` numbers its deduped CHUNK list 1..N —
+# the two numbering spaces disagree whenever two retrieved chunks share a `content_id`. A
+# correctly-cited sentence then gets rejected because the judge's `[2]` names a different chunk
+# than the answerer's `[2]`. Faithfulness is "claim supported by the union of retrieved chunks",
+# so the bracket number must never be part of the claim text the judge sees.
+_CITATION_MARKER_RE = re.compile(r"\s*\[\d+\]")
+
+
+def strip_citation_markers(text: str) -> str:
+    """Remove `[n]` citation markers (one or more digits) and the whitespace immediately before
+    them: `"Costs $2,500 [2]."` -> `"Costs $2,500."`; `"See [1][3] here."` -> `"See here."`.
+    Everything else is untouched. Idempotent.
+    """
+    return _CITATION_MARKER_RE.sub("", text)
 
 
 def _dedupe_preserve_order(items: Iterable[str]) -> list[str]:

@@ -60,6 +60,7 @@ from app.eval.metrics import (
     ragas_context_precision,
     retrieval_metrics,
     split_sentences,
+    strip_citation_markers,
 )
 from app.eval.questions import EvalQuestion, load_questions, resolve_expected_chunks
 from app.eval.taxonomy import classify_failure, failure_distribution
@@ -498,8 +499,14 @@ def _evaluate_question(
 
     fully_supported: bool | None
     if question.answerable:
+        # Task-05b (task-10 re-review §3): the judge sees the answer with `[n]` citation markers
+        # stripped and letter-less list-marker fragments dropped — the answerer's and judge's
+        # bracket-numbering spaces disagree (row 2) and the sentence splitter cuts inside ordinal
+        # list markers (row 1), so both artifacts must never reach the judge as "claims". The
+        # PERSISTED `answer_text` below stays the raw, un-stripped wire answer.
+        judged_sentences = split_sentences(strip_citation_markers(answer_text))
         fully_supported = all(
-            judge.is_supported(sentence, chunk_texts) for sentence in split_sentences(answer_text)
+            judge.is_supported(sentence, chunk_texts) for sentence in judged_sentences
         )
         verdict = "PASS" if slugs_hit and fully_supported else "FAIL"
     else:

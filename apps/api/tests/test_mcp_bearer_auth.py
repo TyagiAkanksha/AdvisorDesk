@@ -82,7 +82,8 @@ _INITIALIZE_BODY = {
 
 # task-01 (search_content, count_content) + task-02 (create_draft, edit_content,
 # delete_content, tag_content, publish, archive) + phase-7 task-01 (report_content_gaps)
-# + phase-9 task-15 (report_weak_queries) — the full registry as of this task.
+# + phase-9 task-15 (report_weak_queries) + phase-9 task-16 (the four proposal tools)
+# — the full registry as of this task.
 _EXPECTED_TOOL_NAMES = {
     "search_content",
     "count_content",
@@ -94,6 +95,10 @@ _EXPECTED_TOOL_NAMES = {
     "archive",
     "report_content_gaps",
     "report_weak_queries",
+    "propose_content_fix",
+    "list_proposals",
+    "accept_proposal",
+    "reject_proposal",
 }
 
 _SCRIPTS_DIR = Path(__file__).resolve().parent.parent / "scripts"

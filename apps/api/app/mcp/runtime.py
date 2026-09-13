@@ -41,6 +41,7 @@ from sqlalchemy.orm import Session
 
 from app.mcp.tool_spec import SESSION_INFO_PIPELINE_KEY, ToolSpec
 from app.mcp.tools_gaps import GAPS_TOOLS
+from app.mcp.tools_proposals import PROPOSAL_TOOLS
 from app.mcp.tools_read import READ_TOOLS
 from app.mcp.tools_write import WRITE_TOOLS
 from app.services.errors import ToolInputError, ToolNotFoundError
@@ -48,8 +49,9 @@ from app.services.lifecycle import ChunkPipeline, NoopChunkPipeline
 
 __all__ = ["ToolSpec", "call_tool", "list_tool_schemas"]
 
-# Every registered tool, module-by-module.
-_ALL_TOOLS: tuple[ToolSpec, ...] = (*READ_TOOLS, *WRITE_TOOLS, *GAPS_TOOLS)
+# Every registered tool, module-by-module. `PROPOSAL_TOOLS` appended LAST (phase-9 task-16) so
+# the `mcp-tools.json` diff for adding it is purely additive (entries are emitted in this order).
+_ALL_TOOLS: tuple[ToolSpec, ...] = (*READ_TOOLS, *WRITE_TOOLS, *GAPS_TOOLS, *PROPOSAL_TOOLS)
 
 _REGISTRY: dict[str, ToolSpec] = {tool.name: tool for tool in _ALL_TOOLS}
 

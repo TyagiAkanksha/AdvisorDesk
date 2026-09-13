@@ -94,8 +94,8 @@ _TOOLS_LIST_BODY = {"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params":
 
 #: task-01 (search_content, count_content) + task-02 (create_draft, edit_content, delete_content,
 #: tag_content, publish, archive) + phase-7 task-01 (report_content_gaps) + phase-9 task-15
-#: (report_weak_queries) — the full registry, copied from
-#: `tests/test_mcp_bearer_auth.py::_EXPECTED_TOOL_NAMES`.
+#: (report_weak_queries) + phase-9 task-16 (the four proposal tools) — the full registry, copied
+#: from `tests/test_mcp_bearer_auth.py::_EXPECTED_TOOL_NAMES`.
 _EXPECTED_TOOL_NAMES = {
     "search_content",
     "count_content",
@@ -107,6 +107,10 @@ _EXPECTED_TOOL_NAMES = {
     "archive",
     "report_content_gaps",
     "report_weak_queries",
+    "propose_content_fix",
+    "list_proposals",
+    "accept_proposal",
+    "reject_proposal",
 }
 
 _EXPECTED_OAUTH_OPERATION_IDS = {

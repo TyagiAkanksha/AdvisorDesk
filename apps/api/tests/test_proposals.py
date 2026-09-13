@@ -15,14 +15,6 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
 import pytest
-from app.services.proposals import (
-    accept_proposal,
-    check_acceptance,
-    kind_for_cause,
-    list_proposals,
-    propose_content_fix,
-    reject_proposal,
-)
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -32,6 +24,14 @@ from app.services.errors import ConflictError, NotFoundError
 from app.services.eval_policy import PROPOSAL_KIND_BY_CAUSE
 from app.services.eval_runs import record_run
 from app.services.lifecycle import NoopChunkPipeline
+from app.services.proposals import (
+    accept_proposal,
+    check_acceptance,
+    kind_for_cause,
+    list_proposals,
+    propose_content_fix,
+    reject_proposal,
+)
 
 _EVIDENCE = [
     {

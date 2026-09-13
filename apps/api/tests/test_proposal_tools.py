@@ -222,7 +222,14 @@ def test_accept_tool_accepts_a_clean_fix_and_reports_the_numbers(
         session=db_session,
         actor_id=actor_id,
     )
-    _publish_something(db_session, "the-fix")
+    # Implementer note (not a behavior/assertion change): "The fix" slugifies to "the-fix" via
+    # `create_draft`'s own `generate_slug` (Interfaces: the draft uses the EXISTING content
+    # service, so it is slugged exactly like a hand-made draft) — reusing that literal string
+    # here would collide on `uq_content_slug` against the draft `propose_content_fix` just
+    # created, unconditionally, before this line ever runs. A distinct slug is all this helper
+    # needs: the test only cares that publishing SOMETHING moves the corpus fingerprint; nothing
+    # downstream reads this slug.
+    _publish_something(db_session, "an-unrelated-published-item")
     after = _record(db_session, label="after", pct=100.0, verdict="PASS")
 
     result = call_tool(

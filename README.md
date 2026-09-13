@@ -275,8 +275,8 @@ PRD §9.1's four metrics, **measured on the local seeded stack** (dedicated data
 | Seeded documents (content) | 21 total (17 published + 4 drafts) |
 | Seeded chunks | 100 |
 | MCP tools | 9 (8 core + `report_content_gaps`) |
-| Groundedness | 72.5% ± 5.9 fully supported over 3 runs (label `baseline-2026-09`); refusals 4/4 correct |
-| Agent suite baseline | 100.0% tasks passed (10/10, label `agent-baseline-2026-09`) |
+| Groundedness | 93.0% ± 1.6 fully supported over 3 runs (label `rebaseline-2026-09`, `gpt-5.4-mini` answerer / `gpt-5.4` judge); refusals 18/18 correct |
+| Agent suite baseline | 80.0% tasks passed (8/10, label `agent-rebaseline-2026-09`; down from 10/10 at `agent-baseline-2026-09` — two recall regressions, detailed in the verification record) |
 | First-token latency, `/public/chat` | p50 = 717 ms, p95 = 1602 ms (n=30, nearest-rank) |
 
 **Groundedness note (updated 2026-09, phase 9):** the previously published 58.8% was a single,
@@ -284,8 +284,12 @@ unpersisted run measured while the answerer still ran at `temperature=1.0` (fixe
 was judged by the same `gpt-4o-mini` model that wrote the answers — it was sampling noise, not a
 measurement, and it is retired rather than silently overwritten. Evaluation runs are now persisted
 (`eval_runs`/`eval_results`) and every metric is reported with its spread over three runs; the
-baseline above is the label `baseline-2026-09`, judged by `gpt-4o` (the answerer stays
-`gpt-4o-mini`). Full method, run ids and per-class/failure-cause breakdowns:
+baseline above is the label `rebaseline-2026-09`, judged by `gpt-5.4` (the answerer is
+`gpt-5.4-mini`). The earlier `baseline-2026-09` figure (72.5% ± 5.9) is itself now superseded
+(2026-09-13): it measured the older `gpt-4o-mini`/`gpt-4o` pair, a judge that still scored
+markdown/citation markers and abbreviation-split sentences as unsupported claims, and a
+21-question set over a smaller, since-expanded corpus, so it is retired rather than compared
+against directly. Full method, run ids and per-class/failure-cause breakdowns:
 [`docs/plans/phase-9-eval-data-loop/verification-record.md`](docs/plans/phase-9-eval-data-loop/verification-record.md).
 
 ## Deployment

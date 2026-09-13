@@ -348,3 +348,139 @@
     The firm asks for your grant agreement, the plan document, your exercise history, any Form 3921
     and your last two tax returns. Those show the strike price, the exercise dates and the holding
     periods that decide whether an exercise is an AMT item or ordinary income.
+
+# --- phase-9 wave 1, batch C (task 12): concentration · tender offers · mega-backdoor Roth · rebalancing ---
+
+- question: "How much of my net worth is too much in my company's stock?"
+  expected_slugs: ["concentrated-employer-stock-and-our-10-rule"]
+  answerable: true
+  class: answerable
+  persona: "Marcus"
+  expected_chunks:
+    - "concentrated-employer-stock-and-our-10-rule#how-much-of-my-net-worth-should-sit-in-company-stock"
+  reference_answer: >-
+    Queen City's policy is that a single company's stock should not exceed 10% of your investable
+    net worth. Above that, the firm treats the excess as a position to unwind on a written schedule
+    rather than a reason to guess at the share price.
+
+- question: "I can only trade in an open window — how do we sell down my position?"
+  expected_slugs: ["concentrated-employer-stock-and-our-10-rule"]
+  answerable: true
+  class: answerable
+  persona: "Marcus"
+  expected_chunks:
+    - "concentrated-employer-stock-and-our-10-rule#what-about-my-trading-window-and-blackout-periods"
+    - "concentrated-employer-stock-and-our-10-rule#how-do-we-unwind-a-concentrated-position"
+  reference_answer: >-
+    Sales are scheduled inside your company's open trading windows, in partial tranches rather than
+    one large sale. Where blackouts get in the way, a Rule 10b5-1 plan adopted while you hold no
+    material non-public information can let pre-scheduled sales run after its cooling-off period.
+
+- question: "I am over your concentration limit and my next RSU tranche vests in March — how do we bring it down?"
+  expected_slugs:
+    - "concentrated-employer-stock-and-our-10-rule"
+    - "what-happens-to-your-rsus-at-vest"
+  answerable: true
+  class: multi_source
+  persona: "Marcus"
+  expected_chunks:
+    - "concentrated-employer-stock-and-our-10-rule#how-do-we-unwind-a-concentrated-position"
+    - "what-happens-to-your-rsus-at-vest#should-i-sell-my-shares-at-vest-or-hold-them"
+  reference_answer: >-
+    The first lever is the new shares: selling each tranche at vest adds almost no tax cost because
+    you are already taxed on its full value. The existing position is unwound on a written schedule
+    inside your trading windows, with each lot's basis and holding period considered before it is
+    sold.
+
+- question: "My startup is running a tender offer — how will the proceeds be taxed?"
+  expected_slugs: ["tender-offers-and-lock-up-periods"]
+  answerable: true
+  class: answerable
+  persona: "Priya"
+  expected_chunks: ["tender-offers-and-lock-up-periods#how-is-the-money-i-get-from-a-tender-offer-taxed"]
+  reference_answer: >-
+    Selling into a tender offer is a sale: you owe capital gains tax on the difference between the
+    price and your basis, long-term only if you met the holding period. If the shares came from an
+    ISO exercise, the sale can also be a disqualifying disposition that turns part of the gain into
+    ordinary income.
+
+- question: "Part of my offer is paid in stablecoins and token grants — how is that taxed?"
+  expected_slugs: []
+  answerable: false
+  class: near_miss
+  persona: "Priya"
+
+- question: "After the listing I am told I cannot touch my shares for six months. What is that, and what should I be doing in the meantime?"
+  expected_slugs: ["tender-offers-and-lock-up-periods"]
+  answerable: true
+  class: threshold
+  persona: "Priya"
+  expected_chunks: ["tender-offers-and-lock-up-periods#what-does-a-lock-up-period-stop-me-from-doing"]
+  reference_answer: >-
+    That is a lock-up: a contractual restriction on selling for a set period after the offering,
+    imposed by the underwriting agreement rather than by tax law. Use the time to set the sale
+    schedule and the tax set-aside, because the restriction ends on a date you already know.
+
+- question: "What is a mega-backdoor Roth, and will my 401(k) let me do it?"
+  expected_slugs: ["the-mega-backdoor-roth-step-by-step"]
+  answerable: true
+  class: answerable
+  persona: "Marcus"
+  expected_chunks:
+    - "the-mega-backdoor-roth-step-by-step#what-is-a-mega-backdoor-roth"
+    - "the-mega-backdoor-roth-step-by-step#does-my-plan-even-allow-this"
+  reference_answer: >-
+    A mega-backdoor Roth means making after-tax, non-Roth contributions to your 401(k) and then
+    moving them into a Roth account through an in-plan conversion or a rollover. It only works if
+    your plan document allows both the after-tax contributions and the conversion or in-service
+    distribution.
+
+- question: "I already max out my 401(k) — how much more can I put in after tax?"
+  expected_slugs: ["the-mega-backdoor-roth-step-by-step"]
+  answerable: true
+  class: answerable
+  persona: "Marcus"
+  expected_chunks: ["the-mega-backdoor-roth-step-by-step#how-much-can-actually-go-in"]
+  reference_answer: >-
+    Your room is the overall annual limit on everything contributed to the plan for you, minus your
+    own elective deferrals and anything your employer contributes. Whatever is left is the most you
+    can add as after-tax contributions, and plan testing can reduce it further.
+
+- question: "What is the total amount that can go into my 401(k) from all sources this year?"
+  expected_slugs: ["the-mega-backdoor-roth-step-by-step"]
+  answerable: true
+  class: stale_number
+  persona: "Marcus"
+  expected_chunks: ["the-mega-backdoor-roth-step-by-step#key-numbers-2026"]
+  reference_answer: >-
+    The 2026 overall limit on annual additions to a defined-contribution plan like a 401(k) is
+    $72,000. That ceiling counts your own elective deferrals, your employer's contributions, and any
+    after-tax contributions you make, all added together.
+
+- question: "When do you rebalance my portfolio, and what happens in a big market drop?"
+  expected_slugs: ["our-rebalancing-policy-and-the-20-drawdown-rule"]
+  answerable: true
+  class: answerable
+  persona: "Sam"
+  expected_chunks:
+    - "our-rebalancing-policy-and-the-20-drawdown-rule#when-do-you-rebalance-my-portfolio"
+    - "our-rebalancing-policy-and-the-20-drawdown-rule#what-do-you-do-in-a-20-drawdown"
+  reference_answer: >-
+    The firm reviews allocations quarterly and rebalances when a holding drifts outside its policy
+    band. A drop of 20% or more triggers an out-of-cycle review that rebalances into what fell and
+    harvests losses in taxable accounts where doing so would not create a wash sale.
+
+- question: "If the market falls 20% while most of my money is in company stock, what do you do?"
+  expected_slugs:
+    - "our-rebalancing-policy-and-the-20-drawdown-rule"
+    - "concentrated-employer-stock-and-our-10-rule"
+  answerable: true
+  class: multi_source
+  persona: "Marcus"
+  expected_chunks:
+    - "our-rebalancing-policy-and-the-20-drawdown-rule#what-do-you-do-in-a-20-drawdown"
+    - "concentrated-employer-stock-and-our-10-rule#what-is-the-risk-i-am-actually-taking"
+  reference_answer: >-
+    The drawdown review still runs, but a concentrated position changes what it can do: one company
+    can fall much further than the market and need not recover with it. The firm keeps unwinding
+    the position on its schedule rather than pausing sales because the price is down.

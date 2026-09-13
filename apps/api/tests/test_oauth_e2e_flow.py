@@ -93,8 +93,9 @@ _INITIALIZE_BODY = {
 _TOOLS_LIST_BODY = {"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}}
 
 #: task-01 (search_content, count_content) + task-02 (create_draft, edit_content, delete_content,
-#: tag_content, publish, archive) + phase-7 task-01 (report_content_gaps) — the full registry,
-#: copied from `tests/test_mcp_bearer_auth.py::_EXPECTED_TOOL_NAMES`.
+#: tag_content, publish, archive) + phase-7 task-01 (report_content_gaps) + phase-9 task-15
+#: (report_weak_queries) — the full registry, copied from
+#: `tests/test_mcp_bearer_auth.py::_EXPECTED_TOOL_NAMES`.
 _EXPECTED_TOOL_NAMES = {
     "search_content",
     "count_content",
@@ -105,6 +106,7 @@ _EXPECTED_TOOL_NAMES = {
     "publish",
     "archive",
     "report_content_gaps",
+    "report_weak_queries",
 }
 
 _EXPECTED_OAUTH_OPERATION_IDS = {
@@ -295,8 +297,8 @@ def test_full_connect_lifecycle(tmp_engine: Engine, db_session: Session) -> None
     assert access_token.startswith("adk_")
     assert refresh_token.startswith("adkr_")
 
-    # 7. POST /api/v1/mcp tools/list with the access token -> 200 and exactly the 9 registered
-    #    tools (DESIGN.md step 8).
+    # 7. POST /api/v1/mcp tools/list with the access token -> 200 and exactly the registered
+    #    tool set (DESIGN.md step 8).
     tools_response = _tools_list(client, access_token)
     assert tools_response.status_code == 200, tools_response.text
     tool_names = {tool["name"] for tool in tools_response.json()["result"]["tools"]}

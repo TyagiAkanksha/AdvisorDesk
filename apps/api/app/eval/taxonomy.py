@@ -15,6 +15,29 @@ from __future__ import annotations
 from collections.abc import Iterable, Sequence
 from typing import Protocol
 
+from app.services.eval_policy import NEAR_MISS_BAND, PROPOSAL_KIND_BY_CAUSE
+
+# DESIGN §D: the near-miss band and the cause -> proposal-kind mapping are both shared with
+# `app.services` (weak-query classification, task 15; `app.services.proposals`, task 16) and
+# therefore live in `app.services.eval_policy` — the import-linter contract lets `app.eval` import
+# `app.services` but not the reverse, so they live at the bottom and are imported up. Re-exported
+# from this module (see `__all__`) so `from app.eval.taxonomy import NEAR_MISS_BAND,
+# PROPOSAL_KIND_BY_CAUSE` (task 06's own tests) keeps working.
+
+__all__ = [
+    "CORPUS_GAP",
+    "FAILURE_CAUSES",
+    "GENERATION_UNFAITHFUL",
+    "JUDGE_DISAGREEMENT",
+    "NEAR_MISS_BAND",
+    "PROPOSAL_KIND_BY_CAUSE",
+    "RETRIEVAL_MISS",
+    "THRESHOLD_REFUSAL",
+    "ClassifiableRow",
+    "classify_failure",
+    "failure_distribution",
+]
+
 RETRIEVAL_MISS = "retrieval_miss"
 CORPUS_GAP = "corpus_gap"
 THRESHOLD_REFUSAL = "threshold_refusal"
@@ -28,20 +51,6 @@ FAILURE_CAUSES: tuple[str, ...] = (
     GENERATION_UNFAITHFUL,
     JUDGE_DISAGREEMENT,
 )
-
-# DESIGN §D: the same band that separates `refused` from `near_miss` in weak-query
-# classification (task 15) — defined once here so the two never drift apart.
-NEAR_MISS_BAND: float = 0.15
-
-# DESIGN "Diagnosis" row: the taxonomy maps 1:1 onto `content_proposals.kind` (task 16).
-# `judge_disagreement` maps to no proposal: the fix is judge calibration (task 08), not content.
-PROPOSAL_KIND_BY_CAUSE: dict[str, str | None] = {
-    RETRIEVAL_MISS: "retune",
-    CORPUS_GAP: "new_article",
-    THRESHOLD_REFUSAL: "retune",
-    GENERATION_UNFAITHFUL: "expand_article",
-    JUDGE_DISAGREEMENT: None,
-}
 
 
 class ClassifiableRow(Protocol):

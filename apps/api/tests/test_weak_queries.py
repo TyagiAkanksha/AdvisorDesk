@@ -28,13 +28,6 @@ import uuid
 from datetime import UTC, datetime, timedelta
 
 import pytest
-from app.services.eval_policy import (
-    LOW_CONFIDENCE_BAND,
-    NEAR_MISS_BAND,
-    PROPOSAL_KIND_BY_CAUSE,
-    PROPOSAL_KINDS,
-    PROPOSAL_STATUSES,
-)
 from sqlalchemy.orm import Session
 
 from app.agent.loop import SYSTEM_PROMPT
@@ -50,6 +43,13 @@ from app.services.chat import (
     weak_queries,
 )
 from app.services.errors import ToolInputError
+from app.services.eval_policy import (
+    LOW_CONFIDENCE_BAND,
+    NEAR_MISS_BAND,
+    PROPOSAL_KIND_BY_CAUSE,
+    PROPOSAL_KINDS,
+    PROPOSAL_STATUSES,
+)
 
 _THRESHOLD = 0.5
 
@@ -320,13 +320,17 @@ def test_declining_answer_with_nothing_retrieved_is_refused(db_session: Session)
     assert groups[0].kinds == [REFUSED]
 
 
-def test_declining_answer_overrides_a_similarity_band_near_miss(db_session: Session) -> None:
-    """CONFLICT with the task file's own classification table, resolved per the controller
-    addition (see the test-author report): 0.40 is inside the near-miss band —
-    `test_refusal_inside_the_band_is_a_near_miss` gives `near_miss` for this exact similarity via
-    `content="reply"` — but a declining answer forces `refused` instead. The new rule is
-    evaluated ahead of the plain similarity-band rules for a not-found row too, not only ahead of
-    `low_confidence`."""
+def test_a_declining_answer_does_not_override_the_not_found_band_rules(
+    db_session: Session,
+) -> None:
+    """CONTROLLER RULING (2026-09-12), amending this pin: the declining-answer rule applies ONLY
+    when `retrieval_found` is `True` — retrieval cleared the threshold and the answerer still
+    declined, which is the case `retrieval_found` alone cannot see (the demo beat). When
+    `retrieval_found` is `False`, the plain similarity-band rules stand UNCHANGED: "something was
+    close" (or wasn't) is information about RETRIEVAL, and a decline adds nothing there. 0.40 is
+    inside the near-miss band — `test_refusal_inside_the_band_is_a_near_miss` gives `near_miss`
+    for this exact (not-found) similarity via `content="reply"` — and a declining answer on the
+    SAME not-found/0.40 row does not change that verdict."""
     _ask(
         db_session,
         "Do RSUs work differently outside the US?",
@@ -337,7 +341,7 @@ def test_declining_answer_overrides_a_similarity_band_near_miss(db_session: Sess
 
     groups = weak_queries(db_session, days=30, threshold=_THRESHOLD)
 
-    assert groups[0].kinds == [REFUSED]
+    assert groups[0].kinds == [NEAR_MISS]
 
 
 def test_negative_feedback_still_beats_a_declining_answer(db_session: Session) -> None:

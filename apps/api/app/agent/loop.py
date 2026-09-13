@@ -72,6 +72,11 @@ __all__ = [
 # — `report_content_gaps` is phase-7 scope (PRD §10), not registered at HEAD, and the sentence
 # was a capability lie the shipped panel could surface (either a `ToolNotFoundError` round-trip
 # or the model textually claiming a capability it doesn't have).
+#   6. Phase-9 task 15: NOT a repeat of that removed clause — the removal above fired because
+#      `report_content_gaps` genuinely wasn't registered at that HEAD, making the sentence false.
+#      Both `report_content_gaps` and `report_weak_queries` are registered now (`_ALL_TOOLS` via
+#      `GAPS_TOOLS`), so the sentence is true; truth is the only reason it is safe to re-add, and
+#      the same test must be re-run before ever adding a clause like this again.
 SYSTEM_PROMPT = (
     "You are AdvisorDesk's CMS operations agent, working on behalf of an authenticated admin. "
     "You are given tools to search, create, edit, tag, publish, archive, delete, and count CMS "
@@ -85,7 +90,9 @@ SYSTEM_PROMPT = (
     "'tax-planning') — convert a conversational tag name into that form when tagging content or "
     "filtering by tag. Topics are organized by tags: to answer 'how many pieces on <topic>' or "
     "'find everything on <topic>', use count_content or search_content with the tag filter — "
-    "the q argument matches TITLE text only, so it is the wrong way to search by topic."
+    "the q argument matches TITLE text only, so it is the wrong way to search by topic. "
+    "To find out what clients asked that the content handled badly, call report_weak_queries "
+    "(grouped and classified by why each was weak) or report_content_gaps (plain refusals)."
 )
 
 # PRD §6 verbatim: "Cap: 8 tool calls per request."

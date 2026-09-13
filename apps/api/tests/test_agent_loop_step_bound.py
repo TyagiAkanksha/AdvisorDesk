@@ -96,8 +96,8 @@ def test_run_agent_bounds_a_never_terminating_llm_with_a_graceful_error(
     assert terminal.message
 
     # The loop kept offering the full, real tool registry on every query right up to the bound
-    # (9 registered tools, PRD §10 — phase-7 task-01 added `report_content_gaps`) — the ceiling
-    # stops the EXCHANGE, not the loop's own normal behavior; this bound is orthogonal to
+    # (10 registered tools — phase-9 task-15 added report_weak_queries) — the ceiling stops the
+    # EXCHANGE, not the loop's own normal behavior; this bound is orthogonal to
     # `_MAX_TOOL_CALLS`, which never engages here since no tool is ever called.
     assert llm.seen_tool_schema_names[0] == llm.seen_tool_schema_names[-1]
-    assert len(llm.seen_tool_schema_names[0]) == 9
+    assert len(llm.seen_tool_schema_names[0]) == 10

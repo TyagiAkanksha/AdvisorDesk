@@ -37,6 +37,14 @@ Three corrections this rehearsal makes to its own task brief, found by actually 
    you *don't* do this: the golden set goes stale and a genuinely good fix gets refused by the same
    gate that should have accepted it.
 
+**Post-authoring update (fix wave F, 2026-09-13):** §3 step 4's "this run needed four attempts"
+finding — a single-run acceptance gate refusing a genuinely clean fix on a one-row judge flip —
+is *why* `compare_runs`/`accept_proposal` now compare run FAMILIES (all runs sharing a `label` and
+`corpus_digest`, majority-vote on regressions, mean on `pct_fully_supported`) instead of two lone
+runs. §3 step 4's harness command is now `--runs 3`; the single-run transcript is kept as the
+observed reason, not replaced, since a live 3-run re-capture is a separate exercise (see step 4's
+own note and `run-sheet.md`'s "what we found" list).
+
 ## §1 Scratch database
 
 Never the dev or prod database. The container's local test password is never hard-coded or
@@ -308,11 +316,25 @@ confirmed each cites the new article and gets a fully-grounded answer, **before*
 
 ### 4. After-run + diff
 
+**Fix wave F (2026-09-13): this step is now `--runs 3`, not a single run.** The acceptance gate
+below (`accept_proposal`) resolves `eval_run_after_id` to its whole run FAMILY — every run sharing
+its `label` and `corpus_digest` — and requires a regression to reproduce in a MAJORITY of that
+family, not merely appear once. The single-run evidence just below (captured before this fix) is
+*why* the step changed, kept here as the reason rather than deleted now that the gate no longer
+needs it repeated on stage.
+
 ```sh
 uv run python -m app.eval.groundedness --label rehearsal2-after \
   --questions /tmp/eval-questions-with-fix.yaml \
-  --compare-to 52c700f1-08ed-4e11-a249-1f36ce57939b
+  --compare-to 52c700f1-08ed-4e11-a249-1f36ce57939b \
+  --runs 3
 ```
+
+The single-run transcript below is that historical evidence — captured one run at a time, before
+`--runs 3`/family-mode existed, not a live 3-run capture (the fix wave's own before/after
+family-mode demonstration, on a disposable scratch DB, is
+`.superpowers/sdd/phase-9-eval-data-loop/reports/fix-wave-implementer.md`'s `fw-before`/`fw-after`
+evidence):
 
 ```
 groundedness: 94.0% fully supported; refusals 16/16 correct
@@ -330,10 +352,19 @@ noise on a pre-existing FAIL row (the same phenomenon documented in §3-alt) —
 four attempts** to land a draw with zero unrelated regressions: attempt 1 hit a stale multi_source
 noisy row (unrelated to this fix, already known-flaky from §3-alt's own authoring); attempts 2-3 hit
 the "No published guidance..." judge artifact on the Berlin row described in step 2, before the
-article was strengthened; attempt 4, after that fix, was clean. Budget for this when rehearsing
-live — see the run sheet's "what to say when a metric moves."
+article was strengthened; attempt 4, after that fix, was clean. **This is exactly the flakiness
+fix wave F's family-mode gate now absorbs**: with `--runs 3`, attempt 1's one-row flip (or either
+of attempts 2-3's Berlin judge-artifact flips) would have been outvoted 2-to-1 by that family's
+other two runs, and `accept_proposal` would have accepted on the FIRST 3-run family rather than
+needing four separate single-run attempts. Budget for this when rehearsing live — see the run
+sheet's "what to say when a metric moves."
 
 ### 5. Accept
+
+`eval_run_after_id` below names ONE member of the `rehearsal2-after` label's 3-run family;
+`accept_proposal` (fix wave F) resolves that label + `corpus_digest` to the whole family and
+judges `pct_fully_supported`/regressions by the family's mean/majority, not this one run alone —
+the refusal or accept message names the family size.
 
 ```sh
 uv run python - <<'PY'

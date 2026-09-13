@@ -304,7 +304,13 @@ PROPOSAL_TOOLS: tuple[ToolSpec, ...] = (
             "Accept a proposal — allowed ONLY when the eval data supports it: a baseline run "
             "and the eval_run_after_id run must both exist, the after-run must have measured a "
             "changed corpus, pct_fully_supported must not have dropped, and the run must show "
-            "no regressions. Otherwise this fails with a conflict explaining which check said no."
+            "no regressions. When eval_run_after_id belongs to a run family (multiple runs "
+            "sharing a label and corpus, e.g. from --runs N), every run in that family must "
+            "individually qualify (same corpus, newer than the baseline, full coverage), and "
+            "pct_fully_supported and regressions are judged by majority across the family — a "
+            "single flaky run can neither force nor block acceptance, but a regression that "
+            "reproduces in a majority of N runs still refuses. Otherwise this fails with a "
+            "conflict explaining which check said no."
         ),
         args_model=AcceptProposalArgs,
         handler=_accept_proposal,

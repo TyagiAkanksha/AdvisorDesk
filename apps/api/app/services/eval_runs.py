@@ -93,16 +93,26 @@ class CorpusFingerprint:
 
 @dataclass(frozen=True)
 class RunDiff:
-    """`compare_runs`' answer, joined on question text."""
+    """`compare_runs`' answer, joined on question text.
+
+    Fix wave F1: `regressions`/`improvements`/`unchanged` are now FAMILY-MAJORITY classifications
+    (see `compare_runs`'s own docstring) rather than a straight per-run verdict comparison, and
+    `pct_delta` is the difference of the two families' `pct_fully_supported` MEANS. A family of
+    one (the common case for a one-off `--label` with no `--runs N`) makes every one of these
+    identical to the old single-run behaviour — nothing here changes shape or meaning for that
+    case, only for a genuine multi-run family.
+    """
 
     before_id: uuid.UUID
     after_id: uuid.UUID
-    regressions: list[str]  # questions that went PASS -> FAIL
-    improvements: list[str]  # FAIL -> PASS
-    unchanged: list[str]  # same verdict in both
-    added: list[str]  # present only in `after`
-    removed: list[str]  # present only in `before`
-    pct_delta: float  # after.pct_fully_supported - before.pct_fully_supported
+    regressions: list[str]  # questions whose family-majority verdict went PASS -> FAIL
+    improvements: list[str]  # family-majority FAIL -> PASS
+    unchanged: list[str]  # same family-majority verdict on both sides (incl. a tie either side)
+    added: list[str]  # present in the after family only (no before-family member measured it)
+    removed: list[str]  # present in the before family only (no after-family member measured it)
+    pct_delta: float  # mean(after family pct_fully_supported) - mean(before family, same)
+    before_family: list[uuid.UUID]  # before_id's family, oldest first (always includes before_id)
+    after_family: list[uuid.UUID]  # after_id's family, oldest first (always includes after_id)
 
 
 def corpus_fingerprint(session: Session) -> CorpusFingerprint:
@@ -278,20 +288,112 @@ def latest_runs(
     return list(session.scalars(stmt).all())
 
 
+def run_family(session: Session, run: EvalRun) -> list[EvalRun]:
+    """Every `kind="answer"` `EvalRun` sharing `run`'s `label` AND `corpus_digest`, oldest first
+    (fix wave F1 — the harness's own `--runs N` writes exactly this shape: one label, N rows, all
+    measuring the same recorded corpus).
+
+    `run` is always a member of its own family (`run.label == run.label` and `run.corpus_digest
+    == run.corpus_digest` trivially hold), so a family is never empty — a caller degrading to a
+    single-run comparison needs no special case; a family of one behaves exactly like the run
+    itself.
+
+    The digest guard keeps a re-used label from mixing corpora: two runs can share a label (an
+    honest re-run of the same demo label on a different day) while measuring genuinely different
+    corpora if a publish happened between them, and those must not be averaged/voted together.
+
+    `kind="answer"` only: the family concept exists to vote/average over repeated MEASUREMENTS of
+    the same corpus, which is not what `app.eval.agent_suite`'s `kind="agent"` runs are for (that
+    harness has its own three-run stability story — task 07b's verification-record §9a — entirely
+    separate from this one).
+
+    Args:
+        session: the caller's `Session`.
+        run: any member of the family to look up.
+
+    Returns:
+        The family's `EvalRun` rows, ordered oldest (`created_at` ascending) first.
+    """
+    stmt = (
+        select(EvalRun)
+        .where(
+            EvalRun.kind == "answer",
+            EvalRun.label == run.label,
+            EvalRun.corpus_digest == run.corpus_digest,
+        )
+        .order_by(EvalRun.created_at.asc(), EvalRun.id.asc())
+    )
+    return list(session.scalars(stmt).all())
+
+
+def _majority_verdict(verdicts: Sequence[str]) -> str | None:
+    """`"PASS"`/`"FAIL"` iff strictly more than half of `verdicts` agree; `None` on an exact tie
+    or an empty sequence (fix wave F1).
+
+    A tie is not "reproduced in a majority" in either direction, so it counts as neither a
+    regression nor an improvement — the caller folds a `None` on either side into `unchanged`,
+    the same fail-closed-on-ambiguity reading `check_acceptance` uses elsewhere in this phase.
+    """
+    if not verdicts:
+        return None
+    passes = sum(1 for verdict in verdicts if verdict == "PASS")
+    fails = len(verdicts) - passes
+    threshold = len(verdicts) / 2
+    if passes > threshold:
+        return "PASS"
+    if fails > threshold:
+        return "FAIL"
+    return None
+
+
+def _verdicts_by_question(session: Session, run_ids: Sequence[uuid.UUID]) -> dict[str, list[str]]:
+    """Every `EvalResult.verdict` for `run_ids`, grouped by question text.
+
+    `eval_results`' own `(run_id, question)` uniqueness (`uq_eval_results_run_id_question`) means
+    each run contributes at most one verdict per question, so `len(grouped[question])` is exactly
+    the number of `run_ids` that measured that question — the denominator `_majority_verdict`
+    needs.
+    """
+    if not run_ids:
+        return {}
+    rows = session.scalars(select(EvalResult).where(EvalResult.run_id.in_(run_ids))).all()
+    grouped: dict[str, list[str]] = {}
+    for row in rows:
+        grouped.setdefault(row.question, []).append(row.verdict)
+    return grouped
+
+
 def compare_runs(session: Session, before_id: uuid.UUID, after_id: uuid.UUID) -> RunDiff:
-    """Diff two runs' `EvalResult` verdicts, joined on question text (DESIGN §B1 — the evidence
-    behind "validated before acceptance").
+    """Diff two runs' FAMILIES of `EvalResult` verdicts, joined on question text (DESIGN §B1 —
+    the evidence behind "validated before acceptance"; fix wave F1 — a regression is a flip that
+    REPRODUCES).
+
+    `before_id`/`after_id` each name one run; `run_family` resolves each to every `kind="answer"`
+    run sharing that run's `label` AND `corpus_digest` (its "family" — the harness's `--runs N`
+    writes exactly this shape). A question is a **regression** when the BEFORE family's majority
+    verdict is PASS and the AFTER family's majority verdict is FAIL; an **improvement** is the
+    mirror; anything else (both sides agree, or either side ties) is `unchanged`. `pct_delta` is
+    the difference of the two families' `pct_fully_supported` MEANS, not the two named runs' own
+    scalars. A family of one — the common case, e.g. a one-off `--label` with no `--runs N` —
+    makes every one of these identical to the pre-F1 single-run behaviour: this is why every
+    pre-existing `compare_runs` test keeps passing unchanged.
+
+    `added`/`removed` are computed over the FAMILY UNION on each side: a question counts as
+    `removed` only when NO after-family member ever measured it (some after-family members
+    covering it while others do not is a per-run coverage gap `app.services.proposals.
+    check_acceptance` checks independently, per member — not something `compare_runs` itself
+    decides).
 
     Every list in the returned `RunDiff` is sorted by question text so output is stable.
 
     Args:
         session: the caller's `Session`.
-        before_id: the `EvalRun.id` to diff from.
-        after_id: the `EvalRun.id` to diff to.
+        before_id: an `EvalRun.id` naming the before family.
+        after_id: an `EvalRun.id` naming the after family.
 
     Returns:
-        A `RunDiff` classifying every question in either run's results as a regression,
-        improvement, unchanged, added, or removed.
+        A `RunDiff` classifying every question either family's results as a regression,
+        improvement, unchanged, added, or removed, plus both families' member ids.
 
     Raises:
         NotFoundError: `before_id` or `after_id` names no `EvalRun` row.
@@ -308,33 +410,35 @@ def compare_runs(session: Session, before_id: uuid.UUID, after_id: uuid.UUID) ->
     if before.kind != after.kind:
         raise ConflictError(f"Cannot compare a {before.kind!r} run to a {after.kind!r} run.")
 
-    before_verdicts = {
-        result.question: result.verdict
-        for result in session.scalars(
-            select(EvalResult).where(EvalResult.run_id == before_id)
-        ).all()
-    }
-    after_verdicts = {
-        result.question: result.verdict
-        for result in session.scalars(select(EvalResult).where(EvalResult.run_id == after_id)).all()
-    }
+    before_family = run_family(session, before)
+    after_family = run_family(session, after)
+    before_family_ids = [member.id for member in before_family]
+    after_family_ids = [member.id for member in after_family]
+
+    before_verdicts = _verdicts_by_question(session, before_family_ids)
+    after_verdicts = _verdicts_by_question(session, after_family_ids)
 
     before_questions = set(before_verdicts)
     after_questions = set(after_verdicts)
     common = before_questions & after_questions
 
-    regressions = sorted(
-        question
-        for question in common
-        if before_verdicts[question] == "PASS" and after_verdicts[question] == "FAIL"
-    )
-    improvements = sorted(
-        question
-        for question in common
-        if before_verdicts[question] == "FAIL" and after_verdicts[question] == "PASS"
-    )
-    unchanged = sorted(
-        question for question in common if before_verdicts[question] == after_verdicts[question]
+    regressions: list[str] = []
+    improvements: list[str] = []
+    unchanged: list[str] = []
+    for question in sorted(common):
+        before_majority = _majority_verdict(before_verdicts[question])
+        after_majority = _majority_verdict(after_verdicts[question])
+        if before_majority == "PASS" and after_majority == "FAIL":
+            regressions.append(question)
+        elif before_majority == "FAIL" and after_majority == "PASS":
+            improvements.append(question)
+        else:
+            unchanged.append(question)
+
+    before_pct_values = [member.pct_fully_supported for member in before_family]
+    after_pct_values = [member.pct_fully_supported for member in after_family]
+    pct_delta = (sum(after_pct_values) / len(after_pct_values)) - (
+        sum(before_pct_values) / len(before_pct_values)
     )
 
     return RunDiff(
@@ -345,5 +449,7 @@ def compare_runs(session: Session, before_id: uuid.UUID, after_id: uuid.UUID) ->
         unchanged=unchanged,
         added=sorted(after_questions - before_questions),
         removed=sorted(before_questions - after_questions),
-        pct_delta=after.pct_fully_supported - before.pct_fully_supported,
+        pct_delta=pct_delta,
+        before_family=before_family_ids,
+        after_family=after_family_ids,
     )

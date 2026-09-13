@@ -450,7 +450,7 @@
     "name": "list_proposals"
   },
   {
-    "description": "Accept a proposal \u2014 allowed ONLY when the eval data supports it: a baseline run and the eval_run_after_id run must both exist, the after-run must have measured a changed corpus, pct_fully_supported must not have dropped, and the run must show no regressions. Otherwise this fails with a conflict explaining which check said no.",
+    "description": "Accept a proposal \u2014 allowed ONLY when the eval data supports it: a baseline run and the eval_run_after_id run must both exist, the after-run must have measured a changed corpus, pct_fully_supported must not have dropped, and the run must show no regressions. When eval_run_after_id belongs to a run family (multiple runs sharing a label and corpus, e.g. from --runs N), every run in that family must individually qualify (same corpus, newer than the baseline, full coverage), and pct_fully_supported and regressions are judged by majority across the family \u2014 a single flaky run can neither force nor block acceptance, but a regression that reproduces in a majority of N runs still refuses. Otherwise this fails with a conflict explaining which check said no.",
     "inputSchema": {
       "additionalProperties": false,
       "description": "`accept_proposal`'s arguments (phase-9 DESIGN \u00a7D).",

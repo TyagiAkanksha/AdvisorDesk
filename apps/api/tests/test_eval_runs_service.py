@@ -215,3 +215,171 @@ def test_compare_runs_raises_not_found_for_an_unknown_run_id(db_session: Session
     run = _record(db_session, FakeReport(rows=[FakeRow(question="q")]))
     with pytest.raises(NotFoundError):
         compare_runs(db_session, run.id, uuid.uuid4())
+
+
+# ---------------------------------------------------------------------------
+# Fix wave F1: `compare_runs` grows a FAMILY mode — runs sharing a `label` AND `corpus_digest`
+# form a family, and a question is a regression/improvement only when the family's MAJORITY
+# verdict flips. A family of one (different labels, the two tests above) must keep behaving
+# exactly as before -- confirmed by leaving those two tests untouched.
+# ---------------------------------------------------------------------------
+
+
+def test_compare_runs_family_mode_does_not_flag_a_regression_that_does_not_reproduce(
+    db_session: Session,
+) -> None:
+    """A question that flips PASS -> FAIL in only ONE of three after-runs is not a majority
+    regression: the after family's majority verdict is still PASS (2 of 3), so the question is
+    `unchanged`, not `regressions` — a single flaky run must not block acceptance."""
+    before = _record(
+        db_session,
+        FakeReport(rows=[FakeRow(question="q1", verdict="PASS")], pct_fully_supported=100.0),
+        label="fam1-before",
+    )
+    _record(
+        db_session,
+        FakeReport(rows=[FakeRow(question="q1", verdict="PASS")], pct_fully_supported=100.0),
+        label="fam1-after",
+    )
+    _record(
+        db_session,
+        FakeReport(rows=[FakeRow(question="q1", verdict="PASS")], pct_fully_supported=100.0),
+        label="fam1-after",
+    )
+    flaky_after = _record(
+        db_session,
+        FakeReport(
+            rows=[FakeRow(question="q1", verdict="FAIL", fully_supported=False)],
+            pct_fully_supported=0.0,
+        ),
+        label="fam1-after",
+    )
+
+    diff = compare_runs(db_session, before.id, flaky_after.id)
+
+    assert diff.regressions == []
+    assert diff.unchanged == ["q1"]
+    assert len(diff.before_family) == 1
+    assert len(diff.after_family) == 3
+    assert before.id in diff.before_family
+    assert flaky_after.id in diff.after_family
+
+
+def test_compare_runs_family_mode_flags_a_regression_that_reproduces_in_a_majority(
+    db_session: Session,
+) -> None:
+    """Two of three after-runs failing the same question IS a majority regression, and the
+    question is named -- a real regression must still be caught even when it does not reproduce
+    on every single run (the flip side of the flakiness test above)."""
+    before = _record(
+        db_session,
+        FakeReport(rows=[FakeRow(question="q1", verdict="PASS")], pct_fully_supported=100.0),
+        label="fam2-before",
+    )
+    _record(
+        db_session,
+        FakeReport(
+            rows=[FakeRow(question="q1", verdict="FAIL", fully_supported=False)],
+            pct_fully_supported=0.0,
+        ),
+        label="fam2-after",
+    )
+    _record(
+        db_session,
+        FakeReport(
+            rows=[FakeRow(question="q1", verdict="FAIL", fully_supported=False)],
+            pct_fully_supported=0.0,
+        ),
+        label="fam2-after",
+    )
+    after = _record(
+        db_session,
+        FakeReport(rows=[FakeRow(question="q1", verdict="PASS")], pct_fully_supported=100.0),
+        label="fam2-after",
+    )
+
+    diff = compare_runs(db_session, before.id, after.id)
+
+    assert diff.regressions == ["q1"]
+    assert len(diff.after_family) == 3
+
+
+def test_compare_runs_pct_delta_uses_family_means(db_session: Session) -> None:
+    """`pct_delta` averages `pct_fully_supported` over each side's family, not just the two
+    named runs -- the family mean is the number the acceptance gate's pct rung must compare."""
+    before = _record(
+        db_session,
+        FakeReport(rows=[FakeRow(question="q1", verdict="PASS")], pct_fully_supported=50.0),
+        label="fam3-before",
+    )
+    _record(
+        db_session,
+        FakeReport(rows=[FakeRow(question="q1", verdict="PASS")], pct_fully_supported=90.0),
+        label="fam3-after",
+    )
+    after = _record(
+        db_session,
+        FakeReport(rows=[FakeRow(question="q1", verdict="PASS")], pct_fully_supported=70.0),
+        label="fam3-after",
+    )
+
+    diff = compare_runs(db_session, before.id, after.id)
+
+    # after family mean = (90 + 70) / 2 = 80; before family mean = 50; delta = 30
+    assert diff.pct_delta == pytest.approx(30.0)
+
+
+def test_compare_runs_family_only_includes_runs_with_the_same_corpus_digest(
+    db_session: Session,
+) -> None:
+    """A re-used label does not mix corpora: two runs can share a label but belong to different
+    families if a publish moved the digest between them (fix wave F1's digest guard)."""
+    stale = _record(
+        db_session,
+        FakeReport(rows=[FakeRow(question="q1", verdict="PASS")], pct_fully_supported=100.0),
+        label="mixed-digest",
+    )
+    _publish(db_session, "some-new-article-between-runs")
+    second = _record(
+        db_session,
+        FakeReport(rows=[FakeRow(question="q1", verdict="PASS")], pct_fully_supported=100.0),
+        label="mixed-digest",
+    )
+    third = _record(
+        db_session,
+        FakeReport(rows=[FakeRow(question="q1", verdict="PASS")], pct_fully_supported=100.0),
+        label="mixed-digest",
+    )
+    assert stale.corpus_digest != second.corpus_digest == third.corpus_digest
+
+    diff = compare_runs(db_session, stale.id, third.id)
+
+    assert set(diff.before_family) == {stale.id}
+    assert set(diff.after_family) == {second.id, third.id}
+
+
+def test_run_diff_family_ids_are_ordered_by_created_at(db_session: Session) -> None:
+    """`RunDiff.before_family`/`after_family` are ids, oldest-first (mirrors `latest_runs`'
+    own newest-first convention, just the other direction) -- so a caller/report can show what
+    was actually compared."""
+    from app.services.eval_runs import run_family
+
+    first = _record(
+        db_session,
+        FakeReport(rows=[FakeRow(question="q1", verdict="PASS")]),
+        label="ordered-fam",
+    )
+    second = _record(
+        db_session,
+        FakeReport(rows=[FakeRow(question="q1", verdict="PASS")]),
+        label="ordered-fam",
+    )
+    third = _record(
+        db_session,
+        FakeReport(rows=[FakeRow(question="q1", verdict="PASS")]),
+        label="ordered-fam",
+    )
+
+    family = run_family(db_session, third)
+
+    assert [run.id for run in family] == [first.id, second.id, third.id]

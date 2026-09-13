@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import uuid
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
 from sqlalchemy import func, select
@@ -25,7 +25,7 @@ from app.models import ContentProposal, EvalResult, EvalRun
 from app.services.content import archive_content, create_draft, get_content
 from app.services.errors import ConflictError, NotFoundError
 from app.services.eval_policy import PROPOSAL_KIND_BY_CAUSE, PROPOSAL_KINDS, PROPOSAL_STATUSES
-from app.services.eval_runs import compare_runs, latest_runs
+from app.services.eval_runs import compare_runs, latest_runs, run_family
 from app.services.lifecycle import ChunkPipeline
 
 # Behaviour pin (task-16 brief): the draft body stub is deterministic and names the gap it exists
@@ -60,6 +60,18 @@ class AcceptanceCheck:
     actually compared reports `corpus_changed=False`, even for `"after_run_not_newer"`,
     `"draft_not_published"` or `"after_run_predates_publication"`, where the digests might well
     differ. Read it as "corpus_changed, as far as this gate got", not "the corpus is unchanged".
+
+    Fix wave F2 (a regression is a flip that REPRODUCES): `before_family`/`after_family` are the
+    ids `app.services.eval_runs.run_family` resolves `before_id`/`after_id` to — every
+    `kind="answer"` run sharing that run's `label` AND `corpus_digest`, oldest first. `pct_before`/
+    `pct_after` are the FAMILY MEANS once a family is known (identical to the single run's own
+    scalar for a family of one), and `regressions` is the family-MAJORITY comparison
+    `app.services.eval_runs.compare_runs` now computes. `blocked_member_id` names the SPECIFIC
+    after-family member that failed a per-member gate (`"after_run_not_newer"`,
+    `"after_run_predates_publication"`, or a per-member `"incomplete_after_run"`) — `None` for
+    every other `blocked_by`, including the family-UNION `"incomplete_after_run"` case (no single
+    member is at fault; the family as a whole never measured the question) and `"regressions"`
+    (which names QUESTIONS, not a run — see `regressions` itself).
     """
 
     before_id: uuid.UUID | None
@@ -70,6 +82,9 @@ class AcceptanceCheck:
     regressions: list[str]
     missing_questions: list[str]
     blocked_by: str | None
+    before_family: list[uuid.UUID] = field(default_factory=list)
+    after_family: list[uuid.UUID] = field(default_factory=list)
+    blocked_member_id: uuid.UUID | None = None
 
 
 def _format_questions(evidence: Sequence[Mapping[str, object]]) -> str:
@@ -231,6 +246,15 @@ def list_proposals(
     return list(session.scalars(stmt).all())
 
 
+def _questions_for_run(session: Session, run_id: uuid.UUID) -> set[str]:
+    """The set of `EvalResult.question` values recorded for one run (fix wave F2's per-member
+    coverage check — deliberately narrower than `app.services.eval_runs.compare_runs`'s own
+    FAMILY-union `added`/`removed`, which cannot see a single stale/partial member hiding behind
+    otherwise-complete siblings).
+    """
+    return set(session.scalars(select(EvalResult.question).where(EvalResult.run_id == run_id)))
+
+
 def check_acceptance(
     session: Session, proposal: ContentProposal, after_id: uuid.UUID
 ) -> AcceptanceCheck:
@@ -351,15 +375,27 @@ def check_acceptance(
             blocked_by="after_run_wrong_kind",
         )
 
-    # Fix round 1 (reviewer I1): a DIFFERENT corpus digest is not a LATER one. Without this,
-    # any historical answer-run recorded when the corpus happened to look different qualifies as
-    # "after" — and since `propose_content_fix` always stamps `before` as the LATEST answer run
-    # at proposal time (`:178-179`), every other run already in the table is older than `before`,
-    # making the entire run history a pool of candidate "after" runs. Checked before the digest/
-    # pct/coverage/regression comparisons below: none of them can substitute for it (a stale run
-    # can easily have a different digest and a higher pct than `before`, by coincidence of when
-    # it happened to run).
-    if after.created_at <= before.created_at:
+    # Fix wave F2 (a regression is a flip that REPRODUCES): from here on, the after-side unit of
+    # evidence is `after`'s whole FAMILY (fix wave F1's `run_family` — every `kind="answer"` run
+    # sharing `after`'s `label` AND `corpus_digest`, oldest first; a family of one is just
+    # `[after]`). Every per-run gate below (newer, publish-postdate, coverage) is checked for
+    # EVERY family member — a family with one stale or partial member is refused, naming that
+    # member — while the pct and regression gates further down average/vote across the family,
+    # which is the whole point of running `--runs N`.
+    after_family = run_family(session, after)
+    after_family_ids = [member.id for member in after_family]
+
+    # Fix round 1 (reviewer I1) / fix wave F2: a DIFFERENT corpus digest is not a LATER one, and
+    # now EVERY after-family member must individually be newer than `before` — a family that
+    # includes even one stale member (recorded before the proposal's own baseline) is not
+    # evidence for this proposal, whatever its other members show. Without the single-run version
+    # of this check, any historical answer-run recorded when the corpus happened to look
+    # different would qualify as "after" (`propose_content_fix` always stamps `before` as the
+    # LATEST answer run at proposal time, so every other run already in the table is older).
+    stale_member = next(
+        (member for member in after_family if member.created_at <= before.created_at), None
+    )
+    if stale_member is not None:
         return AcceptanceCheck(
             before_id=before_id,
             after_id=after_id,
@@ -369,6 +405,8 @@ def check_acceptance(
             regressions=[],
             missing_questions=[],
             blocked_by="after_run_not_newer",
+            after_family=after_family_ids,
+            blocked_member_id=stale_member.id,
         )
 
     corpus_changed = after.corpus_digest != before.corpus_digest
@@ -382,18 +420,31 @@ def check_acceptance(
             regressions=[],
             missing_questions=[],
             blocked_by="corpus_unchanged",
+            after_family=after_family_ids,
         )
 
-    if after.pct_fully_supported < before.pct_fully_supported:
+    # Fix wave F2: the pct gate now compares FAMILY MEANS, not the two named runs' own scalars —
+    # a `--runs N` family's run-to-run noise (the whole reason a family exists) is exactly why the
+    # mean, not any single draw, is the number this gate should judge. `before`'s family is
+    # resolved here (not earlier) since nothing before this point needed it.
+    before_family = run_family(session, before)
+    before_family_ids = [member.id for member in before_family]
+    pct_before_mean = sum(member.pct_fully_supported for member in before_family) / len(
+        before_family
+    )
+    pct_after_mean = sum(member.pct_fully_supported for member in after_family) / len(after_family)
+    if pct_after_mean < pct_before_mean:
         return AcceptanceCheck(
             before_id=before_id,
             after_id=after_id,
             corpus_changed=True,
-            pct_before=before.pct_fully_supported,
-            pct_after=after.pct_fully_supported,
+            pct_before=pct_before_mean,
+            pct_after=pct_after_mean,
             regressions=[],
             missing_questions=[],
             blocked_by="pct_dropped",
+            before_family=before_family_ids,
+            after_family=after_family_ids,
         )
 
     # Fix round 2 (reviewer I3 — Important, owner ruling): nothing above ties the after-run to
@@ -419,28 +470,75 @@ def check_acceptance(
                 before_id=before_id,
                 after_id=after_id,
                 corpus_changed=False,
-                pct_before=before.pct_fully_supported,
-                pct_after=after.pct_fully_supported,
+                pct_before=pct_before_mean,
+                pct_after=pct_after_mean,
                 regressions=[],
                 missing_questions=[],
                 blocked_by="draft_not_published",
+                before_family=before_family_ids,
+                after_family=after_family_ids,
             )
         # `status == "published"` implies `published_at is not None` — `publish_content` stamps
         # it on every draft/archived -> published transition and never clears it — but mypy
         # cannot infer that cross-column invariant from the `status` check above, hence the
         # assert (a real `None` here would be a `Content` model/service bug, not a caller error).
         assert draft.published_at is not None
-        if after.corpus_max_updated_at is None or after.corpus_max_updated_at < draft.published_at:
+        # Fix wave F2: EVERY after-family member's corpus must postdate the publish, not only the
+        # named `after_id` run — one member recorded between propose-time and this fix's publish
+        # would otherwise slip through inside an otherwise-clean family.
+        predating_member = next(
+            (
+                member
+                for member in after_family
+                if member.corpus_max_updated_at is None
+                or member.corpus_max_updated_at < draft.published_at
+            ),
+            None,
+        )
+        if predating_member is not None:
             return AcceptanceCheck(
                 before_id=before_id,
                 after_id=after_id,
                 corpus_changed=False,
-                pct_before=before.pct_fully_supported,
-                pct_after=after.pct_fully_supported,
+                pct_before=pct_before_mean,
+                pct_after=pct_after_mean,
                 regressions=[],
                 missing_questions=[],
                 blocked_by="after_run_predates_publication",
+                before_family=before_family_ids,
+                after_family=after_family_ids,
+                blocked_member_id=predating_member.id,
             )
+
+    # Fix wave F2: EVERY after-family member must individually cover all of the before-run's own
+    # questions. The family-UNION check further down (`diff.removed`) only catches "NO
+    # after-family member ever measured this question" — it would miss a family where one member
+    # is a stale or partial run whose gaps happen to be covered by ITS SIBLINGS. A member that
+    # cannot individually show whether the before-run's questions still pass is not valid
+    # evidence, even inside an otherwise-complete family.
+    before_own_questions = _questions_for_run(session, before_id)
+    partial_member: EvalRun | None = None
+    partial_missing: list[str] = []
+    for member in after_family:
+        member_missing = sorted(before_own_questions - _questions_for_run(session, member.id))
+        if member_missing:
+            partial_member = member
+            partial_missing = member_missing
+            break
+    if partial_member is not None:
+        return AcceptanceCheck(
+            before_id=before_id,
+            after_id=after_id,
+            corpus_changed=True,
+            pct_before=pct_before_mean,
+            pct_after=pct_after_mean,
+            regressions=[],
+            missing_questions=partial_missing,
+            blocked_by="incomplete_after_run",
+            before_family=before_family_ids,
+            after_family=after_family_ids,
+            blocked_member_id=partial_member.id,
+        )
 
     diff = compare_runs(session, before_id, after_id)
 
@@ -449,45 +547,56 @@ def check_acceptance(
     # after-run and PARTIALLY on a truncated one (e.g. a narrowed `--questions <path>` re-run) —
     # neither the digest gate (only needs "different") nor the pct gate (computed over whatever
     # rows the after-run happens to contain, so a narrower run can score HIGHER, not lower) catch
-    # this. `diff.removed` names exactly the before-run questions the after-run did not measure;
-    # `after.total_questions < before.total_questions` is a cheap belt-and-braces check on data
-    # already loaded (a genuine subset always leaves `diff.removed` non-empty too, given
+    # this. `diff.removed` names exactly the before-run questions NO after-family member ever
+    # measured; `after.total_questions < before.total_questions` is a cheap belt-and-braces check
+    # on data already loaded (a genuine subset always leaves `diff.removed` non-empty too, given
     # `eval_results`' `(run_id, question)` uniqueness — this is defence in depth, not a distinct
     # scenario). This must run BEFORE the regressions check: an after-run that does not cover a
-    # regressed question would otherwise make gate 8 non-vacuous only by accident.
+    # regressed question would otherwise make gate 11 non-vacuous only by accident. `blocked_
+    # member_id` stays `None` here — this is a family-UNION gap, not one member's fault (the
+    # per-member loop above already ruled out any single member being the cause).
     if diff.removed or after.total_questions < before.total_questions:
         return AcceptanceCheck(
             before_id=before_id,
             after_id=after_id,
             corpus_changed=True,
-            pct_before=before.pct_fully_supported,
-            pct_after=after.pct_fully_supported,
+            pct_before=pct_before_mean,
+            pct_after=pct_after_mean,
             regressions=[],
             missing_questions=diff.removed,
             blocked_by="incomplete_after_run",
+            before_family=before_family_ids,
+            after_family=after_family_ids,
         )
 
+    # Fix wave F1: `diff.regressions` is now the FAMILY-MAJORITY comparison — a question counts
+    # only when it PASSED in a majority of the before family and FAILED in a majority of the
+    # after family, so a single flaky run in either family can neither force nor block acceptance.
     if diff.regressions:
         return AcceptanceCheck(
             before_id=before_id,
             after_id=after_id,
             corpus_changed=True,
-            pct_before=before.pct_fully_supported,
-            pct_after=after.pct_fully_supported,
+            pct_before=pct_before_mean,
+            pct_after=pct_after_mean,
             regressions=diff.regressions,
             missing_questions=[],
             blocked_by="regressions",
+            before_family=before_family_ids,
+            after_family=after_family_ids,
         )
 
     return AcceptanceCheck(
         before_id=before_id,
         after_id=after_id,
         corpus_changed=True,
-        pct_before=before.pct_fully_supported,
-        pct_after=after.pct_fully_supported,
+        pct_before=pct_before_mean,
+        pct_after=pct_after_mean,
         regressions=[],
         missing_questions=[],
         blocked_by=None,
+        before_family=before_family_ids,
+        after_family=after_family_ids,
     )
 
 
@@ -511,26 +620,44 @@ def accept_proposal(
     |   | (fix round 2 I2; fix wave C3/M8 closes the header-vs-rows gap one layer down) |
     |   | `ConflictError` |
     | 4 | `eval_run_after_id` names a run, of `kind="answer"` | `NotFoundError` / `ConflictError` |
-    | 5 | `after.created_at > before.created_at` (fix round 1, I1) | `ConflictError` |
+    | 5 | EVERY after-run family member's `created_at > before.created_at` (fix round 1, I1;
+    |   | fix wave F2 extends this from the one named run to every family member) | `ConflictError`,
+    |   | naming the stale member |
     | 6 | `after.corpus_digest != before.corpus_digest` | `ConflictError` |
-    | 7 | `after.pct_fully_supported >= before.pct_fully_supported` | `ConflictError` |
+    | 7 | the after-run family's MEAN `pct_fully_supported` >= the before-run family's mean
+    |   | (fix wave F1/F2 — a family of one reduces to the two runs' own scalars) |
+    |   | `ConflictError` |
     | 8 | the proposal's draft (if any) `status == "published"` (fix round 2, I3; fix wave C1
     |   | tightens "was ever published" to "is published now") | `ConflictError` |
-    | 9 | the after-run's corpus postdates that publish (fix round 2, I3) | `ConflictError` |
-    | 10 | the after-run covers every before-run question (fix round 1, C1) | `ConflictError`,
-    |    |                                                                    | naming the count
-    |    |                                                                    | and up to three
-    |    |                                                                    | missing questions |
-    | 11 | `compare_runs(before, after).regressions == []` | `ConflictError`, naming up to the
-    |    |                                                   | first three regressed questions |
+    | 9 | EVERY after-run family member's corpus postdates that publish (fix round 2, I3; fix
+    |   | wave F2 extends this to every family member) | `ConflictError`, naming the member |
+    | 10 | EVERY after-run family member individually covers every before-run question, AND the
+    |    | family's union does too (fix round 1, C1; fix wave F2 adds the per-member half) |
+    |    | `ConflictError`, naming the member (if one is at fault) or the family, and up to
+    |    | three missing questions |
+    | 11 | `compare_runs(before, after).regressions == []` — a MAJORITY-vote comparison across
+    |    | both runs' families (fix wave F1: "a regression is a flip that REPRODUCES") |
+    |    | `ConflictError`, naming both family sizes and up to three regressed questions |
 
-    Fix round 1 (reviewer C1, CRITICAL): gate 10 closes the hole where an after-run that does not
-    measure a regressed question made gate 11 pass vacuously (an empty after-run) or partially (a
-    narrowed re-run, e.g. a shipped `--questions <path>` CLI flag) — neither gate 6 nor gate 7
-    would catch either case, since a narrower run is only ever compared against the rows it
-    actually contains. Fix round 1 (reviewer I1, Important): gate 5 closes the hole where a
-    historical answer-run older than `before` — a DIFFERENT digest is not a LATER digest — was
-    accepted as "after" with no ordering check at all.
+    Fix wave F1/F2 (a regression is a flip that REPRODUCES): runs sharing a `label` AND
+    `corpus_digest` (the harness's `--runs N` writes exactly this shape) form a FAMILY
+    (`app.services.eval_runs.run_family`). Gates 5, 9 and 10's per-member half are checked for
+    EVERY member of the after-run family — a family with one stale or partial member is refused,
+    naming that member, because an eligibility gate must hold for every run the family votes
+    with. Gates 7 (pct) and 11 (regressions) instead AVERAGE/VOTE across the family — the whole
+    point of running `--runs N` is that a single flaky run's own draw should neither force nor
+    block acceptance; a real regression must reproduce in a MAJORITY of the after family relative
+    to a majority of the before family, not just flip once. A family of one degrades every one of
+    these to the pre-F1/F2 single-run behaviour exactly, which is why every pre-existing
+    acceptance test keeps passing unchanged.
+
+    Fix round 1 (reviewer C1, CRITICAL): gate 10's family-union half closes the hole where an
+    after-run that does not measure a regressed question made gate 11 pass vacuously (an empty
+    after-run) or partially (a narrowed re-run, e.g. a shipped `--questions <path>` CLI flag) —
+    neither gate 6 nor gate 7 would catch either case, since a narrower run is only ever compared
+    against the rows it actually contains. Fix round 1 (reviewer I1, Important): gate 5 closes the
+    hole where a historical answer-run older than `before` — a DIFFERENT digest is not a LATER
+    digest — was accepted as "after" with no ordering check at all.
 
     Fix round 2 (reviewer I2, Important): gate 3 closes the identical vacuous-comparison hole
     from the BEFORE side — a zero-question before-run (reachable via a shipped `--questions
@@ -584,10 +711,15 @@ def accept_proposal(
             "accept_proposal only accepts against an answer-kind run."
         )
     if check.blocked_by == "after_run_not_newer":
+        # Fix wave F2: `check.blocked_member_id` names the SPECIFIC after-family member that is
+        # not newer than `before` — for a family of one it is `eval_run_after_id` itself, so this
+        # reads identically to the pre-F2 message in that (still the common) case.
         raise ConflictError(
-            f"eval_run_after_id {eval_run_after_id} is not newer than before-run "
-            f"{check.before_id} — accept_proposal requires the after-run to have been recorded "
-            "strictly after the before-run, not merely a run that happens to look different."
+            f"After-run family member {check.blocked_member_id} (one of "
+            f"{len(check.after_family)} in the family for eval_run_after_id {eval_run_after_id}) "
+            f"is not newer than before-run {check.before_id} — accept_proposal requires every "
+            "run in the after-run family to have been recorded strictly after the before-run, "
+            "not merely a run that happens to look different."
         )
     if check.blocked_by == "corpus_unchanged":
         raise ConflictError(
@@ -596,9 +728,15 @@ def accept_proposal(
             "validated."
         )
     if check.blocked_by == "pct_dropped":
+        # Fix wave F2: `pct_before`/`pct_after` are now the FAMILY MEANS (identical to the two
+        # named runs' own scalars for a family of one), so `pct_fully_supported` names a mean,
+        # not necessarily either run's own recorded value.
         raise ConflictError(
-            f"pct_fully_supported dropped from {check.pct_before} (run {check.before_id}) to "
-            f"{check.pct_after} (run {check.after_id})."
+            f"pct_fully_supported (mean over the before-run family, "
+            f"{len(check.before_family)} run(s)) dropped from {check.pct_before} to "
+            f"pct_fully_supported (mean over the after-run family, {len(check.after_family)} "
+            f"run(s)) {check.pct_after} (before-run {check.before_id}, eval_run_after_id "
+            f"{eval_run_after_id})."
         )
     if check.blocked_by == "draft_not_published":
         raise ConflictError(
@@ -606,13 +744,27 @@ def accept_proposal(
             "requires this proposal's own fix to be live before a run can validate it."
         )
     if check.blocked_by == "after_run_predates_publication":
+        # Fix wave F2: names the specific after-family member whose corpus predates the publish —
+        # for a family of one it is `eval_run_after_id` itself.
         raise ConflictError(
-            f"eval_run_after_id {eval_run_after_id}'s corpus predates content proposal "
-            f"{proposal_id}'s draft being published — this run did not measure a corpus "
-            "containing this fix."
+            f"After-run family member {check.blocked_member_id} (one of "
+            f"{len(check.after_family)} in the family for eval_run_after_id {eval_run_after_id}) "
+            f"'s corpus predates content proposal {proposal_id}'s draft being published — every "
+            "run in the after-run family must measure a corpus containing this fix."
         )
     if check.blocked_by == "incomplete_after_run":
         named = ", ".join(check.missing_questions[:3])
+        if check.blocked_member_id is not None:
+            # Fix wave F2: a SPECIFIC after-family member is individually missing coverage, even
+            # though the family's union (added together) covers it — the family-level check
+            # below would not have caught this member alone.
+            raise ConflictError(
+                f"After-run family member {check.blocked_member_id} (one of "
+                f"{len(check.after_family)} in the family for eval_run_after_id "
+                f"{eval_run_after_id}) did not measure {len(check.missing_questions)} of the "
+                f"before-run's questions ({named}) individually, so it cannot show whether they "
+                "regressed for that member."
+            )
         raise ConflictError(
             f"eval_run_after_id {eval_run_after_id} did not measure "
             f"{len(check.missing_questions)} of the before-run's questions ({named}), so it "
@@ -623,12 +775,18 @@ def accept_proposal(
         # Fix round 2, M7: worded relative to the STAMPED before-run, not as a claim that this
         # proposal's own fix caused the regression — `before` is stamped at propose time, and a
         # corpus change unrelated to this fix landing between propose and publish sits inside
-        # this same comparison window (see this function's own docstring).
+        # this same comparison window (see this function's own docstring). Fix wave F1/F2: a
+        # regression must reproduce in a MAJORITY of the after-run family relative to a majority
+        # of the before-run family, naming both family sizes — a single flaky run in either
+        # family can neither force nor block acceptance.
         raise ConflictError(
-            f"{len(check.regressions)} question(s) regressed (PASS -> FAIL) between the "
-            f"before-run stamped at propose time ({check.before_id}) and {check.after_id}: "
+            f"{len(check.regressions)} question(s) regressed (PASS -> FAIL) in a majority of "
+            f"the after-run family ({len(check.after_family)} run(s), eval_run_after_id "
+            f"{eval_run_after_id}) relative to a majority of the before-run family "
+            f"({len(check.before_family)} run(s), stamped at propose time {check.before_id}): "
             f"{named}. This reflects the whole window since the proposal was made, not "
-            "necessarily this fix in isolation."
+            "necessarily this fix in isolation, and counts only because it reproduced across a "
+            "majority of the after-run family, not a single run."
         )
 
     proposal.status = "accepted"

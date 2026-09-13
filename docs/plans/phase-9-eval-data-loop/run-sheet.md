@@ -63,13 +63,15 @@ scratch-DB run is pre-loaded in a second terminal, this beat is the flagship ver
 `report_weak_queries` grouping it `near_miss`, show `propose_content_fix`'s evidence, publish the
 real article, then **ship its eval rows** — show the fenced diff (§3 step 3: two golden `near_miss`
 rows re-labelled `answerable: true`, three new rows added) and say out loud that this is a
-demo-time edit, never committed to `seed/eval_questions.yaml`. Show the before/after `compare` line
-(pct 91.9% → 94.0%, **0 regressions, 3 `added`**), show `accept_proposal` succeeding. If step 3 gets
-cut for time, say the fallback line instead (§5 below) and fall back to `rehearsal.md` §3-alt's
-retune, which needs no golden-set edit (pct 91.9% → 95.2%, 0 regressions). Then the rejected
-variant: show `rehearsal.md` §5's bad-fix `compare` line (pct 94.0% → 95.5%, **2 regressions,
-named**), show `accept_proposal` raising the verbatim `ConflictError`, show `reject_proposal`
-archiving the draft.
+demo-time edit, never committed to `seed/eval_questions.yaml`. The after-run is now `--runs 3`
+(fix wave F — the acceptance gate compares run FAMILIES, not two lone runs; ~30 min, so this is
+pre-recorded, not driven live). Show the before/after `compare` line (pct 91.9% → 94.0%, **0
+majority regressions, 3 `added`**), name the family (`accept_proposal` names the after-run's
+3-run family size in its message), show `accept_proposal` succeeding. If step 3 gets cut for time,
+say the fallback line instead (§5 below) and fall back to `rehearsal.md` §3-alt's retune, which
+needs no golden-set edit (pct 91.9% → 95.2%, 0 regressions). Then the rejected variant: show
+`rehearsal.md` §5's bad-fix `compare` line (pct 94.0% → 95.5%, **2 regressions, named**), show
+`accept_proposal` raising the verbatim `ConflictError`, show `reject_proposal` archiving the draft.
 
 **If this runs through the agent (connector) instead of raw script calls, drive it ONE instruction
 per message, never a compound one.** Two of the ten agent-suite tasks stall specifically on
@@ -170,6 +172,18 @@ source of truth per fact.
    instead, so a correctly-behaving run was scored as a partial failure until fixed.
    `.superpowers/sdd/phase-9-eval-data-loop/reports/agent-suite-regression.md`; fixed in commit
    `d5ac13c`; the corrected three-run spread (83.3% ± 10.0) is `verification-record.md` §9a.
+9. **A single-run acceptance gate refused a clean fix three times on one-row flips before the
+   fourth run passed — so the gate now needs a regression to reproduce across a family of runs.**
+   `rehearsal.md` §3 step 4: the flagship "good fix" needed four after-runs before
+   `accept_proposal` said yes, each of the first three carrying exactly one spurious single-row
+   regression the next run did not reproduce, while the real fix held every time. Fix wave F:
+   `compare_runs`/`accept_proposal` now compare run FAMILIES (runs sharing a `label` and
+   `corpus_digest`, e.g. a `--runs 3` invocation) — a question is a regression only when it PASSES
+   in a majority of the before family and FAILS in a majority of the after family, and
+   `pct_fully_supported` compares family means. A family of one behaves exactly as before, so this
+   changes nothing for a one-off run; it only stops a single flaky draw from blocking (or forcing)
+   acceptance on its own. `.superpowers/sdd/phase-9-eval-data-loop/reports/fix-wave-implementer.md`
+   carries a fresh `fw-before`/`fw-after` `--runs 3` demonstration on a disposable scratch DB.
 
 ## After the talk
 

@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from sqlalchemy import select
@@ -1022,3 +1022,147 @@ def test_accept_exempts_a_proposal_with_no_linked_draft_from_the_publish_gates(
 
     accepted = accept_proposal(db_session, proposal.id, eval_run_after_id=after.id)
     assert accepted.status == "accepted"
+
+
+# ---------------------------------------------------------------------------
+# accept_proposal — fix wave F (a regression is a flip that REPRODUCES): the after-run's whole
+# FAMILY (runs sharing a label AND corpus_digest, the harness's own `--runs N` shape) is the
+# acceptance gate's unit of evidence from here on. Every existing test above already proves a
+# family of one behaves exactly as before (all of them pass unchanged); these pin the genuinely
+# multi-run behaviour: a flaky single-run flip must not block acceptance, a majority regression
+# must still refuse it by name, and a family with one stale or partial member is refused too,
+# naming that member specifically.
+# ---------------------------------------------------------------------------
+
+
+def test_accept_succeeds_when_only_one_of_three_after_runs_flips_a_question(
+    db_session: Session, actor_id: uuid.UUID
+) -> None:
+    """F1/F3: a question that flips PASS -> FAIL in only ONE of three after-runs sharing a label
+    is not a majority regression (2 of 3 still PASS) — accept_proposal must ACCEPT. This is the
+    exact rehearsal-observed shape (task-18 rehearsal.md §3 step 4): a clean fix needed four
+    after-runs before a single-run gate stopped seeing a spurious one-row flip."""
+    # pct=50.0 (not 100.0) so the after family's mean (66.7, one of three FAILs) does not dip
+    # below the before-run's own pct and trip the pct rung before the regression rung is reached.
+    _record(db_session, _report(("q1", "PASS"), pct=50.0), label="flip1-before")
+    proposal = propose_content_fix(
+        db_session, kind="new_article", title="T", rationale="R", evidence=[], actor_id=actor_id
+    )
+    publish_content(
+        db_session, proposal.draft_content_id, actor_id=actor_id, pipeline=NoopChunkPipeline()
+    )
+    _record(db_session, _report(("q1", "PASS"), pct=100.0), label="flip1-after")
+    _record(db_session, _report(("q1", "PASS"), pct=100.0), label="flip1-after")
+    flaky_after = _record(db_session, _report(("q1", "FAIL"), pct=0.0), label="flip1-after")
+
+    check = check_acceptance(db_session, proposal, flaky_after.id)
+    assert check.blocked_by is None
+    assert len(check.after_family) == 3
+
+    accepted = accept_proposal(db_session, proposal.id, eval_run_after_id=flaky_after.id)
+    assert accepted.status == "accepted"
+
+
+def test_accept_refuses_when_a_majority_of_after_runs_flip_the_same_question(
+    db_session: Session, actor_id: uuid.UUID
+) -> None:
+    """F1/F3: two of three after-runs failing the same question IS a majority regression, and it
+    is refused by name — a real regression must still be caught even when it does not reproduce
+    on every single run. `filler` improves in every after-run so the family's MEAN pct rises
+    despite the regression, isolating the regression rung from the pct rung (mirrors the
+    single-run `test_accept_refuses_a_fix_that_regressed_other_questions` test above)."""
+    _record(
+        db_session,
+        _report(("q1", "PASS"), ("filler", "FAIL"), pct=50.0),
+        label="flip2-before",
+    )
+    proposal = propose_content_fix(
+        db_session, kind="new_article", title="T", rationale="R", evidence=[], actor_id=actor_id
+    )
+    publish_content(
+        db_session, proposal.draft_content_id, actor_id=actor_id, pipeline=NoopChunkPipeline()
+    )
+    _record(db_session, _report(("q1", "FAIL"), ("filler", "PASS"), pct=50.0), label="flip2-after")
+    _record(db_session, _report(("q1", "FAIL"), ("filler", "PASS"), pct=50.0), label="flip2-after")
+    after = _record(
+        db_session, _report(("q1", "PASS"), ("filler", "PASS"), pct=100.0), label="flip2-after"
+    )
+
+    check = check_acceptance(db_session, proposal, after.id)
+    assert check.blocked_by == "regressions"
+    assert check.regressions == ["q1"]
+    assert check.pct_after > check.pct_before  # pct rose despite the regression
+
+    with pytest.raises(ConflictError) as excinfo:
+        accept_proposal(db_session, proposal.id, eval_run_after_id=after.id)
+
+    message = str(excinfo.value)
+    assert "regress" in message.lower()
+    assert "q1" in message
+    assert "majority" in message.lower()
+    assert "3" in message  # the after-run family size
+
+
+def test_accept_refuses_when_one_after_family_member_is_hand_stamped_stale(
+    db_session: Session, actor_id: uuid.UUID
+) -> None:
+    """F2: a family with one stale member — hand-stamped older than the before-run, mirroring
+    `test_accept_refuses_an_after_run_tied_with_the_before_run_at_the_same_instant`'s own
+    pattern — is refused even though its sibling is fine, naming the specific stale member."""
+    before = _record(db_session, _report(("q1", "FAIL"), pct=0.0), label="stale-member-before")
+    proposal = propose_content_fix(
+        db_session, kind="new_article", title="T", rationale="R", evidence=[], actor_id=actor_id
+    )
+    publish_content(
+        db_session, proposal.draft_content_id, actor_id=actor_id, pipeline=NoopChunkPipeline()
+    )
+    good = _record(db_session, _report(("q1", "PASS"), pct=100.0), label="stale-member-after")
+    stale = _record(db_session, _report(("q1", "PASS"), pct=100.0), label="stale-member-after")
+    stale.created_at = before.created_at - timedelta(seconds=1)
+    db_session.flush()
+
+    check = check_acceptance(db_session, proposal, good.id)
+    assert check.blocked_by == "after_run_not_newer"
+    assert check.blocked_member_id == stale.id
+    assert len(check.after_family) == 2
+
+    with pytest.raises(ConflictError, match="newer") as excinfo:
+        accept_proposal(db_session, proposal.id, eval_run_after_id=good.id)
+    assert str(stale.id) in str(excinfo.value)
+
+    db_session.refresh(proposal)
+    assert proposal.status == "proposed"
+
+
+def test_accept_refuses_when_one_after_family_member_has_partial_coverage(
+    db_session: Session, actor_id: uuid.UUID
+) -> None:
+    """F2: a family where one member individually covers only SOME of the before-run's questions
+    is refused and names that member — even though the family's UNION covers everything (its
+    sibling measures the missing question), so the pre-existing `diff.removed` check alone would
+    have missed it."""
+    _record(db_session, _report(("q1", "PASS"), ("q2", "PASS"), pct=100.0), label="partial-before")
+    proposal = propose_content_fix(
+        db_session, kind="new_article", title="T", rationale="R", evidence=[], actor_id=actor_id
+    )
+    publish_content(
+        db_session, proposal.draft_content_id, actor_id=actor_id, pipeline=NoopChunkPipeline()
+    )
+    good = _record(
+        db_session, _report(("q1", "PASS"), ("q2", "PASS"), pct=100.0), label="partial-after"
+    )
+    partial = _record(db_session, _report(("q1", "PASS"), pct=100.0), label="partial-after")
+
+    check = check_acceptance(db_session, proposal, good.id)
+    assert check.blocked_by == "incomplete_after_run"
+    assert check.blocked_member_id == partial.id
+    assert check.missing_questions == ["q2"]
+
+    with pytest.raises(ConflictError, match="did not measure") as excinfo:
+        accept_proposal(db_session, proposal.id, eval_run_after_id=good.id)
+    message = str(excinfo.value)
+    assert str(partial.id) in message
+    assert "q2" in message
+
+    db_session.refresh(proposal)
+    assert proposal.status == "proposed"

@@ -589,11 +589,12 @@ def check_acceptance(
     # question union and can therefore name a question a before-family SIBLING measured but the
     # stamped run itself never did, blaming the after family for a gap it does not have
     # (unreachable without hand-building: re-running the same `--label` with a broader
-    # `--questions` file before any publish lands both runs in one family). This rung is now
-    # defence in depth behind the per-member loop above, catching only the case where NO
-    # after-family member — not even collectively — ever measured a question the stamped
-    # before-run measured. `diff.removed` stays on `RunDiff` for the CLI/tool output; it is no
-    # longer consulted by this gate.
+    # `--questions` file before any publish lands both runs in one family). The `union_missing`
+    # half is PROVABLY UNREACHABLE while the per-member loop above stands (every member covering
+    # `before_own_questions` implies their union does) — it is kept only as a paranoia check
+    # against a future refactor of that loop, and the `total_questions` half is the belt-and-
+    # braces count check on data already loaded. `diff.removed` stays on `RunDiff` for the
+    # CLI/tool output; it is no longer consulted by this gate.
     after_union = set().union(*(_questions_for_run(session, member.id) for member in after_family))
     union_missing = sorted(before_own_questions - after_union)
     if union_missing or after.total_questions < before.total_questions:

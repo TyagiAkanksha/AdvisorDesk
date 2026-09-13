@@ -34,19 +34,17 @@ onboarding-specific schedule.
 
 The more you bring to your first meeting, the more specific we can be from day one, rather than
 spending part of that meeting chasing down numbers we could have had in advance. At minimum, bring
-your most recent pay stub and your last two tax returns, so we can see both your current
-cash flow and how your total income and withholding actually played out. Bring statements for
-every investment and retirement account you hold, including your 401(k) and any brokerage
-accounts, so we can see your full asset allocation rather than just the pieces you remember off
-the top of your head. If your compensation includes equity, bring your grant agreements and
-vesting schedule, your ESPP enrollment form, and, if you've had any exercises or ESPP purchases
-already, the tax forms tied to them — a Form 3921 for an ISO exercise, a Form 3922 for an ESPP
-purchase, and any 1099-B from a sale, along with the W-2 that shows how prior equity events were
-reported as income. We also ask
-for a summary of your workplace benefits, including health insurance, disability coverage, and any
-employer retirement match, so your plan accounts for what you already have rather than duplicating
-or ignoring it. None of this needs to be perfectly organized before you send it; we can work with
-whatever you have.
+your latest pay stub and your last two tax returns, so we can see both your current cash flow and how
+your total income and withholding actually played out. Bring statements for every investment and
+retirement account you hold, including your 401(k) and any brokerage accounts, so we can see your
+full asset allocation rather than just the pieces you remember off the top of your head. If your
+compensation includes equity, bring your grant agreements and vesting schedule, your ESPP enrollment
+form, and, if you've had any exercises or ESPP purchases already, the tax forms tied to them — a Form
+3921 for an ISO exercise, a Form 3922 for an ESPP purchase, and any 1099-B from a sale, along with
+the W-2 that shows how prior equity events were reported as income. We also ask for a summary of your
+workplace benefits, including health insurance, disability coverage, and any employer retirement
+match, so your plan accounts for what you already have rather than duplicating or ignoring it. None
+of this needs to be perfectly organized before you send it; we can work with whatever you have.
 
 ## What do you need from my equity paperwork?
 
@@ -98,7 +96,7 @@ scattered across statements before now has a plan and a place.
 - **Onboarding timeline** — three meetings over roughly six weeks: discovery, plan presentation,
   implementation (our onboarding process).
 - **Meeting cadence after onboarding** — two scheduled reviews a year, spring and autumn, plus
-  unlimited questions in between (our fee schedule).
+  unlimited questions by message (our fee schedule).
 - **Ongoing advisory fee** — 0.75% per year of managed assets, billed quarterly in arrears (our fee
   schedule).
 - **Form 3921 / 3922 furnishing deadline** — your employer must furnish these forms to you by

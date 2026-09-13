@@ -16,21 +16,20 @@ a separate decision with its own deadline.
 
 ## What is the difference between an ISO and an NSO?
 
-Incentive stock options and non-qualified stock options start from the same basic instrument —
-the right to buy shares at a fixed strike price — but the tax code treats them differently, and
-only one of them gets the favorable treatment. An ISO is a creature of the tax code itself: it can
-only be granted to employees, never to contractors, consultants, or outside directors, and it only
-keeps its special status if the company follows a specific set of statutory requirements, such as
-a written plan approved by shareholders and a strike price set at or above fair market value on
-the grant date. An NSO carries none of those restrictions: it can be granted to anyone providing
-services to the company, priced as the company chooses, subject to the separate §409A valuation
-rules (a below-market strike price triggers them). Both types can sit side by side in the same
-startup equity package, and both are silent
-about tax at the grant date itself — neither one creates income when it is granted, only when you
-use it. The single sentence that matters for planning purposes is this: the difference between an
-ISO and an NSO does not show up at grant, and it does not show up while you are simply holding an
-unexercised option — it shows up the moment you exercise, which is where the rest of this article
-picks up.
+Incentive stock options and non-qualified stock options start from the same basic instrument — the
+right to buy shares at a fixed strike price — but the tax code treats them differently, and only one
+of them gets the favorable treatment. An ISO is a creature of the tax code itself: it can only be
+granted to employees, never to contractors, consultants, or outside directors, and it only keeps its
+special status if the company follows a specific set of statutory requirements, such as a written
+plan approved by shareholders and a strike price set at or above fair market value on the grant date.
+An NSO carries none of those restrictions: it can be granted to anyone providing services to the
+company, priced as the company chooses, subject to the separate §409A valuation rules (a below-market
+strike price triggers them). Both types can sit side by side in the same startup equity package, and
+both are silent about tax at the grant date itself — neither one creates income when it is granted,
+only when you use it. The single sentence that matters for planning purposes is this: the difference
+between an ISO and an NSO does not show up at grant, and it does not show up while you are simply
+holding an unexercised option — it shows up the moment you exercise, which is where the rest of this
+article picks up.
 
 ## What do I owe when I exercise an NSO?
 

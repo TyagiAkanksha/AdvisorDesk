@@ -27,26 +27,27 @@ spread between what you paid and the stock's current value is small or zero, the
 you report at filing is small or nothing, and every dollar of appreciation after that point is
 treated as capital gain rather than compensation income when you eventually sell, with the holding
 period for long-term treatment starting just after the date the shares were transferred to you
-rather than on each later vesting date. The trade is straightforward in concept: pay a small, known amount of tax now in
-exchange for capital-gains treatment on everything that happens afterward — but as the rest of
-this article covers, that trade only works out if a few other things go right.
+rather than on each later vesting date. The trade is straightforward in concept: pay a small, known
+amount of tax now in exchange for capital-gains treatment on everything that happens afterward — but
+as the rest of this article covers, that trade only works out if a few other things go right.
 
 ## When does the 30-day clock start and end?
 
-The 83(b) election has one deadline, and it is unforgiving: the election must be filed with the
-IRS within 30 days of the date the property was transferred to you, counted in calendar days, not
-business days, with no extension available for any reason — missing it by even a single day means
-the election is invalid and the default vesting-date tax rules apply instead. For restricted stock
-granted outright, the transfer date is straightforward: the day the company issued the shares to
-you. For an early-exercised option, the transfer happens on the date you actually exercise and pay
-for the shares, not on the earlier date the option itself was granted — exercising early is
-exactly what creates the restricted property an 83(b) election can apply to in the first place, so
-the 30-day clock starts running the moment you exercise, and nowhere before that. Because the
-deadline is measured in calendar days from a specific event you control, it is entirely possible to
-miss it simply by not knowing the clock has started, especially with an early exercise that happens
-outside your company's normal grant paperwork and timeline. Anyone considering early exercise
-specifically to make an 83(b) election worthwhile should have the election paperwork ready before
-exercising, not after, so there is no gap between the transfer and the filing.
+The 83(b) election has one deadline, and it is unforgiving: the election must be filed with the IRS
+within 30 days of the date the property was transferred to you, counted in calendar days, not
+business days — the one narrow exception is that if the 30th day itself falls on a Saturday, Sunday,
+or legal holiday, the deadline shifts to the next business day (26 U.S.C. §7503) — missing it by even
+a single day beyond that means the election is invalid and the default vesting-date tax rules apply
+instead. For restricted stock granted outright, the transfer date is straightforward: the day the
+company issued the shares to you. For an early-exercised option, the transfer happens on the date you
+actually exercise and pay for the shares, not on the earlier date the option itself was granted —
+exercising early is exactly what creates the restricted property an 83(b) election can apply to in
+the first place, so the 30-day clock starts running the moment you exercise, and nowhere before that.
+Because the deadline is measured in calendar days from a specific event you control, it is entirely
+possible to miss it simply by not knowing the clock has started, especially with an early exercise
+that happens outside your company's normal grant paperwork and timeline. Anyone considering early
+exercise specifically to make an 83(b) election worthwhile should have the election paperwork ready
+before exercising, not after, so there is no gap between the transfer and the filing.
 
 ## When is an 83(b) election a good idea?
 
@@ -114,6 +115,7 @@ _Current as of 2026-09_
 ## Sources
 
 - Internal Revenue Code §83 — https://www.law.cornell.edu/uscode/text/26/83
+- Internal Revenue Code §7503 — https://www.law.cornell.edu/uscode/text/26/7503
 - Treasury Regulation §1.83-2 — https://www.law.cornell.edu/cfr/text/26/1.83-2
 - Treasury Regulation §1.83-3 — https://www.law.cornell.edu/cfr/text/26/1.83-3
 - Treasury Regulation §1.83-4 — https://www.law.cornell.edu/cfr/text/26/1.83-4

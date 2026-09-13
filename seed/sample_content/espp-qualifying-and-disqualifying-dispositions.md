@@ -103,7 +103,7 @@ trusting the 1099-B number by itself.
   years from the offering (grant) date and more than one year from the purchase (transfer) date (IRC
   §423(a)(1); IRS Pub 525).
 - **Form 3922 deadline** — your employer must furnish Form 3922 to you by January 31 of the year
-  following the calendar year of the purchase (IRS Pub 525).
+  following the calendar year of the purchase (IRS Pub 525; 26 CFR §1.6039-2).
 
 _Current as of 2026-09_
 
@@ -112,6 +112,7 @@ _Current as of 2026-09_
 - IRS Publication 525, Taxable and Nontaxable Income (Employee Stock Purchase Plans) —
   https://www.irs.gov/publications/p525
 - Instructions for Forms 3921 and 3922 — https://www.irs.gov/instructions/i3921
+- 26 CFR §1.6039-2 — https://www.law.cornell.edu/cfr/text/26/1.6039-2
 - Internal Revenue Code §423, Employee Stock Purchase Plans —
   https://www.law.cornell.edu/uscode/text/26/423
 

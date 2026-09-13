@@ -40,10 +40,10 @@ meetings — you do not need to wait for your next review to ask about a decisio
 between. What the fee does not cover is preparing or filing your tax return yourself; we coordinate
 closely with your CPA rather than replacing that relationship. If you are not an ongoing client, a
 single major equity-compensation decision such as an IPO or a tender offer can instead be engaged as
-a standalone $2,500 project, separate from the 0.75% ongoing advisory fee. The goal of the fee
-structure is that a single, predictable cost covers the full range of decisions that come up around
-equity compensation over the course of a year, rather than charging separately every time something
-new happens.
+a standalone $2,500 project, separate from the 0.75%-per-year ongoing advisory fee on managed assets.
+The goal of the fee structure is that a single, predictable cost covers the full range of decisions
+that come up around equity compensation over the course of a year, rather than charging separately
+every time something new happens.
 
 ## Who do you work with, and who are you not a fit for?
 
@@ -110,6 +110,8 @@ _Current as of 2026-09_
   Advisers (Federal Register text) — https://www.govinfo.gov/content/pkg/FR-2019-07-12/html/2019-12208.htm
 - SEC, General Instructions for Part 2 of Form ADV (Rule 204-3(b)) —
   https://www.sec.gov/files/form-adv-part2.pdf
+- 17 CFR §275.204-3 (SEC "brochure rule," law.cornell.edu mirror) —
+  https://www.law.cornell.edu/cfr/text/17/275.204-3
 - CFP Board, "Focus on Ethics: Disclosing and Accurately Representing Compensation to Clients" —
   https://www.cfp.net/ethics/compliance-resources/2018/07/focus-on-ethics---disclosing-and-accurately-representing-compensation-to-clients
 

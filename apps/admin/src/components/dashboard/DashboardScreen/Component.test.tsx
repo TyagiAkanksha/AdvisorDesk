@@ -49,13 +49,41 @@ const itemA: ContentDto = {
 
 const recentFixture: ContentListDto = { items: [itemA], page: 1, page_size: 5, total: 1 };
 
-function mockFetch(overrides: { stats?: unknown; recent?: ContentListDto } = {}) {
+// phase-9 task-19 (RED): two groups — one 👎, one refused — matching the shape
+// `GET /api/v1/weak-queries` will answer with once the route exists (it doesn't yet).
+const weakQueriesFixture = {
+  threshold: 0.5,
+  days: 7,
+  count: 2,
+  items: [
+    {
+      normalized_question: 'does the firm cover crypto rsus',
+      count: 2,
+      kinds: ['negative_feedback'],
+      worst_top_similarity: 0.6,
+      examples: [],
+    },
+    {
+      normalized_question: 'anything on qsbs',
+      count: 1,
+      kinds: ['refused'],
+      worst_top_similarity: null,
+      examples: [],
+    },
+  ],
+};
+
+function mockFetch(
+  overrides: { stats?: unknown; recent?: ContentListDto; weakQueries?: unknown } = {},
+) {
   const fetchMock = vi.fn<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>(
     async (input) => {
       const url = new URL(requestUrl(input));
       if (url.pathname === '/api/v1/stats') return jsonResponse(overrides.stats ?? statsFixture);
       if (url.pathname === '/api/v1/content')
         return jsonResponse(overrides.recent ?? recentFixture);
+      if (url.pathname === '/api/v1/weak-queries')
+        return jsonResponse(overrides.weakQueries ?? weakQueriesFixture);
       return jsonResponse({ error: { code: 'not_found', message: 'unmocked route' } }, 404);
     },
   );
@@ -179,5 +207,34 @@ describe('DashboardScreen', () => {
 
     expect(await screen.findByRole('link', { name: /^Draft\s*3$/ })).toBeInTheDocument();
     expect(await screen.findByRole('alert')).toHaveTextContent("Couldn't load recent content.");
+  });
+
+  // phase-9 task-19 (RED): the dashboard has no weak-queries panel yet, and
+  // `GET /api/v1/weak-queries` doesn't exist yet either — both new tests below fail against
+  // today's `DashboardScreen` (no such title/table renders) until the implementer wires the
+  // route + card.
+  it('renders the weak-queries card from GET /api/v1/weak-queries', async () => {
+    mockFetch();
+
+    renderScreen();
+
+    const table = await screen.findByRole('table', { name: 'Weak queries' });
+    expect(screen.getByText('Weak queries (last 7 days)')).toBeInTheDocument();
+    expect(within(table).getByText('does the firm cover crypto rsus')).toBeInTheDocument();
+    expect(within(table).getByText('Thumbs down')).toBeInTheDocument();
+  });
+
+  it('shows the card error without blanking the dashboard', async () => {
+    global.fetch = vi.fn<(input: RequestInfo | URL) => Promise<Response>>(async (input) => {
+      const url = new URL(requestUrl(input));
+      if (url.pathname === '/api/v1/stats') return jsonResponse(statsFixture);
+      if (url.pathname === '/api/v1/content') return jsonResponse(recentFixture);
+      return jsonResponse({ error: { code: 'internal_error', message: 'boom' } }, 500);
+    });
+
+    renderScreen();
+
+    expect(await screen.findByRole('link', { name: /^Draft\s*3$/ })).toBeInTheDocument();
+    expect(await screen.findByText("Couldn't load weak queries.")).toBeInTheDocument();
   });
 });

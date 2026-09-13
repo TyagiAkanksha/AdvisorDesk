@@ -264,11 +264,13 @@ pnpm -C apps/client test
 
 ## Metrics
 
-PRD §9.1's four metrics, **measured on the local seeded stack** (dedicated database
-`advisordesk_p7verify`, OpenAI provider — `text-embedding-3-small@1024` + `gpt-4o-mini`,
-`SIMILARITY_THRESHOLD=0.5`), captured 2026-09-07. Raw command output:
-`.superpowers/sdd/phase-7-evaluation/task-03a-metrics-capture.md` (gitignored working notes) and
-`docs/plans/phase-7-evaluation/verification-record.md` (the committed record).
+PRD §9.1's four metrics, **measured on the local seeded stack** (OpenAI provider —
+`text-embedding-3-small@1024`, `SIMILARITY_THRESHOLD=0.5`). The corpus, groundedness and
+agent-suite rows are phase 9's `rebaseline-2026-09` (2026-09-13, `gpt-5.4-mini` answerer /
+`gpt-5.4` judge, dedicated database `advisordesk_p9rebaseline`; committed record:
+`docs/plans/phase-9-eval-data-loop/verification-record.md`). The latency row is phase 7's capture
+(2026-09-07, `gpt-4o-mini`, `docs/plans/phase-7-evaluation/verification-record.md`) and has not
+been re-measured since the model change.
 
 | Metric | Value |
 |---|---|

@@ -222,3 +222,129 @@
     The sell-or-hold decision sits inside the ongoing advisory relationship the firm's fee covers,
     alongside the withholding check and the concentration review. Because the firm is fee-only,
     the recommendation does not change based on whether you sell.
+
+# --- phase-9 wave 1, batch B (task 11): ISO/NSO · AMT + credit · 83(b) · onboarding ---
+
+- question: "What is the difference between an ISO and an NSO when I exercise?"
+  expected_slugs: ["isos-and-nsos-how-each-one-is-taxed"]
+  answerable: true
+  class: answerable
+  persona: "Priya"
+  expected_chunks:
+    - "isos-and-nsos-how-each-one-is-taxed#what-is-the-difference-between-an-iso-and-an-nso"
+    - "isos-and-nsos-how-each-one-is-taxed#what-do-i-owe-when-i-exercise-an-nso"
+  reference_answer: >-
+    Exercising an NSO creates ordinary compensation income equal to the spread between your strike
+    price and the share value, withheld through payroll. Exercising an ISO creates no regular-tax
+    income if you hold the shares, but the same spread is an alternative-minimum-tax item.
+
+- question: "If I exercise my incentive stock options and keep the shares, what do I owe that year?"
+  expected_slugs: ["isos-and-nsos-how-each-one-is-taxed"]
+  answerable: true
+  class: answerable
+  persona: "Priya"
+  expected_chunks: ["isos-and-nsos-how-each-one-is-taxed#what-do-i-owe-when-i-exercise-an-iso"]
+  reference_answer: >-
+    For regular tax, nothing is due at exercise when you hold the shares. The spread at exercise is
+    an AMT adjustment, so an exercise-and-hold can still produce a bill through the alternative
+    minimum tax.
+
+- question: "I have ISOs from my startup and RSUs from my old public employer — how is each one taxed?"
+  expected_slugs: ["isos-and-nsos-how-each-one-is-taxed", "what-happens-to-your-rsus-at-vest"]
+  answerable: true
+  class: multi_source
+  persona: "Priya"
+  expected_chunks:
+    - "isos-and-nsos-how-each-one-is-taxed#what-is-the-difference-between-an-iso-and-an-nso"
+    - "what-happens-to-your-rsus-at-vest#what-happens-when-my-rsus-vest"
+  reference_answer: >-
+    RSUs are taxed as ordinary wage income when they vest and settle, with no timing choice. ISOs
+    are not taxed at grant and, for regular tax, not at exercise; the tax depends on when you
+    exercise and when you sell, and an exercise can create an AMT item.
+
+- question: "Why would exercising my ISOs create an alternative minimum tax bill?"
+  expected_slugs: ["amt-after-an-iso-exercise-and-the-credit-that-follows"]
+  answerable: true
+  class: answerable
+  persona: "Priya"
+  expected_chunks:
+    - "amt-after-an-iso-exercise-and-the-credit-that-follows#why-does-exercising-an-iso-trigger-amt"
+  reference_answer: >-
+    The spread between your strike price and the share value at exercise is not regular-tax income,
+    but it is added back when you compute the alternative minimum tax. If the AMT result exceeds
+    your regular tax, you pay the difference.
+
+- question: "If I pay AMT because of an ISO exercise, do I ever get that money back?"
+  expected_slugs: ["amt-after-an-iso-exercise-and-the-credit-that-follows"]
+  answerable: true
+  class: answerable
+  persona: "Priya"
+  expected_chunks:
+    - "amt-after-an-iso-exercise-and-the-credit-that-follows#what-is-the-amt-credit-and-when-do-i-get-it-back"
+  reference_answer: >-
+    The AMT you pay on an ISO exercise creates a minimum tax credit that carries forward. You use
+    it in later years where your regular tax exceeds your AMT, claimed on Form 8801, usually
+    recovering it over several years rather than all at once.
+
+- question: "What is the AMT exemption for a married couple filing jointly this year?"
+  expected_slugs: ["amt-after-an-iso-exercise-and-the-credit-that-follows"]
+  answerable: true
+  class: stale_number
+  persona: "Priya"
+  expected_chunks: ["amt-after-an-iso-exercise-and-the-credit-that-follows#key-numbers-2026"]
+  reference_answer: >-
+    For 2026, the AMT exemption for married taxpayers filing jointly is $140,200. That exemption
+    begins to phase out once your alternative minimum taxable income reaches $1,000,000.
+
+- question: "What does filing an 83(b) election actually do for me?"
+  expected_slugs: ["the-83-b-election-on-restricted-stock"]
+  answerable: true
+  class: answerable
+  persona: "Priya"
+  expected_chunks: ["the-83-b-election-on-restricted-stock#what-does-an-83-b-election-actually-do"]
+  reference_answer: >-
+    An 83(b) election has you taxed on restricted stock at its value when you receive it instead of
+    as it vests. You pay ordinary income tax on a small amount up front, and later appreciation is
+    capital gain if you hold the shares.
+
+- question: "My divorce is being finalized — how do we split my stock options?"
+  expected_slugs: []
+  answerable: false
+  class: near_miss
+  persona: "Priya"
+
+- question: "I bought shares I do not fully own yet and a colleague said I have about a month to tell the IRS something. What is she talking about?"
+  expected_slugs: ["the-83-b-election-on-restricted-stock"]
+  answerable: true
+  class: threshold
+  persona: "Priya"
+  expected_chunks: ["the-83-b-election-on-restricted-stock#when-does-the-30-day-clock-start-and-end"]
+  reference_answer: >-
+    She means the 83(b) election, which must be filed within 30 days of the transfer of the
+    restricted stock. The deadline runs in calendar days from the transfer date and cannot be
+    extended.
+
+- question: "What should I bring to a first meeting with you?"
+  expected_slugs: ["onboarding-with-us-and-what-to-bring"]
+  answerable: true
+  class: answerable
+  persona: "Sam"
+  expected_chunks:
+    - "onboarding-with-us-and-what-to-bring#what-documents-should-i-bring-to-our-first-meeting"
+  reference_answer: >-
+    Bring your recent pay statements and W-2, your last two tax returns, statements for your
+    retirement and brokerage accounts, and your benefits summary. If you have equity, bring the
+    grant agreements, the plan document and any Form 3921 or 3922 you received.
+
+- question: "What paperwork do you need from me to look at an ISO exercise?"
+  expected_slugs: ["onboarding-with-us-and-what-to-bring", "isos-and-nsos-how-each-one-is-taxed"]
+  answerable: true
+  class: multi_source
+  persona: "Priya"
+  expected_chunks:
+    - "onboarding-with-us-and-what-to-bring#what-do-you-need-from-my-equity-paperwork"
+    - "isos-and-nsos-how-each-one-is-taxed#what-do-i-owe-when-i-exercise-an-iso"
+  reference_answer: >-
+    The firm asks for your grant agreement, the plan document, your exercise history, any Form 3921
+    and your last two tax returns. Those show the strike price, the exercise dates and the holding
+    periods that decide whether an exercise is an AMT item or ordinary income.

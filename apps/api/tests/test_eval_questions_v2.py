@@ -183,3 +183,49 @@ def test_resolve_expected_chunks_skips_unknown_slug_heading_and_unpublished_cont
 
     assert resolve_expected_chunks(db_session, ["draft-article#hidden"]) == set()
     assert resolve_expected_chunks(db_session, ["nope#nothing"]) == set()
+
+
+def test_reference_answer_on_an_unanswerable_row_raises(tmp_path: Path) -> None:
+    """Phase-9 N5 ruling, now enforced by the loader: a reference answer on a row the corpus must
+    not answer hands the answer-relevance and context-recall judges an unsupportable target, which
+    scores a correct refusal as a miss."""
+    path = _write(
+        tmp_path,
+        [
+            {
+                "question": "How is my token compensation taxed?",
+                "expected_slugs": [],
+                "answerable": False,
+                "class": "near_miss",
+                "reference_answer": "It is ordinary income when you gain control of it.",
+            }
+        ],
+    )
+
+    with pytest.raises(ValueError) as excinfo:
+        load_questions(path)
+
+    message = str(excinfo.value)
+    assert "reference_answer" in message
+    assert "answerable" in message
+
+
+def test_unanswerable_rows_without_a_reference_answer_still_load(tmp_path: Path) -> None:
+    path = _write(
+        tmp_path,
+        [
+            {
+                "question": "How is my token compensation taxed?",
+                "expected_slugs": [],
+                "answerable": False,
+                "class": "near_miss",
+                "persona": "Marcus",
+            }
+        ],
+    )
+
+    question = load_questions(path)[0]
+
+    assert question.question_class == "near_miss"
+    assert question.reference_answer is None
+    assert question.expected_chunks == []

@@ -771,18 +771,17 @@ def test_wave_1_is_complete_at_sixteen_articles() -> None:
 
 # ---- eval-question class balance (DESIGN §B2: 80 rows at the end of task 14) ----
 
-# Running totals after the batch this task lands. Phase-4 baseline: 17 answerable + 4 off_domain
-# (both by the loader's default rule — those rows carry no explicit `class`). Batch A adds
-# 6 answerable + 2 multi_source + 1 near_miss + 1 threshold + 1 stale_number.
+# Final DESIGN §B2 counts: phase-4's 21 rows + wave-1 batches A-D's 44 rows + task 14's 15
+# persona-first rows. The golden set is frozen at 80 after task 14.
 _EXPECTED_CLASS_COUNTS = {
-    "answerable": 41,
+    "answerable": 45,
     "multi_source": 8,
-    "near_miss": 4,
-    "off_domain": 4,
-    "threshold": 4,
+    "near_miss": 10,
+    "off_domain": 8,
+    "threshold": 5,
     "stale_number": 4,
 }
-_EXPECTED_QUESTION_TOTAL = 65
+_EXPECTED_QUESTION_TOTAL = 80
 
 
 def _question_class(item: dict[str, Any]) -> str:
@@ -820,3 +819,28 @@ def test_eval_questions_near_miss_rows_are_unanswerable_and_uncited() -> None:
         assert item["answerable"] is False, f"near_miss row marked answerable: {item['question']!r}"
         assert item["expected_slugs"] == [], f"near_miss row has expected_slugs: {item!r}"
         assert not item.get("expected_chunks"), f"near_miss row has expected_chunks: {item!r}"
+
+
+# DESIGN §C2's three personas, verbatim. A typo'd persona silently empties a per-persona rollup.
+_PERSONAS = {"Sam", "Priya", "Marcus"}
+
+
+def test_eval_questions_personas_are_the_three_design_personas() -> None:
+    used = {item["persona"] for item in _load_eval_questions() if "persona" in item}
+    unknown = used - _PERSONAS
+    assert not unknown, f"unknown personas {unknown}; DESIGN §C2 names {sorted(_PERSONAS)}"
+    assert used == _PERSONAS, f"every persona must appear at least once; missing {_PERSONAS - used}"
+
+
+def test_eval_questions_authored_class_rows_carry_a_reference_answer() -> None:
+    """`multi_source`, `threshold` and `stale_number` rows exist only in the phase-9 waves, and the
+    answer-relevance and context-recall judges score against `reference_answer` — a row in one of
+    those classes without one is silently unscored. (The 17 phase-4 rows default to class
+    `answerable` and carry no reference answer; backfilling those is wave 2's job, DESIGN §C2.)"""
+    missing = [
+        item["question"]
+        for item in _load_eval_questions()
+        if item.get("class") in {"multi_source", "threshold", "stale_number"}
+        and not item.get("reference_answer")
+    ]
+    assert not missing, f"authored-class rows missing a reference_answer: {missing}"

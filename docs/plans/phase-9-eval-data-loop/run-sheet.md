@@ -51,12 +51,18 @@ recorded §4 step 4 output in `rehearsal.md`.
 
 **Decide in advance (§1): this beat runs on the scratch DB from `rehearsal.md`, not prod** — no
 live embedding calls, no prod writes, and no risk of an agent stalling in front of the room. If the
-scratch-DB run is pre-loaded in a second terminal, this beat is: show the proposal record
-(`propose_content_fix`'s evidence, quoting the real weak-query rows), show the before/after
-`compare` line from `rehearsal.md` §3 (pct 91.9% → 95.2%, 0 regressions), show `accept_proposal`
-succeeding. Then the variant: show `rehearsal.md` §5's bad-fix `compare` line (pct 95.2% → 96.8%,
-**2 regressions, named**), show `accept_proposal` raising the verbatim `ConflictError`, show
-`reject_proposal` archiving the draft.
+scratch-DB run is pre-loaded in a second terminal, this beat is the flagship version
+(`rehearsal.md` §3): show the planted-gap question refused live (or via the recording), show
+`report_weak_queries` grouping it `near_miss`, show `propose_content_fix`'s evidence, publish the
+real article, then **ship its eval rows** — show the fenced diff (§3 step 3: two golden `near_miss`
+rows re-labelled `answerable: true`, three new rows added) and say out loud that this is a
+demo-time edit, never committed to `seed/eval_questions.yaml`. Show the before/after `compare` line
+(pct 91.9% → 94.0%, **0 regressions, 3 `added`**), show `accept_proposal` succeeding. If step 3 gets
+cut for time, say the fallback line instead (§5 below) and fall back to `rehearsal.md` §3-alt's
+retune, which needs no golden-set edit (pct 91.9% → 95.2%, 0 regressions). Then the rejected
+variant: show `rehearsal.md` §5's bad-fix `compare` line (pct 94.0% → 95.5%, **2 regressions,
+named**), show `accept_proposal` raising the verbatim `ConflictError`, show `reject_proposal`
+archiving the draft.
 
 **If this runs through the agent (connector) instead of raw script calls, drive it ONE instruction
 per message, never a compound one.** Two of the ten agent-suite tasks stall specifically on
@@ -84,9 +90,12 @@ prove whether they worked; it does not mean unsupervised."*
   `pct_fully_supported` spread) rather than restating a number here; this doc is exactly why every
   metric in this phase is reported as mean ± spread over persisted runs, never a single draw.
   Rehearsing this beat itself proved the point: landing a clean, zero-*unrelated*-regression
-  after-run for the accepted fix (`rehearsal.md` §3) took more than one attempt purely from
-  judge/generation noise on an unrelated question — the targeted fix's own row flipped reliably
-  every time; which OTHER borderline row moved did not.
+  after-run for the accepted flagship fix (`rehearsal.md` §3) took four attempts — one hit an
+  unrelated noisy row, two hit a judge artifact on a bare declarative opening sentence in the new
+  article's own answer (fixed by rephrasing the article, not by re-running) — and the targeted
+  fix's own rows flipped reliably once that was fixed. §3-alt's simpler retune needed 1-2 retries
+  for the same reason. Which specific borderline row moves is not reliable; that the fix's own row
+  moves is.
 - **The judge disagrees with the room** → point to the scorecard: κ vs. the human labels (§10 of
   `verification-record.md`), and `judge_disagreement` is a taxonomy cause with **no content fix** —
   it means calibrate the judge (task 08's territory), not rewrite an article.
@@ -128,10 +137,17 @@ source of truth per fact.
    ordering check. `.superpowers/sdd/phase-9-eval-data-loop/reports/task-16-review.md`; fixed in
    commit `83e0a54` (the acceptance gate is twelve rungs as of this phase, not the six the original
    design sketched).
-5. **A planted-gap fix can trip the same regression gate, honestly** — closing a real content gap
-   with a genuinely good article flips that gap's own golden `near_miss` row from a correct refusal
-   to a real (correct) answer the stale golden label doesn't expect. Measured directly, twice, on
-   two different planted gaps. `docs/plans/phase-9-eval-data-loop/rehearsal.md` §2's closing note.
+5. **A good fix for a planted gap was refused by the gate because the golden set still said the
+   gap was unanswerable — the eval data was the stale thing, so a fix must ship with its eval
+   rows.** Measured directly, twice, on two different planted gaps, before the fix: closing a real
+   content gap with a genuinely good article flipped that gap's own golden `near_miss` row from a
+   correct refusal to a real, correct answer the stale `answerable: false` label didn't expect —
+   `accept_proposal` correctly refused a good fix. DESIGN §C's own rule ("a fix ships with its eval
+   rows, the same way code ships with tests") is the actual fix: re-label the gap's `near_miss` rows
+   `answerable: true` and add the new article's own eval rows in the same demo action, and the
+   after-run shows 0 regressions with the new rows landing as `added` (the coverage gate allows a
+   superset). `docs/plans/phase-9-eval-data-loop/rehearsal.md` §2's closing note (the failure) and
+   §3 (the fix, run for real). **Say this line if step 3 gets cut on stage.**
 6. **A faithfulness judge cannot tell "supported by a wrong source" from "supported by a right
    source"** — confidently wrong, self-consistent prose sailed through faithfulness scoring in the
    rehearsal's first bad-fix attempt; only retrieval displacement (out-ranking the real article,

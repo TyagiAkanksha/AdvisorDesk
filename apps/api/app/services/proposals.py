@@ -45,14 +45,21 @@ class AcceptanceCheck:
 
     `blocked_by` is `None` when the proposal is acceptable, else the name of the first gate (in
     evaluation order) that failed: one of `"no_before_run"`, `"missing_before_run"`,
-    `"missing_after_run"`, `"after_run_wrong_kind"`, `"after_run_not_newer"`,
-    `"corpus_unchanged"`, `"pct_dropped"`, `"incomplete_after_run"`, `"regressions"`.
+    `"incomplete_before_run"`, `"missing_after_run"`, `"after_run_wrong_kind"`,
+    `"after_run_not_newer"`, `"corpus_unchanged"`, `"pct_dropped"`, `"draft_not_published"`,
+    `"after_run_predates_publication"`, `"incomplete_after_run"`, `"regressions"`.
 
     Fix round 1 (reviewer C1): `missing_questions` names the before-run questions the after-run
     did not measure (`app.services.eval_runs.RunDiff.removed`) — populated only for
     `blocked_by="incomplete_after_run"`, `[]` otherwise. Mirrors `regressions`' own shape: both
     exist so `accept_proposal` can name specific questions in its refusal message without a
     second `compare_runs` call.
+
+    Observation carried forward (reviewer, fix round 1 review): `corpus_changed` is a claim about
+    evaluation order, not about the world — every branch that returns before the digest is
+    actually compared reports `corpus_changed=False`, even for `"after_run_not_newer"`,
+    `"draft_not_published"` or `"after_run_predates_publication"`, where the digests might well
+    differ. Read it as "corpus_changed, as far as this gate got", not "the corpus is unchanged".
     """
 
     before_id: uuid.UUID | None
@@ -244,6 +251,13 @@ def check_acceptance(
     `compare_runs`' own `ConflictError` ("Cannot compare a ... run to a ... run") propagate out of
     this function — a documented exception to "without mutating anything" (raising is not
     mutating).
+
+    Fix round 2 (reviewer I3, owner ruling): when `proposal.draft_content_id` is set, the linked
+    `Content` row must be `published` and the after-run's `corpus_max_updated_at` must be at or
+    after that `published_at` — otherwise this run cannot show it measured a corpus containing
+    THIS proposal's own fix, whatever else it shows. A proposal with no linked draft (nullable
+    column; `propose_content_fix` always sets one today, but the column itself allows `None`) is
+    exempt from both checks — there is no fix-specific publish event to compare against.
     """
     before_id = proposal.eval_run_before_id
     if before_id is None:
@@ -269,6 +283,27 @@ def check_acceptance(
             regressions=[],
             missing_questions=[],
             blocked_by="missing_before_run",
+        )
+
+    # Fix round 2 (reviewer I2 — Important): `compare_runs`' verdict sets are computed over
+    # QUESTIONS BOTH RUNS MEASURED, so a before-run with ZERO questions compares zero questions —
+    # `diff.removed` is vacuously empty (nothing to be missing), `pct_fully_supported` is
+    # vacuously `0.0` (so gate "pct not dropped" passes against anything), and `diff.regressions`
+    # is vacuously `[]`. C1 closed this hole from the AFTER side (gate "incomplete_after_run"
+    # below); this closes the identical hole from the BEFORE side. A distinct `blocked_by` (rather
+    # than folding into "incomplete_after_run") because the operator's fix differs: an empty
+    # BEFORE-run means the baseline itself is worthless (re-propose against a real baseline), an
+    # incomplete AFTER-run means re-run the harness more broadly.
+    if before.total_questions == 0:
+        return AcceptanceCheck(
+            before_id=before_id,
+            after_id=None,
+            corpus_changed=False,
+            pct_before=before.pct_fully_supported,
+            pct_after=None,
+            regressions=[],
+            missing_questions=[],
+            blocked_by="incomplete_before_run",
         )
 
     after = session.get(EvalRun, after_id)
@@ -341,6 +376,39 @@ def check_acceptance(
             blocked_by="pct_dropped",
         )
 
+    # Fix round 2 (reviewer I3 — Important, owner ruling): nothing above ties the after-run to
+    # THIS PROPOSAL'S OWN fix — a run whose digest moved and whose pct improved for an entirely
+    # UNRELATED publish would pass every gate so far. Exempt when there is no linked draft (a
+    # nullable column; always set by `propose_content_fix` today, but the check must not crash on
+    # a future/hand-built proposal that has none).
+    if proposal.draft_content_id is not None:
+        try:
+            draft = get_content(session, proposal.draft_content_id)
+        except NotFoundError:
+            draft = None
+        if draft is None or draft.published_at is None:
+            return AcceptanceCheck(
+                before_id=before_id,
+                after_id=after_id,
+                corpus_changed=False,
+                pct_before=before.pct_fully_supported,
+                pct_after=after.pct_fully_supported,
+                regressions=[],
+                missing_questions=[],
+                blocked_by="draft_not_published",
+            )
+        if after.corpus_max_updated_at is None or after.corpus_max_updated_at < draft.published_at:
+            return AcceptanceCheck(
+                before_id=before_id,
+                after_id=after_id,
+                corpus_changed=False,
+                pct_before=before.pct_fully_supported,
+                pct_after=after.pct_fully_supported,
+                regressions=[],
+                missing_questions=[],
+                blocked_by="after_run_predates_publication",
+            )
+
     diff = compare_runs(session, before_id, after_id)
 
     # Fix round 1 (reviewer C1 — CRITICAL): `compare_runs` can only find a regression in a
@@ -396,7 +464,7 @@ def accept_proposal(
     """Accept a proposal the DATA supports — the evidence behind "validated before acceptance".
 
     Gates 0-1 are proposal-level (existence, still-`proposed`) and are checked here directly;
-    gates 2-8 are the data comparison and live entirely in `check_acceptance` — this function is
+    gates 2-11 are the data comparison and live entirely in `check_acceptance` — this function is
     a thin raiser on top of it, so one place owns the rules:
 
     | # | Gate | Raises |
@@ -406,24 +474,43 @@ def accept_proposal(
     |   |                                    | silently allowed — a second accept against a
     |   |                                    | different after-run would rewrite history) |
     | 2 | `eval_run_before_id` is set, and that run row exists | `ConflictError` / `NotFoundError` |
-    | 3 | `eval_run_after_id` names a run, of `kind="answer"` | `NotFoundError` / `ConflictError` |
-    | 4 | `after.created_at > before.created_at` (fix round 1, I1) | `ConflictError` |
-    | 5 | `after.corpus_digest != before.corpus_digest` | `ConflictError` |
-    | 6 | `after.pct_fully_supported >= before.pct_fully_supported` | `ConflictError` |
-    | 7 | the after-run covers every before-run question (fix round 1, C1) | `ConflictError`,
-    |   |                                                                   | naming the count
-    |   |                                                                   | and up to three
-    |   |                                                                   | missing questions |
-    | 8 | `compare_runs(before, after).regressions == []` | `ConflictError`, naming up to the
-    |   |                                                  | first three regressed questions |
+    | 3 | `before.total_questions != 0` (fix round 2, I2) | `ConflictError` |
+    | 4 | `eval_run_after_id` names a run, of `kind="answer"` | `NotFoundError` / `ConflictError` |
+    | 5 | `after.created_at > before.created_at` (fix round 1, I1) | `ConflictError` |
+    | 6 | `after.corpus_digest != before.corpus_digest` | `ConflictError` |
+    | 7 | `after.pct_fully_supported >= before.pct_fully_supported` | `ConflictError` |
+    | 8 | the proposal's draft (if any) is `published` (fix round 2, I3) | `ConflictError` |
+    | 9 | the after-run's corpus postdates that publish (fix round 2, I3) | `ConflictError` |
+    | 10 | the after-run covers every before-run question (fix round 1, C1) | `ConflictError`,
+    |    |                                                                    | naming the count
+    |    |                                                                    | and up to three
+    |    |                                                                    | missing questions |
+    | 11 | `compare_runs(before, after).regressions == []` | `ConflictError`, naming up to the
+    |    |                                                   | first three regressed questions |
 
-    Fix round 1 (reviewer C1, CRITICAL): gate 7 closes the hole where an after-run that does not
-    measure a regressed question made gate 8 pass vacuously (an empty after-run) or partially (a
-    narrowed re-run, e.g. a shipped `--questions <path>` CLI flag) — neither gate 5 nor gate 6
+    Fix round 1 (reviewer C1, CRITICAL): gate 10 closes the hole where an after-run that does not
+    measure a regressed question made gate 11 pass vacuously (an empty after-run) or partially (a
+    narrowed re-run, e.g. a shipped `--questions <path>` CLI flag) — neither gate 6 nor gate 7
     would catch either case, since a narrower run is only ever compared against the rows it
-    actually contains. Fix round 1 (reviewer I1, Important): gate 4 closes the hole where a
+    actually contains. Fix round 1 (reviewer I1, Important): gate 5 closes the hole where a
     historical answer-run older than `before` — a DIFFERENT digest is not a LATER digest — was
     accepted as "after" with no ordering check at all.
+
+    Fix round 2 (reviewer I2, Important): gate 3 closes the identical vacuous-comparison hole
+    from the BEFORE side — a zero-question before-run (reachable via a shipped `--questions
+    <empty.yaml>` CLI flag; `app.eval.groundedness.run_eval` now also refuses to evaluate one at
+    the source) compares zero questions against anything, passing every later gate for free.
+    Fix round 2 (reviewer I3, Important, owner ruling): gates 8-9 close the hole where an
+    UNRELATED publish (not this proposal's own fix) satisfied every earlier gate — "validated"
+    must mean this run measured a corpus that contains THIS fix, not merely a corpus that changed
+    for some other reason. Exempt when the proposal has no linked draft.
+
+    Fix round 2 (reviewer M7, wording): the before-run is stamped at `propose_content_fix` time,
+    not at publish time — any corpus change between propose and publish (an unrelated article, a
+    second proposal) sits inside the comparison window gate 11 evaluates. A "regressed" question
+    named in that gate's message is a question that regressed somewhere between the STAMPED
+    before-run and the after-run, not necessarily because of THIS fix — the message below is
+    worded to say exactly that, not to assert causation this gate cannot know.
 
     On success: `status = "accepted"`, `eval_run_after_id` stamped, `flush()`, return. Nothing is
     mutated on any refusal — every gate above is evaluated (via `check_acceptance`) BEFORE this
@@ -448,6 +535,11 @@ def accept_proposal(
         )
     if check.blocked_by == "missing_before_run":
         raise NotFoundError(f"No eval run {check.before_id}.")
+    if check.blocked_by == "incomplete_before_run":
+        raise ConflictError(
+            f"before-run {check.before_id} measured no questions — there is no baseline to "
+            "compare against. Re-propose this fix once a non-empty eval run exists."
+        )
     if check.blocked_by == "missing_after_run":
         raise NotFoundError(f"No eval run {eval_run_after_id}.")
     if check.blocked_by == "after_run_wrong_kind":
@@ -472,6 +564,17 @@ def accept_proposal(
             f"pct_fully_supported dropped from {check.pct_before} (run {check.before_id}) to "
             f"{check.pct_after} (run {check.after_id})."
         )
+    if check.blocked_by == "draft_not_published":
+        raise ConflictError(
+            f"Content proposal {proposal_id}'s draft is not published — accept_proposal "
+            "requires this proposal's own fix to be live before a run can validate it."
+        )
+    if check.blocked_by == "after_run_predates_publication":
+        raise ConflictError(
+            f"eval_run_after_id {eval_run_after_id}'s corpus predates content proposal "
+            f"{proposal_id}'s draft being published — this run did not measure a corpus "
+            "containing this fix."
+        )
     if check.blocked_by == "incomplete_after_run":
         named = ", ".join(check.missing_questions[:3])
         raise ConflictError(
@@ -481,9 +584,15 @@ def accept_proposal(
         )
     if check.blocked_by == "regressions":
         named = ", ".join(check.regressions[:3])
+        # Fix round 2, M7: worded relative to the STAMPED before-run, not as a claim that this
+        # proposal's own fix caused the regression — `before` is stamped at propose time, and a
+        # corpus change unrelated to this fix landing between propose and publish sits inside
+        # this same comparison window (see this function's own docstring).
         raise ConflictError(
-            f"{len(check.regressions)} question(s) regressed from PASS to FAIL between run "
-            f"{check.before_id} and {check.after_id}: {named}."
+            f"{len(check.regressions)} question(s) regressed (PASS -> FAIL) between the "
+            f"before-run stamped at propose time ({check.before_id}) and {check.after_id}: "
+            f"{named}. This reflects the whole window since the proposal was made, not "
+            "necessarily this fix in isolation."
         )
 
     proposal.status = "accepted"

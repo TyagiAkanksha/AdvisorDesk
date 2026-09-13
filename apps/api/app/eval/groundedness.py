@@ -953,6 +953,18 @@ def run_eval(
     """
     settings = Settings()
     questions = load_questions(Path(questions_path))
+    # Fix round 2 (Opus re-review, I2 — source-side kill): `load_questions` accepts a top-level
+    # `[]` cleanly, and without this guard an empty (or over-narrowly-filtered) questions file
+    # would silently produce a genuine, zero-row `kind='answer'` `EvalReport` — `_run_from_cli`
+    # then persists it as a real run via `record_run`, `pct_fully_supported=0.0` and
+    # `total_questions=0`, that later becomes `latest_runs(...)[0]`, exactly what
+    # `app.services.proposals.propose_content_fix` stamps as a proposal's `eval_run_before_id`.
+    # `check_acceptance` now also refuses a zero-question before-run directly (the belt); this is
+    # the buckle — refusing before any embedder/chat/judge call is even attempted.
+    if not questions:
+        raise ValueError(
+            f"{questions_path}: no questions to evaluate — refusing to run an empty eval."
+        )
     evaluations = [
         _evaluate_question(
             session,

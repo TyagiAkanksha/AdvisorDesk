@@ -20,6 +20,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.models import Chunk, Content, ContentProposal, EvalRun, User
+from app.services.content import publish_content
 from app.services.errors import ConflictError, NotFoundError
 from app.services.eval_policy import PROPOSAL_KIND_BY_CAUSE
 from app.services.eval_runs import record_run
@@ -407,7 +408,11 @@ def test_accept_refuses_a_fix_that_regressed_other_questions(
     proposal = propose_content_fix(
         db_session, kind="new_article", title="T", rationale="R", evidence=[], actor_id=actor_id
     )
-    _publish(db_session, "the-bad-fix")
+    # Fix round 2, I3: publish THIS proposal's own draft — the article that "hijacked" retrieval
+    # IS this fix, so this is also more faithful to the test's own narrative than an unrelated row.
+    publish_content(
+        db_session, proposal.draft_content_id, actor_id=actor_id, pipeline=NoopChunkPipeline()
+    )
     after = _record(
         db_session,
         _report(("planted", "PASS"), ("a", "FAIL"), ("b", "FAIL"), ("c", "PASS"), pct=75.0),
@@ -437,7 +442,11 @@ def test_a_clean_fix_is_accepted_and_stamped(db_session: Session, actor_id: uuid
         evidence=_EVIDENCE,
         actor_id=actor_id,
     )
-    _publish(db_session, "rsus-outside-the-us")
+    # Fix round 2, I3: publish THIS proposal's own draft (not an unrelated row) — accept_proposal
+    # now requires it.
+    publish_content(
+        db_session, proposal.draft_content_id, actor_id=actor_id, pipeline=NoopChunkPipeline()
+    )
     after = _record(
         db_session, _report(("planted", "PASS"), ("a", "PASS"), pct=100.0), label="after"
     )
@@ -463,7 +472,11 @@ def test_a_decided_proposal_cannot_be_accepted_again(
     proposal = propose_content_fix(
         db_session, kind="new_article", title="T", rationale="R", evidence=[], actor_id=actor_id
     )
-    _publish(db_session, "the-fix")
+    # Fix round 2, I3: accept_proposal now requires THIS proposal's own draft to be published
+    # (not merely some unrelated row) — publish it directly rather than an unrelated `_publish`.
+    publish_content(
+        db_session, proposal.draft_content_id, actor_id=actor_id, pipeline=NoopChunkPipeline()
+    )
     after = _record(db_session, _report(("q1", "PASS"), pct=100.0), label="after")
     accept_proposal(db_session, proposal.id, eval_run_after_id=after.id)
 
@@ -488,7 +501,11 @@ def test_accept_refuses_an_after_run_with_zero_results(
     proposal = propose_content_fix(
         db_session, kind="new_article", title="T", rationale="R", evidence=[], actor_id=actor_id
     )
-    _publish(db_session, "the-fix")
+    # Fix round 2, I3: publish THIS proposal's own draft (not an unrelated row) — otherwise
+    # "draft_not_published" would fire before this test ever reaches the coverage gate.
+    publish_content(
+        db_session, proposal.draft_content_id, actor_id=actor_id, pipeline=NoopChunkPipeline()
+    )
     after = _record(db_session, _report(pct=0.0), label="after")  # zero rows
 
     with pytest.raises(ConflictError, match="did not measure") as excinfo:
@@ -516,7 +533,10 @@ def test_accept_refuses_an_after_run_covering_only_some_of_the_before_runs_quest
     proposal = propose_content_fix(
         db_session, kind="new_article", title="T", rationale="R", evidence=[], actor_id=actor_id
     )
-    _publish(db_session, "the-narrow-fix")
+    # Fix round 2, I3: publish THIS proposal's own draft — accept_proposal now requires it.
+    publish_content(
+        db_session, proposal.draft_content_id, actor_id=actor_id, pipeline=NoopChunkPipeline()
+    )
     after = _record(db_session, _report(("planted", "PASS"), pct=100.0), label="after")
 
     with pytest.raises(ConflictError, match="did not measure") as excinfo:
@@ -564,7 +584,10 @@ def test_accept_still_succeeds_with_equal_pct_full_coverage_and_a_later_after_ru
     proposal = propose_content_fix(
         db_session, kind="new_article", title="T", rationale="R", evidence=[], actor_id=actor_id
     )
-    _publish(db_session, "the-fix-for-equal-pct")
+    # Fix round 2, I3: publish THIS proposal's own draft — accept_proposal now requires it.
+    publish_content(
+        db_session, proposal.draft_content_id, actor_id=actor_id, pipeline=NoopChunkPipeline()
+    )
     after = _record(
         db_session, _report(("planted", "FAIL"), ("a", "PASS"), pct=50.0), label="after"
     )
@@ -583,6 +606,174 @@ def test_accept_still_succeeds_with_equal_pct_full_coverage_and_a_later_after_ru
 
 
 # ---------------------------------------------------------------------------
+# accept_proposal — fix round 2 (reviewer I2 Important, I3 Important/owner ruling, M5/M6 Minor):
+# an empty before-run, a proposal whose own fix was never published (or was published too late
+# relative to the after-run), a same-count-different-question-set after-run, and the two
+# accept-side boundaries mutation testing showed were untested.
+# ---------------------------------------------------------------------------
+
+
+def test_accept_refuses_when_the_before_run_measured_no_questions(
+    db_session: Session, actor_id: uuid.UUID
+) -> None:
+    """I2: `compare_runs`' verdict sets are computed over questions BOTH runs measured, so a
+    before-run with ZERO questions compares zero questions against anything — a before-side twin
+    of C1's after-side hole, reachable via a genuine `--questions <empty.yaml>` harness run (now
+    also refused at the source, in `app.eval.groundedness.run_eval`)."""
+    _record(db_session, _report(pct=0.0), label="empty-baseline")  # zero rows
+    proposal = propose_content_fix(
+        db_session, kind="new_article", title="T", rationale="R", evidence=[], actor_id=actor_id
+    )
+    after = _record(db_session, _report(("q1", "PASS"), pct=100.0), label="after")
+
+    with pytest.raises(ConflictError, match="no questions"):
+        accept_proposal(db_session, proposal.id, eval_run_after_id=after.id)
+
+    db_session.refresh(proposal)
+    assert proposal.status == "proposed"
+    assert proposal.eval_run_after_id is None
+
+
+def test_accept_refuses_when_the_proposals_own_draft_is_not_published(
+    db_session: Session, actor_id: uuid.UUID
+) -> None:
+    """I3 (owner ruling): a proposal whose own draft was never published must not be accepted
+    against a run whose digest moved for some UNRELATED reason — "validated" must mean this run
+    measured a corpus containing THIS fix, not merely a corpus that changed."""
+    _record(db_session, _report(("q1", "FAIL"), pct=0.0), label="baseline")
+    proposal = propose_content_fix(
+        db_session, kind="new_article", title="T", rationale="R", evidence=[], actor_id=actor_id
+    )
+    _publish(db_session, "an-unrelated-article")  # NOT this proposal's own draft
+    after = _record(db_session, _report(("q1", "PASS"), pct=100.0), label="after")
+
+    with pytest.raises(ConflictError, match="not published"):
+        accept_proposal(db_session, proposal.id, eval_run_after_id=after.id)
+
+    db_session.refresh(proposal)
+    assert proposal.status == "proposed"
+    assert proposal.eval_run_after_id is None
+
+
+def test_accept_refuses_when_the_after_run_predates_the_publish(
+    db_session: Session, actor_id: uuid.UUID
+) -> None:
+    """I3 (owner ruling): even when the after-run is newer than the before-run and the corpus
+    already looks different, it must have measured a corpus that already contains THIS
+    proposal's own published fix — a run recorded before the publish cannot show that, however
+    good its numbers look."""
+    _record(db_session, _report(("q1", "FAIL"), pct=0.0), label="baseline")
+    proposal = propose_content_fix(
+        db_session, kind="new_article", title="T", rationale="R", evidence=[], actor_id=actor_id
+    )
+    _publish(db_session, "an-unrelated-earlier-change")  # moves the digest, unrelated to this fix
+    stale_after = _record(db_session, _report(("q1", "PASS"), pct=100.0), label="too-early")
+    # THIS proposal's own fix is published only AFTER `stale_after` was already recorded.
+    publish_content(
+        db_session, proposal.draft_content_id, actor_id=actor_id, pipeline=NoopChunkPipeline()
+    )
+
+    with pytest.raises(ConflictError, match="predates"):
+        accept_proposal(db_session, proposal.id, eval_run_after_id=stale_after.id)
+
+    db_session.refresh(proposal)
+    assert proposal.status == "proposed"
+    assert proposal.eval_run_after_id is None
+
+
+def test_accept_refuses_an_after_run_with_the_same_count_but_a_different_question_set(
+    db_session: Session, actor_id: uuid.UUID
+) -> None:
+    """M5: `after.total_questions < before.total_questions` alone cannot catch a same-SIZE,
+    different-CONTENT after-run — only `diff.removed` does. Mutation testing (re-review MUT-C)
+    showed the whole suite passed even with `diff.removed` deleted from the coverage gate; this
+    pins the half of the disjunction that actually does the work."""
+    _record(
+        db_session,
+        _report(("q1", "PASS"), ("q2", "PASS"), ("q3", "FAIL"), pct=66.7),
+        label="baseline",
+    )
+    proposal = propose_content_fix(
+        db_session, kind="new_article", title="T", rationale="R", evidence=[], actor_id=actor_id
+    )
+    publish_content(
+        db_session, proposal.draft_content_id, actor_id=actor_id, pipeline=NoopChunkPipeline()
+    )
+    # Same COUNT (3) as the baseline, but a DIFFERENT question set: q3 silently dropped, q4
+    # silently added.
+    after = _record(
+        db_session,
+        _report(("q1", "PASS"), ("q2", "PASS"), ("q4", "PASS"), pct=100.0),
+        label="after",
+    )
+
+    with pytest.raises(ConflictError, match="did not measure") as excinfo:
+        accept_proposal(db_session, proposal.id, eval_run_after_id=after.id)
+
+    assert "q3" in str(excinfo.value)
+
+    db_session.refresh(proposal)
+    assert proposal.status == "proposed"
+
+
+def test_accept_still_succeeds_when_the_after_run_covers_the_before_run_plus_new_questions(
+    db_session: Session, actor_id: uuid.UUID
+) -> None:
+    """M6: the golden set growing is a planned, ongoing activity — an after-run that covers every
+    before-run question AND adds new ones must still ACCEPT (`>=`, not `==`, is the right
+    comparison). Mutation testing (re-review MUT-E: `<` -> `!=`) showed the whole suite passed
+    even when this was refused; this pins the accept."""
+    before = _record(
+        db_session, _report(("planted", "FAIL"), ("a", "PASS"), pct=50.0), label="baseline"
+    )
+    proposal = propose_content_fix(
+        db_session, kind="new_article", title="T", rationale="R", evidence=[], actor_id=actor_id
+    )
+    publish_content(
+        db_session, proposal.draft_content_id, actor_id=actor_id, pipeline=NoopChunkPipeline()
+    )
+    after = _record(
+        db_session,
+        _report(("planted", "PASS"), ("a", "PASS"), ("new-question", "PASS"), pct=100.0),
+        label="after",
+    )
+
+    check = check_acceptance(db_session, proposal, after.id)
+    assert check.blocked_by is None
+    assert check.missing_questions == []
+
+    accepted = accept_proposal(db_session, proposal.id, eval_run_after_id=after.id)
+
+    assert accepted.status == "accepted"
+    assert accepted.eval_run_before_id == before.id
+    assert accepted.eval_run_after_id == after.id
+
+
+def test_accept_refuses_an_after_run_tied_with_the_before_run_at_the_same_instant(
+    db_session: Session, actor_id: uuid.UUID
+) -> None:
+    """M6 (tie boundary): gate 5 uses `<=`, not `<` — a hand-stamped exact tie must refuse (fail
+    closed: a tie cannot prove the after-run is later). Mutation testing (re-review MUT-F: `<=`
+    -> `<`) showed the whole suite passed even when a tie was accepted; this pins the boundary."""
+    baseline = _record(db_session, _report(("q1", "FAIL"), pct=0.0), label="baseline")
+    proposal = propose_content_fix(
+        db_session, kind="new_article", title="T", rationale="R", evidence=[], actor_id=actor_id
+    )
+    publish_content(
+        db_session, proposal.draft_content_id, actor_id=actor_id, pipeline=NoopChunkPipeline()
+    )
+    after = _record(db_session, _report(("q1", "PASS"), pct=100.0), label="after")
+    after.created_at = baseline.created_at  # hand-stamped exact tie
+    db_session.flush()
+
+    with pytest.raises(ConflictError, match="newer"):
+        accept_proposal(db_session, proposal.id, eval_run_after_id=after.id)
+
+    db_session.refresh(proposal)
+    assert proposal.status == "proposed"
+
+
+# ---------------------------------------------------------------------------
 # reject_proposal
 # ---------------------------------------------------------------------------
 
@@ -590,8 +781,6 @@ def test_accept_still_succeeds_with_equal_pct_full_coverage_and_a_later_after_ru
 def test_reject_archives_a_published_draft_and_records_the_reason(
     db_session: Session, actor_id: uuid.UUID
 ) -> None:
-    from app.services.content import publish_content
-
     proposal = propose_content_fix(
         db_session,
         kind="new_article",
@@ -653,7 +842,10 @@ def test_reject_is_only_legal_from_proposed(db_session: Session, actor_id: uuid.
     proposal = propose_content_fix(
         db_session, kind="new_article", title="T", rationale="R", evidence=[], actor_id=actor_id
     )
-    _publish(db_session, "the-fix")
+    # Fix round 2, I3: publish THIS proposal's own draft so the accept below actually succeeds.
+    publish_content(
+        db_session, proposal.draft_content_id, actor_id=actor_id, pipeline=NoopChunkPipeline()
+    )
     after = _record(db_session, _report(("q1", "PASS"), pct=100.0), label="after")
     accept_proposal(db_session, proposal.id, eval_run_after_id=after.id)
 

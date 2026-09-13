@@ -664,3 +664,32 @@ def test_run_eval_rejects_duplicate_question_text_before_any_retrieval_or_answer
     assert embedder.calls == []
     assert chat_llm.calls == []
     assert judge.calls == []
+
+
+def test_run_eval_refuses_to_evaluate_an_empty_questions_file(
+    db_session: Session, tmp_path: Path
+) -> None:
+    """Fix round 2, I2 (source-side kill): `load_questions` accepts a top-level `[]` cleanly, so
+    an empty (or over-narrowly `--questions`-filtered) file would otherwise produce a genuine,
+    zero-row `kind='answer'` run that `_run_from_cli` persists — which later becomes
+    `latest_runs(...)[0]`, exactly what `propose_content_fix` stamps as a proposal's before-run
+    baseline, poisoning `accept_proposal`'s gate for every proposal made afterwards.
+    """
+    questions_path = _write_questions_yaml(tmp_path, [])
+    embedder = ScriptedEmbedder(vectors={})
+    chat_llm = ScriptedChatLLM(answers={})
+    judge = ScriptedJudge()
+
+    with pytest.raises(ValueError, match=re.escape(str(questions_path))):
+        run_eval(
+            db_session,
+            embedder=embedder,
+            chat_llm=chat_llm,
+            judge=judge,
+            questions_path=questions_path,
+        )
+
+    # Caught before any seam was ever called — same discipline as the duplicate-question guard.
+    assert embedder.calls == []
+    assert chat_llm.calls == []
+    assert judge.calls == []

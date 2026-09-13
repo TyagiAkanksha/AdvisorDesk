@@ -4,14 +4,14 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import datetime
 
 import pytest
 from sqlalchemy.orm import Session
 
 from app.agent.loop import SYSTEM_PROMPT
 from app.mcp.runtime import call_tool, list_tool_schemas
-from app.models import Chunk, Content, User
+from app.models import Content, User
 from app.services.errors import ConflictError, ToolInputError
 from app.services.eval_runs import record_run
 from app.services.lifecycle import NoopChunkPipeline
@@ -71,20 +71,6 @@ def _record(session: Session, *, label: str, pct: float, verdict: str):
         similarity_threshold=0.5,
         retrieval_k=6,
     )
-
-
-def _publish_something(session: Session, slug: str) -> None:
-    content = Content(
-        title=f"Title {slug}",
-        slug=slug,
-        body_md="body",
-        status="published",
-        published_at=datetime.now(UTC),
-    )
-    session.add(content)
-    session.flush()
-    session.add(Chunk(content_id=content.id, chunk_index=0, text="chunk"))
-    session.flush()
 
 
 # ---------------------------------------------------------------------------
@@ -222,14 +208,15 @@ def test_accept_tool_accepts_a_clean_fix_and_reports_the_numbers(
         session=db_session,
         actor_id=actor_id,
     )
-    # Implementer note (not a behavior/assertion change): "The fix" slugifies to "the-fix" via
-    # `create_draft`'s own `generate_slug` (Interfaces: the draft uses the EXISTING content
-    # service, so it is slugged exactly like a hand-made draft) — reusing that literal string
-    # here would collide on `uq_content_slug` against the draft `propose_content_fix` just
-    # created, unconditionally, before this line ever runs. A distinct slug is all this helper
-    # needs: the test only cares that publishing SOMETHING moves the corpus fingerprint; nothing
-    # downstream reads this slug.
-    _publish_something(db_session, "an-unrelated-published-item")
+    # Fix round 2, I3: accept_proposal now requires THIS proposal's own draft to be published —
+    # publish it through the same call_tool seam a real caller would use.
+    call_tool(
+        "publish",
+        {"content_id": proposed["draft_content_id"]},
+        session=db_session,
+        actor_id=actor_id,
+        pipeline=NoopChunkPipeline(),
+    )
     after = _record(db_session, label="after", pct=100.0, verdict="PASS")
 
     result = call_tool(
@@ -283,7 +270,14 @@ def test_accept_tool_surfaces_an_incomplete_after_run_as_a_conflict(
         session=db_session,
         actor_id=actor_id,
     )
-    _publish_something(db_session, "narrow-fix-published")
+    # Fix round 2, I3: publish THIS proposal's own draft — accept_proposal now requires it.
+    call_tool(
+        "publish",
+        {"content_id": proposed["draft_content_id"]},
+        session=db_session,
+        actor_id=actor_id,
+        pipeline=NoopChunkPipeline(),
+    )
     after = record_run(
         db_session,
         FakeReport(rows=[], pct_fully_supported=0.0),

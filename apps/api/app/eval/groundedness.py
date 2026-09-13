@@ -169,6 +169,12 @@ class EvalRow:
     question_class: str | None = None
     persona: str | None = None
     metrics: dict[str, object] | None = None
+    # Task-05c brief (the Berlin-payroll-ESPP / divorce-stock-option-split evidence): `True` when
+    # a `metrics_judge`-backed `is_refusal` call judged this row's RAW answer text as declining —
+    # recorded for every ANSWERED row (`retrieval_found`) regardless of `verdict`/`answerable`,
+    # for triage. Defaulted so task-03's shorter constructions (`tests/test_groundedness_cli.py`)
+    # keep working unchanged.
+    model_declined: bool = False
 
 
 @dataclass(frozen=True)
@@ -235,6 +241,18 @@ _CONTEXT_PRECISION_PROMPT = (
 _CONTEXT_RECALL_PROMPT = (
     "You judge whether one CLAIM from a reference answer is covered by the SOURCE passages. "
     "Covered means the sources state it or directly entail it. " + _YES_NO_SUFFIX
+)
+
+# Task-05c brief (the Berlin-payroll-ESPP / divorce-stock-option-split evidence, `wave1-b-fix1`):
+# a fourth rubric judge, credits a MODEL-level decline as a correct refusal even when retrieval
+# cleared the similarity threshold on a near-miss distractor chunk — `refused` (I.2) only ever
+# reflects the RETRIEVAL-level signal, so a correct decline over a cleared threshold used to score
+# FAIL with no way to tell it apart from a genuine hallucination.
+_REFUSAL_PROMPT = (
+    "You judge whether an assistant's ANSWER declines to answer the QUESTION. Answer YES if the "
+    "answer says the published guidance/sources do not cover the question, refuses, or defers the "
+    "reader to a human instead of answering. Answer NO if it attempts an answer, even partially. "
+    + _YES_NO_SUFFIX
 )
 
 # Fix round 1 (Opus review, Cost ruling): batches what used to be one `is_chunk_relevant` call
@@ -366,6 +384,14 @@ class OpenAIJudge:
         user_message = f"SOURCES:\n{sources}\n\nCLAIM: {claim_text}\n\nIs the claim covered?"
         return self._ask_yes_no(_CONTEXT_RECALL_PROMPT, user_message)
 
+    def is_refusal(self, question: str, answer_text: str) -> bool:
+        """Ask the judge model whether `answer_text` declines to answer `question` (task-05c
+        brief: the Berlin-payroll-ESPP / divorce-stock-option-split evidence) instead of
+        answering it, even partially.
+        """
+        user_message = f"QUESTION: {question}\n\nANSWER: {answer_text}\n\nDoes the answer decline?"
+        return self._ask_yes_no(_REFUSAL_PROMPT, user_message)
+
     def rank_chunk_relevance(self, question: str, chunk_texts: Sequence[str]) -> list[bool] | None:
         """One relevance verdict per `chunk_texts`, in order — a SINGLE judge call over every
         retrieved chunk (fix round 1, Cost ruling) rather than the one-call-per-chunk
@@ -449,6 +475,30 @@ class _ClassificationSnapshot:
     cited_slugs: Sequence[str]
 
 
+def _model_declined(metrics_judge: MetricsJudge, question: str, answer_text: str) -> bool:
+    """Call `metrics_judge.is_refusal(question, answer_text)` if the seam actually implements it
+    (task-05c brief), else `False`.
+
+    Judgment call (flagged for controller review): `MetricsJudge.is_refusal` is a Protocol member
+    as of this task, satisfied by `OpenAIJudge` and by every `MetricsJudge` fake
+    `tests/test_eval_refusal_semantics.py` defines — but three PRE-EXISTING `MetricsJudge`-shaped
+    fakes this task must not touch (`tests/test_eval_metrics.py::FakeMetricsJudge`,
+    `tests/test_eval_metrics_fix_round1.py::RecordingMetricsJudge`/`MalformedReplyMetricsJudge`)
+    predate `is_refusal` and are exercised through `run_eval(..., metrics_judge=...)` on ANSWERED
+    rows (e.g. `test_eval_metrics.py::test_run_eval_records_chunk_level_metrics_and_class_rollups`
+    asserts `answer_relevance_rubric is True`, which only happens for a non-refused row). An
+    unconditional `metrics_judge.is_refusal(...)` call would raise `AttributeError` on all three
+    and break the "every existing pin stays green" gate. `getattr` falls back to `False` — the
+    same value `model_declined` already defaults to — only for a `metrics_judge` that genuinely
+    lacks the method; every fake this task itself authors, and the real `OpenAIJudge`, defines it
+    and is called exactly as the Interfaces specify.
+    """
+    is_refusal = getattr(metrics_judge, "is_refusal", None)
+    if is_refusal is None:
+        return False
+    return bool(is_refusal(question, answer_text))
+
+
 def _evaluate_question(
     session: Session,
     *,
@@ -490,6 +540,14 @@ def _evaluate_question(
         chat_llm.stream_answer(SYSTEM_PROMPT, question.question, retrieval.chunks)
     )
 
+    # Task-05c brief (the Berlin-payroll-ESPP / divorce-stock-option-split evidence): one
+    # `is_refusal` call, on the RAW answer text, per ANSWERED row (`retrieval_found` — the same
+    # boolean as `not refused`) — never for a full miss, never without a `metrics_judge`. Computed
+    # here, before the uncovered-row verdict rule below, since that rule now reads it.
+    model_declined = False
+    if metrics_judge is not None and retrieval_found:
+        model_declined = _model_declined(metrics_judge, question.question, answer_text)
+
     # Moved OUT of the `if question.answerable` branch below (task-05): the rubric judges
     # (context precision/recall) need the same union of retrieved chunk texts regardless of
     # whether the question is answerable, unlike the faithfulness judge which only ever ran on
@@ -498,6 +556,10 @@ def _evaluate_question(
     chunk_texts = _dedupe_preserve_order(chunk.text for chunk in retrieval.chunks)
 
     fully_supported: bool | None
+    # Controller addition (p9 t05c): the claim(s) — post `[n]`-marker stripping, exactly what
+    # `judge.is_supported` saw — that the faithfulness judge rejected for this row. Two triages
+    # this phase could not name which sentence failed.
+    unsupported_sentences: list[str]
     if question.answerable:
         # Task-05b (task-10 re-review §3): the judge sees the answer with `[n]` citation markers
         # stripped and letter-less list-marker fragments dropped — the answerer's and judge's
@@ -505,14 +567,28 @@ def _evaluate_question(
         # list markers (row 1), so both artifacts must never reach the judge as "claims". The
         # PERSISTED `answer_text` below stays the raw, un-stripped wire answer.
         judged_sentences = split_sentences(strip_citation_markers(answer_text))
-        fully_supported = all(
-            judge.is_supported(sentence, chunk_texts) for sentence in judged_sentences
-        )
+        # Same short-circuit the old `all(genexpr)` had — stop at the FIRST unsupported sentence
+        # ("keep it cheap", the controller's own cost constraint: no extra judge calls beyond what
+        # already decided `fully_supported`) — so `unsupported_sentences` names that one sentence,
+        # not necessarily every failing sentence in a multi-failure answer.
+        unsupported_sentences = []
+        fully_supported = True
+        for sentence in judged_sentences:
+            if not judge.is_supported(sentence, chunk_texts):
+                fully_supported = False
+                unsupported_sentences.append(sentence)
+                break
         verdict = "PASS" if slugs_hit and fully_supported else "FAIL"
     else:
-        # I.3: not applicable to an uncovered row — no answer-support claim to score.
+        # I.3: not applicable to an uncovered row — no answer-support claim to score, so nothing
+        # was judged and nothing was rejected.
         fully_supported = None
-        verdict = "PASS" if (refused and not retrieval_found and not cited_slugs) else "FAIL"
+        unsupported_sentences = []
+        # Task-05c brief (the fix): a retrieval-level refusal (no citations attached) PASSes as
+        # before, OR the answerer declined even though retrieval cleared the threshold on a
+        # near-miss distractor (Berlin-payroll-ESPP / divorce-stock-option-split evidence) —
+        # citations may be attached in that case, so "no citations" must never gate this branch.
+        verdict = "PASS" if (refused and not cited_slugs) or model_declined else "FAIL"
 
     # Task-05: recall@k/precision@k/MRR, preferring `expected_chunks` (resolved against the LIVE
     # corpus) over the coarser slug-level fallback whenever a resolvable ref exists (task file
@@ -605,6 +681,14 @@ def _evaluate_question(
         # (`_build_report`) can count it with a plain `.get(...)`, `False` whenever there was
         # no `metrics_judge` at all.
         "judge_reply_malformed": judge_reply_malformed,
+        # Task-05c brief: recorded for every ANSWERED row a `metrics_judge` was supplied for —
+        # `False` whenever there was no `metrics_judge` at all or the row was a full miss (see
+        # `_model_declined` above).
+        "model_declined": model_declined,
+        # Controller addition (p9 t05c): the claim(s) the faithfulness judge rejected for this
+        # row (see the `unsupported_sentences` comment above) — always present, `[]` when nothing
+        # was rejected (or nothing was judged at all, an uncovered row).
+        "unsupported_sentences": unsupported_sentences,
     }
 
     # Task-06: classify the failure cause from the LOCAL values computed above — never from the
@@ -639,6 +723,7 @@ def _evaluate_question(
         question_class=question.question_class,
         persona=question.persona,
         metrics=row_metrics,
+        model_declined=model_declined,
     )
     return row, unresolved
 

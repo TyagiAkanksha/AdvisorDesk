@@ -143,6 +143,19 @@ class MetricsJudge(Protocol):
         self, question: str, chunk_texts: Sequence[str]
     ) -> list[bool] | None: ...
 
+    def is_refusal(self, question: str, answer_text: str) -> bool:
+        """True when `answer_text` declines to answer `question` (says the published guidance
+        does not cover it, or otherwise refuses) instead of answering it.
+
+        Task-05c brief: credits a MODEL-level decline as a correct refusal even when retrieval
+        cleared the similarity threshold on a near-miss distractor chunk (the Berlin-payroll-ESPP
+        / divorce-stock-option-split evidence rows, `wave1-b-fix1`) — before this, "refusal
+        correctness" only ever credited a RETRIEVAL-level refusal (`app.eval.groundedness`'s
+        `refused = not retrieval_found`), so a correct decline over a cleared-threshold distractor
+        scored FAIL.
+        """
+        ...
+
 
 @dataclass(frozen=True)
 class RetrievalMetrics:

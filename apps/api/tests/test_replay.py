@@ -327,13 +327,17 @@ def test_the_cli_accepts_a_questions_path_override() -> None:
     assert args.base_url == _BASE_URL
 
 
-def test_the_committed_batch_size_keeps_session_creates_within_the_public_daily_caps() -> None:
-    """The task file's traffic-budget ruling: the public per-IP caps are RATE_LIMIT_PER_DAY=50 and
-    SESSION_CREATE_PER_DAY=20 (`infra/deploy/VERIFY.md` §"Before you start"), and the replay must
-    stay inside both **by construction** — the committed 40-question set, batched
-    `_QUESTIONS_PER_SESSION` (10) at a time, needs only 4 session-creates. Assert the exact
-    numbers, not a vague "comfortably under the cap": if a future edit changed the batch size or
-    grew the committed question count past the caps, this fails with the arithmetic that broke.
+def test_the_committed_batch_size_keeps_requests_within_the_public_caps() -> None:
+    """The task file's traffic-budget ruling names three caps and calls all of them "per IP", but
+    only two of the three actually are (`apps/api/app/routes/ratelimit.py`'s own docstring, and
+    `infra/deploy/VERIFY.md`'s "Before you start" section, which documents these same two and
+    never mentions the third by name): `SESSION_CREATE_PER_DAY=20` and `RATE_LIMIT_PER_MIN=10`
+    (respected by `_MAX_RATE_PER_MIN`'s own >9.0 rejection, pinned separately above) are per IP.
+    `RATE_LIMIT_PER_DAY=50` is scoped PER SESSION, not per IP — so what actually keeps the replay
+    inside it is that no single session's batch (`_QUESTIONS_PER_SESSION`) approaches 50, not that
+    the 40-question run total stays under 50. The committed 40-question set, batched 10 at a time,
+    needs only 4 session-creates. Assert the exact numbers against the cap each is actually scoped
+    to, not a vague "comfortably under the cap".
     """
     questions = load_replay_questions(_REPO_ROOT / "seed" / "replay_questions.yaml")
     sessions_needed = math.ceil(len(questions) / _QUESTIONS_PER_SESSION)
@@ -341,5 +345,5 @@ def test_the_committed_batch_size_keeps_session_creates_within_the_public_daily_
     assert len(questions) == 40
     assert _QUESTIONS_PER_SESSION == 10
     assert sessions_needed == 4
-    assert sessions_needed <= 20  # SESSION_CREATE_PER_DAY
-    assert len(questions) <= 50  # RATE_LIMIT_PER_DAY
+    assert sessions_needed <= 20  # SESSION_CREATE_PER_DAY, per IP
+    assert _QUESTIONS_PER_SESSION <= 50  # RATE_LIMIT_PER_DAY, per SESSION (not per IP)

@@ -101,16 +101,27 @@ class RunDiff:
     one (the common case for a one-off `--label` with no `--runs N`) makes every one of these
     identical to the old single-run behaviour — nothing here changes shape or meaning for that
     case, only for a genuine multi-run family.
+
+    Fix wave round 2 (M4): `pct_before`/`pct_after` are the two family means `pct_delta` was
+    always the DIFFERENCE of — now surfaced as their own fields (computed once; `pct_delta ==
+    pct_after - pct_before` by construction) so a caller (the CLI's `compare` line,
+    `app.eval.groundedness._run_from_cli`) can print the exact numbers the acceptance gate judged
+    instead of either named run's own single-run scalar.
     """
 
     before_id: uuid.UUID
     after_id: uuid.UUID
-    regressions: list[str]  # questions whose family-majority verdict went PASS -> FAIL
-    improvements: list[str]  # family-majority FAIL -> PASS
-    unchanged: list[str]  # same family-majority verdict on both sides (incl. a tie either side)
+    regressions: list[str]  # questions whose family-majority verdict went PASS -> FAIL (fix wave
+    # round 2, M2: an after-side TIE counts as a FAIL here, against a before-side PASS)
+    improvements: list[str]  # family-majority FAIL -> a CLEAN after-side PASS (a tie does not
+    # count as an improvement)
+    unchanged: list[str]  # same family-majority verdict both sides, a before-side tie, or a
+    # before-FAIL/after-tie (see `compare_runs`'s own docstring for the full truth table)
     added: list[str]  # present in the after family only (no before-family member measured it)
     removed: list[str]  # present in the before family only (no after-family member measured it)
-    pct_delta: float  # mean(after family pct_fully_supported) - mean(before family, same)
+    pct_before: float  # mean(before family pct_fully_supported)
+    pct_after: float  # mean(after family pct_fully_supported)
+    pct_delta: float  # pct_after - pct_before, by construction
     before_family: list[uuid.UUID]  # before_id's family, oldest first (always includes before_id)
     after_family: list[uuid.UUID]  # after_id's family, oldest first (always includes after_id)
 
@@ -330,9 +341,13 @@ def _majority_verdict(verdicts: Sequence[str]) -> str | None:
     """`"PASS"`/`"FAIL"` iff strictly more than half of `verdicts` agree; `None` on an exact tie
     or an empty sequence (fix wave F1).
 
-    A tie is not "reproduced in a majority" in either direction, so it counts as neither a
-    regression nor an improvement — the caller folds a `None` on either side into `unchanged`,
-    the same fail-closed-on-ambiguity reading `check_acceptance` uses elsewhere in this phase.
+    A tie is not "reproduced in a majority" in either direction — this function itself takes no
+    side on what a `None` means. Fix wave round 2 (M2, correcting this docstring's own prior
+    claim): the caller (`compare_runs`) treats a `None` differently depending on WHICH side ties.
+    A `None` on the AFTER side is folded in with `"FAIL"` for the regression comparison —
+    fail-closed where it matters, since a fix that cannot even hold a clean majority is not
+    evidence the fix worked. A `None` on the BEFORE side folds to `unchanged` instead: there is no
+    majority verdict to have regressed FROM, so it can be neither a regression nor an improvement.
     """
     if not verdicts:
         return None
@@ -371,12 +386,18 @@ def compare_runs(session: Session, before_id: uuid.UUID, after_id: uuid.UUID) ->
     `before_id`/`after_id` each name one run; `run_family` resolves each to every `kind="answer"`
     run sharing that run's `label` AND `corpus_digest` (its "family" — the harness's `--runs N`
     writes exactly this shape). A question is a **regression** when the BEFORE family's majority
-    verdict is PASS and the AFTER family's majority verdict is FAIL; an **improvement** is the
-    mirror; anything else (both sides agree, or either side ties) is `unchanged`. `pct_delta` is
-    the difference of the two families' `pct_fully_supported` MEANS, not the two named runs' own
-    scalars. A family of one — the common case, e.g. a one-off `--label` with no `--runs N` —
-    makes every one of these identical to the pre-F1 single-run behaviour: this is why every
-    pre-existing `compare_runs` test keeps passing unchanged.
+    verdict is PASS and the AFTER family's majority verdict is FAIL **or ties** (fix wave round 2,
+    M2: an after-side tie counts against the fix — fail-closed where it matters, since padding a
+    reproducing regression's after-family with passing runs until it merely TIES must not be a
+    way to vote it away). An **improvement** is NOT the exact mirror: it requires the before
+    family's majority to be FAIL and the after family's majority to be a CLEAN "PASS" — a tie on
+    the after side is not evidence of an improvement either. Anything else — both sides agree, a
+    before-side tie (there is no majority to have regressed/improved FROM), or a before-FAIL
+    paired with an after-side tie — is `unchanged`. `pct_before`/`pct_after` are the two families'
+    `pct_fully_supported` MEANS (not the two named runs' own scalars); `pct_delta` is
+    `pct_after - pct_before` by construction. A family of one — the common case, e.g. a one-off
+    `--label` with no `--runs N` — makes every one of these identical to the pre-F1 single-run
+    behaviour: this is why every pre-existing `compare_runs` test keeps passing unchanged.
 
     `added`/`removed` are computed over the FAMILY UNION on each side: a question counts as
     `removed` only when NO after-family member ever measured it (some after-family members
@@ -428,7 +449,13 @@ def compare_runs(session: Session, before_id: uuid.UUID, after_id: uuid.UUID) ->
     for question in sorted(common):
         before_majority = _majority_verdict(before_verdicts[question])
         after_majority = _majority_verdict(after_verdicts[question])
-        if before_majority == "PASS" and after_majority == "FAIL":
+        # Fix wave round 2 (M2): an after-side TIE (`None`) is folded in with `"FAIL"` for the
+        # regression side ONLY — a before-side PASS with an after-side tie still counts against
+        # the fix. An improvement has no such allowance: it requires a CLEAN after-side PASS, so a
+        # before-FAIL/after-tie question falls through to `unchanged`, and a before-side tie
+        # (`before_majority is None`) can never satisfy either branch, so it always lands in
+        # `unchanged` too — see `_majority_verdict`'s docstring for the full reasoning.
+        if before_majority == "PASS" and after_majority in ("FAIL", None):
             regressions.append(question)
         elif before_majority == "FAIL" and after_majority == "PASS":
             improvements.append(question)
@@ -437,9 +464,8 @@ def compare_runs(session: Session, before_id: uuid.UUID, after_id: uuid.UUID) ->
 
     before_pct_values = [member.pct_fully_supported for member in before_family]
     after_pct_values = [member.pct_fully_supported for member in after_family]
-    pct_delta = (sum(after_pct_values) / len(after_pct_values)) - (
-        sum(before_pct_values) / len(before_pct_values)
-    )
+    pct_before = sum(before_pct_values) / len(before_pct_values)
+    pct_after = sum(after_pct_values) / len(after_pct_values)
 
     return RunDiff(
         before_id=before_id,
@@ -449,7 +475,9 @@ def compare_runs(session: Session, before_id: uuid.UUID, after_id: uuid.UUID) ->
         unchanged=unchanged,
         added=sorted(after_questions - before_questions),
         removed=sorted(before_questions - after_questions),
-        pct_delta=pct_delta,
+        pct_before=pct_before,
+        pct_after=pct_after,
+        pct_delta=pct_after - pct_before,
         before_family=before_family_ids,
         after_family=after_family_ids,
     )

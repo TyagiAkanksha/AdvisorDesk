@@ -267,6 +267,46 @@ def test_run_from_cli_compare_to_latest_diffs_against_the_previous_run(
     assert "regression: q" in out
 
 
+def test_run_from_cli_compare_line_prints_family_means_and_family_sizes(
+    db_session: Session, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Fix wave round 2 (M4): the printed `compare` line's pct numbers either side of the arrow
+    are `RunDiff.pct_before`/`pct_after` -- the FAMILY MEANS `check_acceptance`'s pct rung
+    judges -- not either run's own single-run scalar, and the line names both family sizes
+    (`family means over 1/1 runs` for two single runs, since a family of one's mean equals its
+    own scalar)."""
+    record_run(
+        db_session,
+        EvalReport(
+            rows=[_row("q", verdict="PASS")],
+            pct_fully_supported=100.0,
+            refusal_correct=0,
+            refusal_total=0,
+        ),
+        label="fw2-compare-before",
+        embedding_model="m",
+        chat_model="m",
+        judge_model="m",
+        similarity_threshold=0.5,
+        retrieval_k=6,
+    )
+    db_session.commit()
+
+    _run_from_cli(
+        ["--label", "fw2-compare-after", "--compare-to", "latest"],
+        run_eval_fn=lambda *_args, **_kwargs: EvalReport(
+            rows=[_row("q", verdict="FAIL")],
+            pct_fully_supported=0.0,
+            refusal_correct=0,
+            refusal_total=0,
+        ),
+        session_factory=lambda: db_session,
+    )
+
+    out = capsys.readouterr().out
+    assert "pct 100.0 -> 0.0 (-100.0; family means over 1/1 runs)" in out
+
+
 def test_run_from_cli_warns_when_no_persist_is_combined_with_compare_to(
     db_session: Session, capsys: pytest.CaptureFixture[str]
 ) -> None:

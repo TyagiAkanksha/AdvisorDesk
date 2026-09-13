@@ -361,6 +361,40 @@ def test_accept_refuses_an_agent_run_as_the_after_run(
         accept_proposal(db_session, proposal.id, eval_run_after_id=agent_run.id)
 
 
+def test_accept_refuses_a_before_run_of_the_wrong_kind(
+    db_session: Session, actor_id: uuid.UUID
+) -> None:
+    """Fix wave round 2 (M1): `run_family` filters `kind == "answer"`, so a before-run of any
+    other kind (reachable only by hand-stamping `eval_run_before_id` — `propose_content_fix`
+    always picks the latest 'answer' run) resolves to an EMPTY family, which used to reach the
+    pct-mean rung and divide by zero. `check_acceptance` now refuses with a typed `blocked_by`
+    and no exception; `accept_proposal` raises a `ConflictError` naming the kind found, and the
+    proposal row is left unmutated."""
+    agent_run = _record(db_session, _report(("t1", "PASS"), pct=100.0), label="a", kind="agent")
+    proposal = ContentProposal(
+        kind="new_article",
+        title="T",
+        rationale="R",
+        evidence={},
+        eval_run_before_id=agent_run.id,
+        created_by=actor_id,
+    )
+    db_session.add(proposal)
+    db_session.flush()
+    after = _record(db_session, _report(("t1", "PASS"), pct=100.0), label="after")
+
+    check = check_acceptance(db_session, proposal, after.id)
+    assert check.blocked_by == "before_run_wrong_kind"
+
+    with pytest.raises(ConflictError, match="kind") as excinfo:
+        accept_proposal(db_session, proposal.id, eval_run_after_id=after.id)
+    assert "agent" in str(excinfo.value)
+
+    db_session.refresh(proposal)
+    assert proposal.status == "proposed"
+    assert proposal.eval_run_after_id is None
+
+
 def test_accept_refuses_when_the_corpus_never_changed(
     db_session: Session, actor_id: uuid.UUID
 ) -> None:
@@ -1103,6 +1137,47 @@ def test_accept_refuses_when_a_majority_of_after_runs_flip_the_same_question(
     assert "3" in message  # the after-run family size
 
 
+def test_accept_refuses_when_padding_the_after_family_produces_an_after_side_tie(
+    db_session: Session, actor_id: uuid.UUID
+) -> None:
+    """Fix wave round 2 (M2, re-review probe F4 stage 2): starting from the SAME 3-run shape as
+    `test_accept_refuses_when_a_majority_of_after_runs_flip_the_same_question` (2 FAIL / 1 PASS on
+    q1, refused), appending a 4th PASS run under the same label/digest turns q1 into a 2 FAIL / 2
+    PASS TIE. Pre-fix, a tie folded to `unchanged` and the padded family was ACCEPTED — a
+    reproducing regression could be voted away by re-running the harness under the same label
+    until the majority merely tied. An after-side tie against a before-side PASS now counts as a
+    regression too, so the padded family is STILL refused."""
+    _record(
+        db_session,
+        _report(("q1", "PASS"), ("filler", "FAIL"), pct=50.0),
+        label="flip3-before",
+    )
+    proposal = propose_content_fix(
+        db_session, kind="new_article", title="T", rationale="R", evidence=[], actor_id=actor_id
+    )
+    publish_content(
+        db_session, proposal.draft_content_id, actor_id=actor_id, pipeline=NoopChunkPipeline()
+    )
+    _record(db_session, _report(("q1", "FAIL"), ("filler", "PASS"), pct=50.0), label="flip3-after")
+    _record(db_session, _report(("q1", "FAIL"), ("filler", "PASS"), pct=50.0), label="flip3-after")
+    _record(db_session, _report(("q1", "PASS"), ("filler", "PASS"), pct=100.0), label="flip3-after")
+    padded = _record(
+        db_session, _report(("q1", "PASS"), ("filler", "PASS"), pct=100.0), label="flip3-after"
+    )
+
+    check = check_acceptance(db_session, proposal, padded.id)
+    assert check.blocked_by == "regressions"
+    assert check.regressions == ["q1"]
+    assert len(check.after_family) == 4
+    assert check.pct_after > check.pct_before  # pct still rose despite the (tied) regression
+
+    with pytest.raises(ConflictError, match="regress"):
+        accept_proposal(db_session, proposal.id, eval_run_after_id=padded.id)
+
+    db_session.refresh(proposal)
+    assert proposal.status == "proposed"
+
+
 def test_accept_refuses_when_one_after_family_member_is_hand_stamped_stale(
     db_session: Session, actor_id: uuid.UUID
 ) -> None:
@@ -1166,3 +1241,38 @@ def test_accept_refuses_when_one_after_family_member_has_partial_coverage(
 
     db_session.refresh(proposal)
     assert proposal.status == "proposed"
+
+
+def test_accept_succeeds_when_a_before_family_sibling_measured_an_extra_question(
+    db_session: Session, actor_id: uuid.UUID
+) -> None:
+    """Fix wave round 2 (M3, re-review probe F12): the union coverage rung is judged against the
+    STAMPED before-run's own questions (`before_own_questions`, already loaded for the per-member
+    loop), not the whole before-FAMILY's question union `compare_runs`' own `diff.removed` used to
+    consult. A before-family SIBLING — recorded earlier under the same label/digest, before any
+    publish, so it shares `stamped_before`'s family — that measured one extra question the after
+    family never measured must not make the after family responsible for a gap the stamped run
+    itself never had."""
+    _record(
+        db_session,
+        _report(("q1", "PASS"), ("extra", "PASS"), pct=100.0),
+        label="union-fix-before",
+    )
+    stamped_before = _record(
+        db_session, _report(("q1", "PASS"), pct=100.0), label="union-fix-before"
+    )
+    proposal = propose_content_fix(
+        db_session, kind="new_article", title="T", rationale="R", evidence=[], actor_id=actor_id
+    )
+    assert proposal.eval_run_before_id == stamped_before.id
+    publish_content(
+        db_session, proposal.draft_content_id, actor_id=actor_id, pipeline=NoopChunkPipeline()
+    )
+    after = _record(db_session, _report(("q1", "PASS"), pct=100.0), label="union-fix-after")
+
+    check = check_acceptance(db_session, proposal, after.id)
+    assert check.blocked_by is None
+    assert len(check.before_family) == 2
+
+    accepted = accept_proposal(db_session, proposal.id, eval_run_after_id=after.id)
+    assert accepted.status == "accepted"

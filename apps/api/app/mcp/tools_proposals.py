@@ -309,7 +309,10 @@ PROPOSAL_TOOLS: tuple[ToolSpec, ...] = (
             "individually qualify (same corpus, newer than the baseline, full coverage), and "
             "pct_fully_supported and regressions are judged by majority across the family — a "
             "single flaky run can neither force nor block acceptance, but a regression that "
-            "reproduces in a majority of N runs still refuses. Otherwise this fails with a "
+            "reproduces in a majority of N runs still refuses. The family is every run sharing "
+            "this label and corpus digest, not just the runs just written, so re-running under "
+            "the same label until a regression is outvoted counts against the fix, not for it: "
+            "an even split on the after side still refuses. Otherwise this fails with a "
             "conflict explaining which check said no."
         ),
         args_model=AcceptProposalArgs,

@@ -183,7 +183,10 @@ source of truth per fact.
    `pct_fully_supported` compares family means. A family of one behaves exactly as before, so this
    changes nothing for a one-off run; it only stops a single flaky draw from blocking (or forcing)
    acceptance on its own. `.superpowers/sdd/phase-9-eval-data-loop/reports/fix-wave-implementer.md`
-   carries a fresh `fw-before`/`fw-after` `--runs 3` demonstration on a disposable scratch DB.
+   carries a fresh `fw-before`/`fw-after` `--runs 3` demonstration on a disposable scratch DB. The
+   family is every run sharing this label and corpus digest — not just the three the harness just
+   wrote — so re-running under the same label until a regression is outvoted is visible in
+   `after_family`, and an even split counts against the fix.
 
 ## After the talk
 

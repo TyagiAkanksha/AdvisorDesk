@@ -304,6 +304,155 @@ def test_compare_runs_family_mode_flags_a_regression_that_reproduces_in_a_majori
     assert len(diff.after_family) == 3
 
 
+# ---------------------------------------------------------------------------
+# Fix wave round 2 (M2): an after-side TIE counts as a FAIL for the regression vote (fail-closed
+# where it matters) -- a before-side tie stays `unchanged`, and an improvement still requires a
+# CLEAN "PASS" majority on the after side. `_majority_verdict` itself is unchanged (still `None`
+# on a tie); only what `compare_runs` DOES with that `None` differs by side.
+# ---------------------------------------------------------------------------
+
+
+def test_compare_runs_after_side_tie_counts_as_a_regression_against_a_pass_baseline(
+    db_session: Session,
+) -> None:
+    """Re-review probe F4 stage 2: a before-family majority PASS against an after-family EVEN
+    split (2 PASS / 2 FAIL) on the same question is a regression, not `unchanged`. Pre-fix, this
+    tie folded to `unchanged` and accepted the fix -- a genuine reproducing regression could be
+    voted away by padding the after family with passing runs under the same label until the
+    majority merely tied."""
+    before = _record(
+        db_session,
+        FakeReport(rows=[FakeRow(question="q1", verdict="PASS")], pct_fully_supported=100.0),
+        label="tie1-before",
+    )
+    _record(
+        db_session,
+        FakeReport(
+            rows=[FakeRow(question="q1", verdict="FAIL", fully_supported=False)],
+            pct_fully_supported=0.0,
+        ),
+        label="tie1-after",
+    )
+    _record(
+        db_session,
+        FakeReport(
+            rows=[FakeRow(question="q1", verdict="FAIL", fully_supported=False)],
+            pct_fully_supported=0.0,
+        ),
+        label="tie1-after",
+    )
+    _record(
+        db_session,
+        FakeReport(rows=[FakeRow(question="q1", verdict="PASS")], pct_fully_supported=100.0),
+        label="tie1-after",
+    )
+    after = _record(
+        db_session,
+        FakeReport(rows=[FakeRow(question="q1", verdict="PASS")], pct_fully_supported=100.0),
+        label="tie1-after",
+    )
+
+    diff = compare_runs(db_session, before.id, after.id)
+
+    assert diff.regressions == ["q1"]
+    assert diff.unchanged == []
+    assert len(diff.after_family) == 4
+
+
+def test_compare_runs_after_side_tie_is_not_an_improvement(db_session: Session) -> None:
+    """An improvement still requires a CLEAN "PASS" majority on the after side -- a before-family
+    majority FAIL against an after-family EVEN split does not count as an improvement; it lands in
+    `unchanged`, not `improvements` (the mirror of the regression rule above is deliberately NOT
+    symmetric)."""
+    before = _record(
+        db_session,
+        FakeReport(
+            rows=[FakeRow(question="q1", verdict="FAIL", fully_supported=False)],
+            pct_fully_supported=0.0,
+        ),
+        label="tie2-before",
+    )
+    _record(
+        db_session,
+        FakeReport(rows=[FakeRow(question="q1", verdict="PASS")], pct_fully_supported=100.0),
+        label="tie2-after",
+    )
+    _record(
+        db_session,
+        FakeReport(rows=[FakeRow(question="q1", verdict="PASS")], pct_fully_supported=100.0),
+        label="tie2-after",
+    )
+    _record(
+        db_session,
+        FakeReport(
+            rows=[FakeRow(question="q1", verdict="FAIL", fully_supported=False)],
+            pct_fully_supported=0.0,
+        ),
+        label="tie2-after",
+    )
+    after = _record(
+        db_session,
+        FakeReport(
+            rows=[FakeRow(question="q1", verdict="FAIL", fully_supported=False)],
+            pct_fully_supported=0.0,
+        ),
+        label="tie2-after",
+    )
+
+    diff = compare_runs(db_session, before.id, after.id)
+
+    assert diff.improvements == []
+    assert diff.unchanged == ["q1"]
+    assert diff.regressions == []
+
+
+def test_compare_runs_before_side_tie_stays_unchanged_with_a_clean_after_fail(
+    db_session: Session,
+) -> None:
+    """Pinning UNCHANGED behaviour (fix wave round 2, M2): a before-side tie folds to `unchanged`
+    regardless of the after side -- there is no majority verdict to have regressed FROM, so even a
+    clean after-family FAIL does not count as a regression."""
+    _record(
+        db_session,
+        FakeReport(rows=[FakeRow(question="q1", verdict="PASS")], pct_fully_supported=100.0),
+        label="tie3-before",
+    )
+    _record(
+        db_session,
+        FakeReport(
+            rows=[FakeRow(question="q1", verdict="FAIL", fully_supported=False)],
+            pct_fully_supported=0.0,
+        ),
+        label="tie3-before",
+    )
+    _record(
+        db_session,
+        FakeReport(rows=[FakeRow(question="q1", verdict="PASS")], pct_fully_supported=100.0),
+        label="tie3-before",
+    )
+    before = _record(
+        db_session,
+        FakeReport(
+            rows=[FakeRow(question="q1", verdict="FAIL", fully_supported=False)],
+            pct_fully_supported=0.0,
+        ),
+        label="tie3-before",
+    )
+    after = _record(
+        db_session,
+        FakeReport(
+            rows=[FakeRow(question="q1", verdict="FAIL", fully_supported=False)],
+            pct_fully_supported=0.0,
+        ),
+        label="tie3-after",
+    )
+
+    diff = compare_runs(db_session, before.id, after.id)
+
+    assert diff.regressions == []
+    assert diff.unchanged == ["q1"]
+
+
 def test_compare_runs_pct_delta_uses_family_means(db_session: Session) -> None:
     """`pct_delta` averages `pct_fully_supported` over each side's family, not just the two
     named runs -- the family mean is the number the acceptance gate's pct rung must compare."""
@@ -327,6 +476,11 @@ def test_compare_runs_pct_delta_uses_family_means(db_session: Session) -> None:
 
     # after family mean = (90 + 70) / 2 = 80; before family mean = 50; delta = 30
     assert diff.pct_delta == pytest.approx(30.0)
+    # Fix wave round 2 (M4): the means themselves are now their own fields, not just their
+    # difference -- `pct_delta` is `pct_after - pct_before` by construction.
+    assert diff.pct_before == pytest.approx(50.0)
+    assert diff.pct_after == pytest.approx(80.0)
+    assert diff.pct_delta == pytest.approx(diff.pct_after - diff.pct_before)
 
 
 def test_compare_runs_family_only_includes_runs_with_the_same_corpus_digest(

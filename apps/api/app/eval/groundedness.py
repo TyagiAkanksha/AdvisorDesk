@@ -1330,12 +1330,14 @@ def _run_from_cli(
 
         if before_id is not None and last_run is not None:
             diff = compare_runs(session, before_id, last_run.id)
-            before_run = session.get(EvalRun, before_id)
-            assert before_run is not None  # compare_runs already proved this id exists
+            # Fix wave round 2 (M4): prints the FAMILY MEANS either side of the arrow — the exact
+            # numbers `check_acceptance`'s pct rung judges — instead of the two NAMED runs' own
+            # single-run scalars, which silently disagreed with the family-mean delta in
+            # parentheses whenever either run belonged to a `--runs N` family.
             print(
                 f"compare {diff.before_id} -> {diff.after_id}: "
-                f"pct {before_run.pct_fully_supported:.1f} -> "
-                f"{last_run.pct_fully_supported:.1f} ({diff.pct_delta:+.1f}); "
+                f"pct {diff.pct_before:.1f} -> {diff.pct_after:.1f} ({diff.pct_delta:+.1f}; "
+                f"family means over {len(diff.before_family)}/{len(diff.after_family)} runs); "
                 f"regressions {len(diff.regressions)}; improvements {len(diff.improvements)}; "
                 f"added {len(diff.added)}; removed {len(diff.removed)}"
             )

@@ -176,8 +176,8 @@ def _all_seed_records() -> list[dict[str, Any]]:
 
 # Phase-9 wave 1 (DESIGN §C2) grows the phase-4 corpus of 21 files by four per batch. Exact
 # counts, not bands: a content wave that lands three of its four files must fail loudly.
-_EXPECTED_SEED_FILE_COUNT = 29
-_EXPECTED_PUBLISHED_COUNT = 25
+_EXPECTED_SEED_FILE_COUNT = 33
+_EXPECTED_PUBLISHED_COUNT = 29
 _EXPECTED_DRAFT_COUNT = 4
 
 # Tag vocabulary = PRD §8's six + the wave-1 additions (INDEX Global Constraints: the vocabulary is
@@ -586,6 +586,22 @@ _WAVE1_ARTICLES: dict[str, tuple[str, frozenset[str]]] = {
         "Onboarding With Us and What to Bring",
         frozenset({"our-firm"}),
     ),
+    "concentrated-employer-stock-and-our-10-rule": (
+        "Concentrated Employer Stock and Our 10% Rule",
+        frozenset({"our-firm", "investing-basics", "equity-compensation"}),
+    ),
+    "tender-offers-and-lock-up-periods": (
+        "Tender Offers and Lock-Up Periods",
+        frozenset({"equity-compensation", "tax-planning"}),
+    ),
+    "the-mega-backdoor-roth-step-by-step": (
+        "The Mega-Backdoor Roth, Step by Step",
+        frozenset({"retirement", "tax-planning"}),
+    ),
+    "our-rebalancing-policy-and-the-20-drawdown-rule": (
+        "Our Rebalancing Policy and the 20% Drawdown Rule",
+        frozenset({"our-firm", "investing-basics"}),
+    ),
 }
 
 _KEY_NUMBERS_HEADING = "Key numbers (2026)"
@@ -719,14 +735,14 @@ def test_wave_1_expected_chunks_refs_name_real_headings_in_their_file() -> None:
 # (both by the loader's default rule — those rows carry no explicit `class`). Batch A adds
 # 6 answerable + 2 multi_source + 1 near_miss + 1 threshold + 1 stale_number.
 _EXPECTED_CLASS_COUNTS = {
-    "answerable": 29,
-    "multi_source": 4,
-    "near_miss": 2,
+    "answerable": 35,
+    "multi_source": 6,
+    "near_miss": 3,
     "off_domain": 4,
-    "threshold": 2,
-    "stale_number": 2,
+    "threshold": 3,
+    "stale_number": 3,
 }
-_EXPECTED_QUESTION_TOTAL = 43
+_EXPECTED_QUESTION_TOTAL = 54
 
 
 def _question_class(item: dict[str, Any]) -> str:

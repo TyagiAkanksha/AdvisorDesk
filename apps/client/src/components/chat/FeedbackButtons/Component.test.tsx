@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import '@testing-library/jest-dom/vitest';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
@@ -48,12 +48,16 @@ describe('FeedbackButtons', () => {
     );
   });
 
-  it('disables both thumbs while a request is in flight', async () => {
+  it('disables both thumbs while a request is in flight', () => {
     const onSelect = vi.fn();
     render(<FeedbackButtons value={null} disabled onSelect={onSelect} />);
 
     expect(screen.getByRole('button', { name: 'Helpful' })).toBeDisabled();
-    await userEvent.click(screen.getByRole('button', { name: 'Not helpful' }));
+    // `fireEvent` (not `user-event`): a real mouse can't land on a `pointer-events: none` disabled
+    // MUI button either, but that's a `user-event` simulation guard, not this assertion's concern
+    // — MUI's own `ButtonBase` already refuses to invoke `onClick` while `disabled` regardless of
+    // how the click event arrives, which is exactly what this test pins.
+    fireEvent.click(screen.getByRole('button', { name: 'Not helpful' }));
 
     expect(onSelect).not.toHaveBeenCalled();
   });

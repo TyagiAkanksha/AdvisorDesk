@@ -80,6 +80,9 @@ export default function Component({ message, feedback }: MessageBubbleProps) {
           sx={{ maxWidth: BUBBLE_MAX_WIDTH }}
         >
           {answer}
+          {/* Rateable too, deliberately: a refusal is the highest-value thing to rate — a
+              thumbs-down here is `weak_queries`' (task 15) highest-precedence signal that this
+              question needed guidance we don't have. Do not gate this on `!message.refusal`. */}
           {feedbackButtons}
         </Alert>
       ) : (

@@ -5,8 +5,8 @@ tags:
 status: published
 ---
 
-Part of being a good fit for the clients we serve is being clear about who we aren't built for, and
-what we won't do even for clients we already work with. This page covers the handful of things we
+Part of being a good fit for the clients Queen City Wealth Planning serves is being clear about who
+we aren't built for, and what we won't do even for clients we already work with. This page covers the handful of things we
 deliberately don't offer — stock-picking, insurance sales, tax-return preparation and legal advice,
 and a short list of things we won't advise on at all — and, for each one, who you should actually
 call instead. None of this is a judgment about whether these things matter; it's a map of where our

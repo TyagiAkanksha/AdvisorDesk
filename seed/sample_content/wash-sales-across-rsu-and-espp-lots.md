@@ -9,8 +9,8 @@ status: published
 If you're harvesting a loss on company stock, the biggest risk usually isn't the trade itself —
 it's a vesting or ESPP purchase date already sitting on your calendar that you didn't think to
 check first. This article assumes you already know the basic mechanics of tax-loss harvesting —
-offsetting gains, the annual limit against ordinary income, carrying losses forward — and focuses
-specifically on the wash-sale trap created by an equity-comp vesting schedule you don't control:
+offsetting gains, carrying losses forward — and focuses specifically on the wash-sale trap created
+by an equity-comp vesting schedule you don't control:
 when it's triggered, how an ESPP purchase counts, and what to do about it.
 
 ## What is a wash sale, in plain terms?

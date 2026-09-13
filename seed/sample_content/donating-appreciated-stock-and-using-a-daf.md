@@ -33,18 +33,18 @@ never taxed to you at all.
 
 ## How much of my income can I deduct?
 
-The deduction for a gift of appreciated stock to a public charity is capped as a percentage of
-your adjusted gross income for the year — a lower ceiling than the separate, higher
-percentage-of-AGI cap that applies to a cash gift to the same kind of charity. If your total giving
-for the year is large relative to your income — a real possibility in a year with a big vest, a
-tender offer, or another liquidity event — you may not be able to deduct the entire
-fair-market-value gift in the year you make it. The good news is that the limit is not a ceiling on
-the deduction itself, only on how much of it you can use in a single year: whatever you can't
-deduct this year because of the cap carries forward and can be used in a later year, for a set
-number of years before it expires unused. Because cash and appreciated stock are subject to two
-different caps, a donor who gives both in the same year needs to know which limit applies to which
-gift, and in what order the two interact, before assuming the whole combined gift is deductible
-now. This is also why timing matters: if you're planning a gift sized to a specific high-income
+The deduction for a gift of appreciated stock to a public charity is capped at 30% of your
+adjusted gross income for the year — a lower ceiling than the 60% cap that applies to a cash gift
+to the same kind of charity. If your total giving for the year is large relative to your income —
+a real possibility in a year with a big vest, a tender offer, or another liquidity event — you may
+not be able to deduct the entire fair-market-value gift in the year you make it. The good news is
+that the limit is not a ceiling on the deduction itself, only on how much of it you can use in a
+single year: whatever you can't deduct this year because of the cap carries forward and can be
+used in each of the next 5 years, until used up. Because cash and appreciated stock are subject to
+two different caps, a donor who gives both in the same year needs to know which limit applies to
+which gift, and in what order the two interact, before assuming the whole combined gift is
+deductible now. For 2026 there is also a floor under the ceiling: only giving above 0.5% of your
+adjusted gross income is deductible at all. This is also why timing matters: if you're planning a gift sized to a specific high-income
 year, it's worth checking the applicable percentage limits before deciding how much stock versus
 cash to give, rather than after you've already made the gift and are filing the return.
 
@@ -86,21 +86,20 @@ lots have cleared the one-year mark before deciding which shares to give away fi
 
 ## What do I need to substantiate the gift?
 
-Every noncash gift needs a contemporaneous written acknowledgment from the charity describing what
-you gave and confirming you received nothing of value in return — keep this with your tax records,
-because the IRS can disallow the deduction entirely if you can't produce it on request. Above a
-certain dollar amount, noncash gifts also have to be reported on a specific IRS form filed with
-your return, describing the property and how you determined its value. For gifts of property other
-than cash — above a separate, higher dollar threshold — the general rule adds one more requirement:
-a qualified appraisal, prepared by a qualified appraiser, supporting the value you're claiming.
-Publicly traded stock is the one major exception to that appraisal requirement: because the value
-of a share trading on a public exchange is verifiable from public price data on the date of the
-gift, you don't need a separate appraisal to substantiate its value the way you would for real
-estate or closely held stock, even if the total gift is well above the appraisal threshold that
-would otherwise apply. That exception is exactly why donating shares of your employer's publicly
-traded stock is administratively simple compared to donating a harder-to-value asset — you still
-need the acknowledgment letter and the reporting form once you're above their thresholds, but you
-can skip the appraisal step entirely.
+Any gift of $250 or more needs a contemporaneous written acknowledgment from the charity describing
+what you gave and confirming you received nothing of value in return — keep this with your tax
+records, because the IRS can disallow the deduction entirely if you can't produce it on request.
+Above $500, noncash gifts also have to be reported on Form 8283, filed with your return, describing
+the property and how you determined its value. For gifts of property other than cash — above
+$5,000 — the general rule adds one more requirement: a qualified appraisal, prepared by a qualified
+appraiser, supporting the value you're claiming. Publicly traded stock is the one major exception
+to that appraisal requirement: because the value of a share trading on a public exchange is
+verifiable from public price data on the date of the gift, you don't need a separate appraisal to
+substantiate its value the way you would for real estate or closely held stock, even if the total
+gift is well above $5,000. That exception is exactly why donating shares of your employer's
+publicly traded stock is administratively simple compared to donating a harder-to-value asset — you
+still need the acknowledgment letter and Form 8283 once you're above their thresholds, but you can
+skip the appraisal step entirely.
 
 ## Key numbers (2026)
 
@@ -116,16 +115,16 @@ can skip the appraisal step entirely.
   8283; gifts valued at more than $5,000 generally require a qualified appraisal, except for
   publicly traded securities, which are exempt from the appraisal step at any dollar amount
   (Instructions for Form 8283; IRS Pub 561).
-- **2026 standard deduction** — the amount your itemized deductions, including any charitable
-  gifts, must exceed before itemizing saves you anything; the IRS publishes the exact figure for
-  each filing status as part of its annual inflation adjustments (IRS 2026 inflation-adjustment
-  release).
+- **2026 standard deduction** — $32,200 for married filing jointly and $16,100 for a single filer;
+  your itemized deductions, charitable gifts included, have to exceed that before itemizing saves
+  you anything (Rev. Proc. 2025-32).
 
 _Current as of 2026-09_
 
 ## Sources
 
 - IRS Publication 526, Charitable Contributions — https://www.irs.gov/publications/p526
+- Internal Revenue Code §170(b)(1) — https://www.law.cornell.edu/uscode/text/26/170
 - IRS Publication 561, Determining the Value of Donated Property — https://www.irs.gov/publications/p561
 - Instructions for Form 8283, Noncash Charitable Contributions — https://www.irs.gov/instructions/i8283
 - IRS Newsroom, "IRS releases tax inflation adjustments for tax year 2026, including amendments

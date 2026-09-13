@@ -54,9 +54,9 @@ actually limits you.
 
 ## What should I do with my old 401(k)?
 
-Leaving a job gives you three basic options for an old 401(k): leave it where it is if your balance
-clears the plan's minimum, roll it into your new employer's plan if that plan accepts rollovers, or
-roll it into an IRA. A direct rollover — where the old plan sends the money straight to the new
+An old 401(k) gives you three basic options: leave it if your balance clears the plan's minimum,
+roll it into your new employer's plan if that plan accepts rollovers, or roll it into an IRA. A
+direct rollover — where the old plan sends the money straight to the new
 account without ever cutting you a check — avoids the two problems built into an indirect rollover:
 the plan must withhold a mandatory 20% of the distribution for federal tax even though you intend
 to roll over the whole amount, and you then have only 60 days to deposit the full original balance,
@@ -65,11 +65,11 @@ shortfall counts as a taxable distribution. One age-based rule matters if you mi
 before typical retirement age: a distribution from the 401(k) of the employer you just separated
 from is exempt from the additional early-distribution tax if you separate from service in or after
 the year you turn age 55 — an exception tied specifically to that employer's plan, which does not
-carry over once the balance is rolled into an IRA. If the plan also holds employer stock you bought
-inside it, one more decision is worth making before rolling anything over: net unrealized
-appreciation lets you take that stock as a direct distribution instead, pay ordinary income tax
-only on what the plan originally paid for it, and get long-term capital-gains treatment on the rest
-when you sell — a benefit a rollover gives up entirely.
+carry over once the balance is rolled into an IRA. If the plan also holds employer stock and you take your whole balance out as a lump sum, one more
+decision is worth making before rolling anything over: net unrealized appreciation lets you take
+that stock as a direct distribution instead, pay ordinary income tax only on what the plan
+originally paid for it, and get long-term capital-gains treatment on the rest when you sell — a
+benefit a rollover gives up entirely.
 
 ## What happens to my ESPP and my last vest?
 

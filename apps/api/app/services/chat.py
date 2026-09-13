@@ -18,6 +18,7 @@ paired turn instead of only the refusals `content_gaps` sees — both share one 
 
 from __future__ import annotations
 
+import re
 import uuid
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -368,23 +369,67 @@ WEAK_QUERY_KINDS: tuple[str, ...] = (NEGATIVE_FEEDBACK, REFUSED, NEAR_MISS, LOW_
 #: `chat_messages` table into memory.
 _WEAK_QUERY_SCAN_LIMIT = 2000
 
-# Controller ruling (2026-09-12): the canonical refusal wording an answer emits when it declines
-# (PRD §7.4 / `app.rag.synthesis.SYSTEM_PROMPT`'s own instruction to the model — "reply that no
-# published guidance covers this"), as a casefolded SUBSTRING probe against the stored answer
-# text. This is a documented REPORTING heuristic, not a judge call: it exists to let a report
-# read history cheaply, with no LLM call of its own. `app.eval.groundedness`'s `_model_declined`
-# (task 05c, backed by `MetricsJudge.is_refusal`) is the semantic, judge-based counterpart the
-# eval harness uses instead — naming both here, in one place, is what keeps a future phrasing
-# change in `app.rag.synthesis` from silently blinding this heuristic without either side ever
-# raising an error.
-_DECLINE_PHRASE = "no published guidance covers this"
+# Controller ruling (2026-09-12) + fix round 1 (2026-09-13, Opus review of 0c5b509, I-2/I-3): the
+# refusal wording an answer emits when it declines (PRD §7.4 / `app.rag.synthesis.SYSTEM_PROMPT`'s
+# own instruction to the model — "reply that no published guidance covers this"), probed as a
+# casefolded SUBSTRING against only the answer's FIRST SENTENCE (see `_first_sentence_prefix`).
+# This is a documented REPORTING heuristic, not a judge call: it exists to let a report read
+# history cheaply, with no LLM call of its own. `app.eval.groundedness`'s `_model_declined` (task
+# 05c, backed by `MetricsJudge.is_refusal`) is the semantic, judge-based counterpart the eval
+# harness uses instead — naming both here, in one place, is what keeps a future phrasing change in
+# `app.rag.synthesis` from silently blinding this heuristic without either side ever raising an
+# error.
+#
+# Fix round 1 narrowed the ORIGINAL match (the full phrase "no published guidance covers this",
+# anywhere in the answer) two ways the review's boundary probe proved were both wrong:
+#   - RECALL (I-2): the real answerer paraphrases freely. Task 14's own persisted run recorded
+#     "No published guidance in the provided context covers how much cash to set aside..." and "No
+#     published guidance covers whether exercising early is right for you." verbatim, alongside
+#     the canonical "...covers this. Please ask the advisory team." — only the last of the three
+#     contained the old, longer phrase. Shortening the probed phrase to "no published guidance"
+#     (the part every recorded variant shares) catches all three.
+#   - PRECISION (I-3): a genuine, substantively-answered question can still emit that phrase as a
+#     HEDGING CLOSER, never as the opening — recorded example (task-12-review.md:224): "...it
+#     would be best to consult the advisory team, as no published guidance covers this aspect in
+#     detail." appended after real, cited content ("prompt bleed"). Every recorded REFUSAL, by
+#     contrast, OPENS with the phrase. Restricting the probe to the answer's first sentence catches
+#     every recorded refusal while excluding a mid-or-late-answer closer.
+_DECLINE_PHRASE = "no published guidance"
+
+#: Upper bound, in characters, on how far `_first_sentence_prefix` looks for a sentence-ending
+#: `.`/`!`/`?` before giving up and treating the whole window as "the first sentence" — a generous
+#: multiple of every recorded refusal's length (all well under 120 chars), so a real refusal is
+#: never truncated mid-phrase, while a long substantive opening sentence still bounds the scan.
+_DECLINE_PROBE_WINDOW = 160
+
+#: A `.`/`!`/`?` followed by whitespace or end-of-string — "the end of a sentence", for this
+#: probe's purposes only (see `_first_sentence_prefix`'s docstring for why this is not a general
+#: sentence splitter).
+_SENTENCE_END_RE = re.compile(r"[.!?](?=\s|$)")
+
+
+def _first_sentence_prefix(answer: str) -> str:
+    """A minimal, LOCAL "first sentence" approximation for `_is_declining_answer` — deliberately
+    NOT `app.eval.metrics.split_sentences` (the repo's real, abbreviation-aware sentence
+    splitter): that module lives in `app.eval`, and the import-linter contract "app.services
+    imports only app.models and app.config" (`apps/api/pyproject.toml`) forbids `app.services`
+    from importing it. This probe needs none of that splitter's abbreviation handling — only "does
+    the answer OPEN with a decline" — so it uses the first `.`/`!`/`?` followed by whitespace or
+    end-of-string, within the first `_DECLINE_PROBE_WINDOW` characters; if none is found in that
+    window, the window itself (not the whole answer) stands in for "the first sentence". Not a
+    general-purpose sentence splitter — do not reuse this for anything else.
+    """
+    window = answer.strip()[:_DECLINE_PROBE_WINDOW]
+    match = _SENTENCE_END_RE.search(window)
+    return window[: match.end()] if match else window
 
 
 def _is_declining_answer(answer: str) -> bool:
-    """True when `answer` matches the canonical refusal phrasing (see `_DECLINE_PHRASE`'s own
-    comment for why this is a reporting heuristic, not a judge call). Casefolded substring match,
-    not exact-case."""
-    return _DECLINE_PHRASE in answer.casefold()
+    """True when `answer`'s FIRST SENTENCE (see `_first_sentence_prefix`) matches the canonical
+    refusal phrasing (see `_DECLINE_PHRASE`'s own comment for why this is a reporting heuristic,
+    not a judge call, and why the match is scoped to the first sentence). Casefolded substring
+    match, not exact-case."""
+    return _DECLINE_PHRASE in _first_sentence_prefix(answer).casefold()
 
 
 @dataclass(frozen=True)

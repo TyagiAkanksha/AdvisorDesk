@@ -6,9 +6,14 @@ both deterministic instead of racing the server clock. Each question gets its OW
 unless a test is specifically about several turns in one session, so "next reply" is never
 ambiguous.
 
-`top_similarity` is Postgres `REAL` (single precision): a stored `0.4` reads back as
-`0.4000000059604645`, so every similarity assertion uses `pytest.approx` and no boundary VALUE is
-asserted exactly (the band boundaries 0.35 / 0.60 are approached with 0.30/0.40 and 0.55/0.80).
+`top_similarity` is Postgres `REAL` (single precision). Every similarity assertion below still
+uses `pytest.approx` as a defensive habit, but the two exact band-edge VALUES (`0.35`, `0.60`) are
+now pinned directly, not merely approached: fix round 1 (Opus review of `0c5b509`, finding M-1)
+found that an earlier version of this paragraph's claim — that a stored `0.4` reads back as
+`0.4000000059604645`, offered as the reason to never assert a boundary exactly — was factually
+wrong. Measured against this file's own `db_session` throwaway-schema fixture: Postgres `REAL`
+round-trips `0.35`/`0.4`/`0.6` through psycopg EXACTLY (shortest-round-trip text representation),
+so the two boundary tests below are a real regression guard, not an approximation.
 
 Controller addition (2026-09-12, folded into this RED pass by the test-author per dispatch
 brief): `retrieval_found` alone cannot see the case where retrieval cleared the threshold but the
@@ -20,6 +25,16 @@ synthesis.SYSTEM_PROMPT`; NOT a judge call, which stays in the eval harness) is 
 `low_confidence`, behind `negative_feedback`. `_ask`'s new `content` parameter (default `"reply"`,
 so every pin above this addition is unaffected) lets the declining-answer tests below pass
 `_DECLINE_TEXT` as the stored answer text.
+
+Fix round 1 (Opus review of `0c5b509`, findings I-2/I-3) narrowed WHERE and WHAT that substring
+probe matches, after the review found the original ("no published guidance covers this", anywhere
+in the answer) both under- and over-matched real recorded output: two of three refusal sentences
+task 14 actually recorded from the real answerer did not contain that exact phrase (I-2), and a
+substantive, well-cited answer that only HEDGES with the phrase as a closer matched anyway (I-3,
+"prompt bleed"). The probe now matches the shorter phrase "no published guidance" against only the
+answer's FIRST SENTENCE (see `app.services.chat._first_sentence_prefix`) — every recorded refusal
+OPENS with the phrase, while a hedging closer never does. `_DECLINE_TEXT_*` constants below cover
+the recorded refusal shapes; `_HEDGING_CLOSER_TEXT` covers the prompt-bleed shape.
 """
 
 from __future__ import annotations
@@ -56,8 +71,32 @@ _THRESHOLD = 0.5
 # Controller addition: the canonical refusal phrasing, verbatim as the real answerer emits it
 # (PRD §7.4, `app.rag.synthesis.SYSTEM_PROMPT`, and every `ScriptedChatLLM` fixture across
 # `tests/test_groundedness.py`/`tests/test_eval_refusal_semantics.py`/etc.). Detection is a
-# casefolded SUBSTRING match against this text — see the module docstring.
+# casefolded SUBSTRING match against this text's first sentence — see the module docstring.
 _DECLINE_TEXT = "No published guidance covers this. Please ask the advisory team."
+
+# Fix round 1 (Opus review I-2): two of the three refusal sentences task 14's persisted harness
+# run actually recorded from the real answerer, verbatim (`task-14-implementer.md:273-274,279`) —
+# neither contains the old, longer phrase ("no published guidance covers this"), which is exactly
+# the recall gap that made rung 2 miss 2 of 3 recorded refusals before this fix round.
+_DECLINE_TEXT_CONTEXT_VARIANT = (
+    "No published guidance in the provided context covers how much cash to set aside for "
+    "taxes on stock comp."
+)
+_DECLINE_TEXT_WHETHER_VARIANT = (
+    "No published guidance covers whether exercising early is right for you."
+)
+
+# Fix round 1 (Opus review I-3): a real, substantive, well-cited answer (task-12-review.md:224,
+# "prompt bleed") that only HEDGES with the refusal phrase as its CLOSING sentence — never its
+# opening. Before this fix round this false-positived as `near_miss`; scoping the probe to the
+# first sentence excludes it while still catching every recorded refusal above (all of which OPEN
+# with the phrase).
+_HEDGING_CLOSER_TEXT = (
+    "Your long-term disability policy generally replaces a portion of your base salary, "
+    "subject to the policy's own cap. For more specific details about how much of your income "
+    "would be replaced, it would be best to consult the advisory team, as no published "
+    "guidance covers this aspect in detail."
+)
 
 
 @pytest.fixture
@@ -244,6 +283,37 @@ def test_a_question_with_no_reply_at_all_is_never_weak(db_session: Session) -> N
 
 
 # ---------------------------------------------------------------------------
+# Band edges (fix round 1, Opus review of `0c5b509`, finding M-1): both boundaries round-trip
+# through Postgres `REAL` EXACTLY (see the module docstring) — pinned directly, not approached.
+# ---------------------------------------------------------------------------
+
+
+def test_the_near_miss_band_edge_is_inclusive_at_exactly_threshold_minus_band(
+    db_session: Session,
+) -> None:
+    """Rule 3 requires `< threshold - NEAR_MISS_BAND` to be `refused`; AT exactly that value
+    (0.35, not merely approaching it) the row must fall through to rule 4's `near_miss` instead —
+    the `>=` in rule 4 is inclusive of this exact boundary."""
+    _ask(db_session, "Exactly on the near-miss boundary?", found=False, top_similarity=0.35)
+
+    groups = weak_queries(db_session, days=30, threshold=_THRESHOLD)
+
+    assert groups[0].kinds == [NEAR_MISS]
+    assert groups[0].worst_top_similarity == pytest.approx(0.35, abs=1e-6)
+
+
+def test_the_low_confidence_band_edge_is_exclusive_at_exactly_threshold_plus_band(
+    db_session: Session,
+) -> None:
+    """Rule 5 requires `< threshold + LOW_CONFIDENCE_BAND` to be `low_confidence`; AT exactly that
+    value (0.60, not merely approaching it) the row is no longer weak at all — the `<` in rule 5
+    excludes this exact boundary."""
+    _ask(db_session, "Exactly on the low-confidence boundary?", found=True, top_similarity=0.60)
+
+    assert weak_queries(db_session, days=30, threshold=_THRESHOLD) == []
+
+
+# ---------------------------------------------------------------------------
 # Declining-answer detection (controller addition, 2026-09-12): `retrieval_found` alone cannot
 # see the case where retrieval cleared the threshold but the ANSWERER declined anyway. See the
 # module docstring for the exact rule and its ladder position.
@@ -393,6 +463,90 @@ def test_declining_answer_detection_is_case_insensitive(db_session: Session) -> 
     groups = weak_queries(db_session, days=30, threshold=_THRESHOLD)
 
     assert groups[0].kinds == [NEAR_MISS]
+
+
+# ---------------------------------------------------------------------------
+# Fix round 1 (Opus review of `0c5b509`, I-2 recall / I-3 precision): the four recorded answer
+# strings the review's boundary probe and evidence table are built from. `found=True`/`sim=0.92`
+# throughout — comfortably clear of every band on its own — so a `near_miss` verdict below can
+# only come from decline detection, never from the similarity bands.
+# ---------------------------------------------------------------------------
+
+
+def test_a_recorded_refusal_missing_the_canonical_wording_is_still_a_decline(
+    db_session: Session,
+) -> None:
+    """I-2: task 14's persisted harness run recorded this refusal sentence verbatim
+    (`task-14-implementer.md:273-274`) — it does NOT contain the old, longer phrase ("no published
+    guidance covers this"), which was rung 2's recall gap before this fix round."""
+    _ask(
+        db_session,
+        "How much cash should I set aside for taxes on my stock comp?",
+        found=True,
+        top_similarity=0.92,
+        content=_DECLINE_TEXT_CONTEXT_VARIANT,
+    )
+
+    groups = weak_queries(db_session, days=30, threshold=_THRESHOLD)
+
+    assert groups[0].kinds == [NEAR_MISS]
+
+
+def test_another_recorded_refusal_missing_the_canonical_wording_is_still_a_decline(
+    db_session: Session,
+) -> None:
+    """I-2: a second recorded real refusal sentence (`task-14-implementer.md:279`), also missing
+    the old, longer phrase."""
+    _ask(
+        db_session,
+        "Everyone at work says to exercise early. Is that right for me?",
+        found=True,
+        top_similarity=0.92,
+        content=_DECLINE_TEXT_WHETHER_VARIANT,
+    )
+
+    groups = weak_queries(db_session, days=30, threshold=_THRESHOLD)
+
+    assert groups[0].kinds == [NEAR_MISS]
+
+
+def test_the_canonical_decline_text_is_still_a_decline_after_the_first_sentence_narrowing(
+    db_session: Session,
+) -> None:
+    """Regression pin: narrowing the probe to the first sentence (and shortening the matched
+    phrase) must not stop catching the canonical wording it already caught."""
+    _ask(
+        db_session,
+        "Does the firm's guidance cover crypto-funded RSU loans?",
+        found=True,
+        top_similarity=0.92,
+        content=_DECLINE_TEXT,
+    )
+
+    groups = weak_queries(db_session, days=30, threshold=_THRESHOLD)
+
+    assert groups[0].kinds == [NEAR_MISS]
+
+
+def test_a_hedging_closer_later_in_the_answer_is_not_a_decline(db_session: Session) -> None:
+    """I-3 ("prompt bleed", task-12-review.md:224): a real, substantive answer whose FIRST
+    sentence answers the question, and whose LAST sentence merely hedges with the refusal phrase,
+    must classify by the band rules — same as any other non-declining answer at this similarity
+    (`test_declining_answer_beats_the_low_confidence_rule`'s negative twin,
+    `test_a_non_declining_answer_at_the_same_similarity_is_still_low_confidence`) — not as a
+    decline. Before this fix round the phrase alone (found anywhere in the answer) forced
+    `near_miss` here; scoping the probe to the first sentence excludes it."""
+    _ask(
+        db_session,
+        "How does long-term disability insurance work?",
+        found=True,
+        top_similarity=0.55,
+        content=_HEDGING_CLOSER_TEXT,
+    )
+
+    groups = weak_queries(db_session, days=30, threshold=_THRESHOLD)
+
+    assert groups[0].kinds == [LOW_CONFIDENCE]
 
 
 # ---------------------------------------------------------------------------

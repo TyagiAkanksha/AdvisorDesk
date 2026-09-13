@@ -150,10 +150,11 @@ GAPS_TOOLS: tuple[ToolSpec, ...] = (
         description=(
             "Report client questions the system answered BADLY, grouped and classified: "
             "negative_feedback (a client pressed thumbs-down), refused (nothing in the corpus "
-            "was close), near_miss (a source was just under the retrieval threshold — the "
-            "corpus nearly had it), low_confidence (answered, but only just above the "
-            "threshold). Newest `days` days, most-asked first. Use this to decide what content "
-            "to write or expand next."
+            "was close), near_miss (a source was just under the retrieval threshold, or "
+            "retrieval succeeded and the answer still declined — either way the corpus nearly "
+            "had it), low_confidence (answered, but only just above the threshold). Newest "
+            "`days` days, most-asked first. Use this to decide what content to write or expand "
+            "next."
         ),
         args_model=ReportWeakQueriesArgs,
         handler=_report_weak_queries,

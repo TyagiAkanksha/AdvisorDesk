@@ -70,12 +70,14 @@ to match — so at any point in time this file names exactly what's running.
   This item previously lingered in the "Staged follow-up" list below after it had already
   shipped — removed from there as of this pass (p7 review finding M-1).
 - **OpenAI provider switch** (6R-14) — DONE. `docker-compose.yml`'s `api` service sets
-  `LLM_PROVIDER=openai`, `LLM_BASE_URL=https://api.openai.com/v1`,
-  `EMBEDDING_MODEL=text-embedding-3-small`, `EMBEDDING_DIMENSIONS="1024"`,
-  `CHAT_MODEL=gpt-4o-mini`, `SIMILARITY_THRESHOLD="0.5"`; `fetch-secrets.sh` fetches
+  `LLM_PROVIDER=openai`, `LLM_BASE_URL=https://api.openai.com/v1`, `EMBEDDING_DIMENSIONS="1024"`,
+  `SIMILARITY_THRESHOLD="0.5"`; `fetch-secrets.sh` fetches
   `OPENAI_API_KEY` from SSM. Both NVIDIA NIM models (embedding + chat) reached end-of-life in
   August 2026; `NVIDIA_API_KEY` is fetched only for back-compat and unused while
-  `LLM_PROVIDER=openai`.
+  `LLM_PROVIDER=openai`. The model NAMES (`CHAT_MODEL`, `EMBEDDING_MODEL`, `JUDGE_MODEL`) are
+  deliberately NOT set in the compose file since the phase-9 deploy (`ca4e634`, 2026-09-13): the
+  code defaults apply (`gpt-5.4-mini` / `text-embedding-3-small` / `gpt-5.4`), and
+  `tests/test_prod_config_pins.py` fails if a pin reappears in `environment:`.
 
 ## Staged follow-up (NOT applied in this task)
 

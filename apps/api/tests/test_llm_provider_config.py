@@ -200,5 +200,5 @@ def test_defaults_flip_to_the_openai_values(clean_llm_env: None) -> None:
 
     assert settings.llm_base_url == "https://api.openai.com/v1"
     assert settings.embedding_model == "text-embedding-3-small"
-    assert settings.chat_model == "gpt-4o-mini"
+    assert settings.chat_model == "gpt-5.4-mini"
     assert settings.embedding_dimensions == 1024

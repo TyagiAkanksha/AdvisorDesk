@@ -159,7 +159,7 @@ class _FakeOpenAIClient:
 def _fake_openai_judge(reply: str) -> tuple[OpenAIJudge, _FakeCompletions]:
     completions = _FakeCompletions(reply=reply)
     client = _FakeOpenAIClient(chat=_FakeChat(completions=completions))
-    return OpenAIJudge(client=cast(OpenAI, client), model="gpt-4o"), completions
+    return OpenAIJudge(client=cast(OpenAI, client), model="gpt-5.4"), completions
 
 
 # ---------------------------------------------------------------------------
@@ -380,9 +380,9 @@ def test_without_a_metrics_judge_no_refusal_call_is_made_and_behaviour_is_unchan
 
 def test_refusal_judge_call_is_temperature_zero_on_the_judge_model() -> None:
     """`OpenAIJudge.is_refusal` (task-05c Interfaces): one `chat.completions.create` call at
-    `temperature=0` on the judge model ("gpt-4o" here), parsed via the same first-line YES/NO
-    convention as its siblings (`OpenAIJudge._ask_yes_no`) -- "YES" (any case) means the answer
-    declines; anything else, including a junk/malformed reply, means it does not.
+    `temperature=0` on the judge model ("gpt-5.4" here, p9 t05d), parsed via the same
+    first-line YES/NO convention as its siblings (`OpenAIJudge._ask_yes_no`) -- "YES" (any case)
+    means the answer declines; anything else, including a junk/malformed reply, means it does not.
     """
     yes_judge, yes_completions = _fake_openai_judge(
         "YES\nThe answer declines to address the question."
@@ -396,7 +396,7 @@ def test_refusal_judge_call_is_temperature_zero_on_the_judge_model() -> None:
     assert result is True
     assert len(yes_completions.calls) == 1
     assert yes_completions.calls[0]["temperature"] == 0
-    assert yes_completions.calls[0]["model"] == "gpt-4o"
+    assert yes_completions.calls[0]["model"] == "gpt-5.4"
 
     no_judge, _no_completions = _fake_openai_judge("no")
     assert no_judge.is_refusal("Q?", "A confident, on-topic answer.") is False

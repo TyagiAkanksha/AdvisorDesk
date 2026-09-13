@@ -47,8 +47,8 @@ def _record(session: Session, report: FakeReport, *, label: str = "t", kind: str
         label=label,
         kind=kind,
         embedding_model="text-embedding-3-small",
-        chat_model="gpt-4o-mini",
-        judge_model="gpt-4o",
+        chat_model="gpt-5.4-mini",
+        judge_model="gpt-5.4",
         similarity_threshold=0.5,
         retrieval_k=6,
         git_sha="deadbeef",
@@ -127,7 +127,7 @@ def test_record_run_persists_the_run_and_one_result_per_row(db_session: Session)
     assert run.kind == "answer"
     assert run.git_sha == "deadbeef"
     assert run.total_questions == 2
-    assert run.judge_model == "gpt-4o"
+    assert run.judge_model == "gpt-5.4"
     results = db_session.scalars(
         select(EvalResult).where(EvalResult.run_id == run.id).order_by(EvalResult.question)
     ).all()

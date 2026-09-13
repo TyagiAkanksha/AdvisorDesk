@@ -290,8 +290,8 @@ def test_metrics_judge_is_optional_so_the_pure_retrieval_metrics_still_land(
 def test_judge_model_setting_defaults_to_gpt_4o_and_is_zero_env_constructible() -> None:
     settings = Settings()
 
-    assert settings.judge_model == "gpt-4o"
-    assert settings.chat_model == "gpt-4o-mini"
+    assert settings.judge_model == "gpt-5.4"
+    assert settings.chat_model == "gpt-5.4-mini"
 
 
 # --- controller addition: unresolved `expected_chunks` refs must be counted --

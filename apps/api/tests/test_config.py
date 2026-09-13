@@ -70,7 +70,7 @@ def test_defaults_match_prd_with_empty_env(clean_env: None) -> None:
     assert settings.llm_api_key.get_secret_value() == ""
     assert settings.llm_base_url == "https://api.openai.com/v1"
     assert settings.embedding_model == "text-embedding-3-small"
-    assert settings.chat_model == "gpt-4o-mini"
+    assert settings.chat_model == "gpt-5.4-mini"
     assert settings.embedding_dimensions == 1024
     # Phase-3 task-02 review round 1, finding I1: bounds the `openai` SDK
     # client's read timeout/retry budget so `EmbeddingChunkPipeline` never

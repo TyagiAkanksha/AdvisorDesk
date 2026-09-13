@@ -580,7 +580,7 @@ status: accepted eval_run_after_id: 3ee1ad19-fa33-4e1d-aa07-e895ebeaf433
 
 Preconditions: PR merged, `0009` migrated, all three images deployed, `prod-probe` green.
 
-- [ ] **0. List the 16 titles to publish.** Enumerate rather than transcribe a stale list:
+- [x] **0. List the 16 titles to publish.** Enumerate rather than transcribe a stale list:
       ```sh
       cd /home/ak/Documents/github_akanksha/AdvisorDesk
       git diff --name-only main...feat/eval-data-loop -- seed/sample_content \
@@ -588,7 +588,7 @@ Preconditions: PR merged, `0009` migrated, all three images deployed, `prod-prob
       ```
       Expect 16 lines (12 equity + 4 firm, DESIGN §C2 wave 1). If the count differs, stop: the
       corpus tasks are not complete.
-- [ ] **1. Publish wave 1 (16 articles).** Primary path — claude.ai's connector (verified working
+- [x] **1. Publish wave 1 (16 articles).** Primary path — claude.ai's connector (verified working
       2026-09-09): open the AdvisorDesk connector and, for each file from step 0, ask it to
       `create_draft` with that file's frontmatter `title`/`tags` and body, then `publish` the
       returned id. Do it in batches of four (one per authoring task) and read back the ids.
@@ -607,13 +607,13 @@ Preconditions: PR merged, `0009` migrated, all three images deployed, `prod-prob
       built from the seed file (a `python - <<'PY'` heredoc reading the file and splitting
       frontmatter is the safe way — markdown in a shell argument is not). Seeding is idempotent by
       TITLE and these titles are new, so nothing existing is touched.
-- [ ] **2. Verify the published count.** Expect **44** = 28 already live + 16 new:
+- [x] **2. Verify the published count.** Expect **44** = 28 already live + 16 new:
       ```sh
       curl -fsS https://api.advisordesk.tyagiakanksha.com/api/v1/public/content \
         | python3 -c 'import sys,json; print(len(json.load(sys.stdin)))'
       ```
       Record the number. If it is not 44, stop and reconcile before replaying.
-- [ ] **3. Run the replay — the day BEFORE the talk** (budget ruling: 40 of 50 daily requests;
+- [x] **3. Run the replay — the day BEFORE the talk** (budget ruling: 40 of 50 daily requests;
       §"Ruling" in `task-18-replay-and-rehearsal.md` — corrected there to reason about the REAL
       per-IP/per-session caps, not the task file's original "all three are per IP" framing):
       ```sh
@@ -623,7 +623,7 @@ Preconditions: PR merged, `0009` migrated, all three images deployed, `prod-prob
       ```
       Expect ~5 minutes, `40 questions, 4 sessions`, `0 failures`, and roughly 14 refusals
       (10 near-miss + 4 off-domain). Paste the summary line and the event totals.
-- [ ] **4. See the near-misses come back out** — `report_weak_queries` on prod (connector, or the
+- [x] **4. See the near-misses come back out** — `report_weak_queries` on prod (connector, or the
       bearer fallback with `{"name":"report_weak_queries","arguments":{"days":7,"limit":20}}`).
       Expect: the ten planted-gap questions grouped, `kinds` containing `near_miss` for the ones
       whose closest source scored within 0.15 of 0.5 and `refused` for the rest, each with its
@@ -635,6 +635,51 @@ Preconditions: PR merged, `0009` migrated, all three images deployed, `prod-prob
       an open one.**
 - [ ] **5. Optional (beat 5).** Open the client, ask one question, click 👎, and confirm the turn
       shows up in the next `report_weak_queries` as `negative_feedback`.
+
+### §4 record — executed 2026-09-13 (steps 0–4; step 5 still open)
+
+Preconditions met: PR #50 merged (`ca4e634`), `0009` migrated first, all three images on
+`ca4e634`, `prod-probe` green.
+
+- **Step 1 (publish)** — done via `python -m app.seed` inside the deployed api image on the box
+  (SSM), not the connector: the claude.ai connector failed to connect that session, and the seed
+  goes through the same `create_draft` → `publish_content` path, idempotent by title.
+  `seed_all: created=16 published=16 skipped=21 chunk_count=128` — the 16 wave-1 titles, nothing
+  existing touched (the four legacy draft titles already existed and were skipped).
+- **Step 2 (count)** — `/api/v1/public/content`: **28 → 44**.
+- **Step 3 (replay)** — `replay: 40 questions, 4 sessions, 7 refusals, 0 failures`;
+  `event totals: {'token': 3347, 'citations': 40, 'done': 40}`. Only 7 refusals, not ~14: the four
+  off-domain questions and three planted-gap questions fell below the threshold; the other seven
+  planted gaps cleared 0.5 on a nearly-relevant chunk and the answerer declined in text — exactly
+  the case task 05c's refusal semantics and task 15's decline heuristic exist for. Report:
+  `~/advisordesk-replays/replay-2026-09-13.json` (event counts only; the answers are in prod's
+  `chat_messages`).
+- **Step 4 (`weak_queries`, last 1 day, threshold 0.5) — beat 3's script, from the live corpus:**
+
+  | kind | worst_top_similarity | question |
+  |---|---|---|
+  | refused | 0.127 | who won the basketball game last night |
+  | refused | 0.162 | what is the weather in charlotte tomorrow |
+  | refused | 0.166 | write me a python script that scrapes job listings |
+  | refused | 0.197 | can you recommend a good italian restaurant near your office |
+  | near_miss | 0.485 | my startup wants to pay my bonus in crypto. what should i watch out for |
+  | near_miss | 0.496 | what happens to my 401(k) loan if my employer's stock price drops |
+  | near_miss | 0.497 | part of my compensation is paid in usdc. how is that taxed |
+  | low_confidence | 0.510 | i am now considered an insider. what is a 10b5-1 plan |
+  | near_miss | 0.512 | can stock options be divided in a divorce settlement |
+  | near_miss | 0.514 | does my startup stock qualify for qsbs |
+  | near_miss | 0.519 | does your equity compensation guidance apply to employees outside the united states |
+  | low_confidence | 0.526 | i am early exercising my options. what are the risks |
+  | near_miss | 0.536 | i am transferring to our berlin office. how are my rsus taxed once i am not a us … |
+  | near_miss | 0.563 | i am getting divorced. how are my unvested stock options split |
+  | near_miss | 0.602 | can i borrow from my 401(k) if most of it is employer stock |
+  | near_miss | 0.619 | how long do i have to hold qsbs shares before the gain is excluded |
+
+  All ten planted-gap questions come back as `near_miss` (three below the threshold, seven
+  above it with a declined answer); the four off-domain questions as `refused`; and two real
+  `low_confidence` rows appear — the 10b5-1 question (a wave-2 article; answered thinly from the
+  concentrated-stock article at 0.510) and early exercise (0.526). For beat 3, the non-US RSU/ESPP
+  gap (0.519 / 0.536) is the one the flagship §3 fix targets.
 
 ## §5 The bad fix (beat 4's variant — the one that must be rehearsed most)
 

@@ -197,6 +197,27 @@ def test_run_from_cli_persists_a_run_by_default(db_session: Session) -> None:
     assert runs[0].total_questions == 1
 
 
+def test_run_from_cli_prints_the_recorded_run_id_for_every_persisted_run(
+    db_session: Session, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Fix-wave B4 (final-review I4): `_run_from_cli` prints `recorded eval_runs id=<id>` for
+    every persisted run, exactly as `app.eval.agent_suite`'s own CLI already does
+    (`agent_suite.py:796`) — needed live to feed `accept_proposal(eval_run_after_id=...)` without
+    a `psql` round-trip. One line per run in a `--runs N > 1` family, each naming that run's own id.
+    """
+    _run_from_cli(
+        ["--label", "prints-ids", "--runs", "2"],
+        run_eval_fn=lambda *_args, **_kwargs: _report(),
+        session_factory=lambda: db_session,
+    )
+
+    runs = latest_runs(db_session, label="prints-ids", limit=2)
+    assert len(runs) == 2
+    out = capsys.readouterr().out
+    for run in runs:
+        assert f"recorded eval_runs id={run.id}" in out
+
+
 def test_run_from_cli_no_persist_writes_nothing(db_session: Session) -> None:
     _run_from_cli(
         ["--label", "no-persist-check", "--no-persist"],

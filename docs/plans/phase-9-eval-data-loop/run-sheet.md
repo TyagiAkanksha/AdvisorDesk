@@ -10,13 +10,20 @@ what to say when a metric moves, and what's left for after.
 - The 40-question replay already ran **yesterday** (`docs/plans/phase-9-eval-data-loop/rehearsal.md`
   §4 step 3) — do not re-run it today.
 - `prod-probe` (GitHub Actions, every 6h) green as of this morning.
-- Remaining per-IP budget: 50/day − 40 (yesterday's replay) = **10 questions left today**. No live
-  fishing for a good example on stage — every live question spends part of that budget.
+- Remaining budget (`app/eval/replay.py:12-29`; fix-wave B5, M2 — corrected from an earlier
+  per-IP framing): `RATE_LIMIT_PER_DAY` (50) is **per SESSION**, not per IP — yesterday's 40-question
+  replay used one session's budget, so today's stage session starts fresh at 50. The per-IP caps
+  are `RATE_LIMIT_PER_MIN` (10) and `SESSION_CREATE_PER_DAY` (20, i.e. at most 20 NEW sessions from
+  this IP today) — neither is dented by yesterday's replay. No live fishing for a good example on
+  stage regardless — every live question still spends part of the session's 50/day.
 - The claude.ai connector is already connected to the AdvisorDesk MCP server.
 - Browser tabs pre-opened: client chat, admin sign-in, the connector's chat.
 - One terminal, `export API=https://api.advisordesk.tyagiakanksha.com` already run.
 - Decide **before** walking on stage whether beat 4 runs against prod at all (see beat 4's
   fallback) — a failed live publish costs more than a rehearsed scratch-DB run.
+- Fix-wave B5 (M3): beat 4's scratch-DB path depends on `rehearsal.md` §1-§5 having been re-run
+  today — its own §6 teardown drops the database after each pass. Re-run §1-§5 and verify
+  `select count(*) from eval_runs` ≥ 3 on `advisordesk_rehearsal` before walking on stage.
 
 ## 2. The four beats
 
@@ -169,6 +176,7 @@ source of truth per fact.
 Leftovers that belong to the whole-branch review, not the stage: corpus wave 2, the RAGAS
 cross-check, the retrieval-recall weakness in `multi_source` questions (ledgered: cap chunks per
 content in top-k, or MMR diversity — a real candidate now that this task's bad-fix beat proved
-retrieval displacement is easy to trigger deliberately, which cuts both ways), updating the golden
-set's `near_miss` rows once a planted gap is actually closed on prod, and the harness not printing
-its own `eval_runs` id (a `psql` round-trip is currently the only way to read it back).
+retrieval displacement is easy to trigger deliberately, which cuts both ways), and updating the
+golden set's `near_miss` rows once a planted gap is actually closed on prod. (The harness not
+printing its own `eval_runs` id was fixed in the fix wave, B4: `_run_from_cli` now prints
+`recorded eval_runs id=<id>` for every persisted run.)

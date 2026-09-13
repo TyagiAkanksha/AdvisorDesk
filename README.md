@@ -272,11 +272,11 @@ PRD §9.1's four metrics, **measured on the local seeded stack** (dedicated data
 
 | Metric | Value |
 |---|---|
-| Seeded documents (content) | 21 total (17 published + 4 drafts) |
-| Seeded chunks | 100 |
-| MCP tools | 9 (8 core + `report_content_gaps`) |
+| Seeded documents (content) | 37 total (33 published + 4 drafts) |
+| Seeded chunks | 228 |
+| MCP tools | 14 (8 core + `report_content_gaps`, `report_weak_queries`, and the four proposal tools `propose_content_fix`/`list_proposals`/`accept_proposal`/`reject_proposal`) |
 | Groundedness | 93.0% ± 1.6 fully supported over 3 runs (label `rebaseline-2026-09`, `gpt-5.4-mini` answerer / `gpt-5.4` judge); refusals 18/18 correct |
-| Agent suite baseline | 80.0% tasks passed (8/10, label `agent-rebaseline-2026-09`; down from 10/10 at `agent-baseline-2026-09` — two recall regressions, detailed in the verification record) |
+| Agent suite baseline | 83.3% ± 10.0 over 3 fresh-DB runs (9/10, 8/10, 8/10) — temperature 0 does not make this model's tool-calling deterministic; see verification-record §9a |
 | First-token latency, `/public/chat` | p50 = 717 ms, p95 = 1602 ms (n=30, nearest-rank) |
 
 **Groundedness note (updated 2026-09, phase 9):** the previously published 58.8% was a single,

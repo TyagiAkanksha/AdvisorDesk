@@ -400,7 +400,9 @@ recorded eval_runs id=fce67383-2b9e-48a9-a859-3a2af3cb4ec5
 ```
 
 Run id: `fce67383-2b9e-48a9-a859-3a2af3cb4ec5` (`label='agent-rebaseline-2026-09'`,
-`kind='agent'`, `git_sha='a89fddafc3c1c0adae928da64c215d901f2f5fff'`) — **8/10 tasks passed
+`kind='agent'`, `git_sha='2eee60ca317545c742fa667a3ca2b40718d8cbdc'` — fix-wave B5, M1: this run
+was taken AFTER the confirm run, at the same `git_sha` as that run, not at the three answer runs'
+`a89fddaf…`) — **8/10 tasks passed
 (80.0%), down from `agent-baseline-2026-09`'s 10/10 (100.0%). This is a regression, reported as a
 finding, not smoothed over.** The DB's own `metrics` column for each FAIL row gives the exact
 trajectory:

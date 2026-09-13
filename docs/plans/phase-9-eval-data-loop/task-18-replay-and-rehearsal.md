@@ -812,7 +812,7 @@ that measurement**; then the same machinery refusing a bad fix.
 ```sh
 cd /home/ak/Documents/github_akanksha/AdvisorDesk/apps/api
 docker exec advisordesk-test-db psql -U postgres -c 'CREATE DATABASE advisordesk_rehearsal'
-export DATABASE_URL="postgresql+psycopg://postgres:test@localhost:5433/advisordesk_rehearsal"
+export DATABASE_URL="$(grep -E '^TEST_DATABASE_URL=' /home/ak/Documents/github_akanksha/AdvisorDesk/.env | cut -d= -f2- | tr -d '"'"'"'\r' | sed -E 's#^postgresql://#postgresql+psycopg://#; s#/advisordesk_test$#/advisordesk_rehearsal#')"
 export OPENAI_API_KEY="$(grep -E '^OPENAI_API_KEY=' /home/ak/Documents/github_akanksha/AdvisorDesk/.env | cut -d= -f2- | tr -d '"'"'"'\r')"
 uv run alembic upgrade head
 uv run python -m app.seed          # expect: seed_all: created=37 published=33 skipped=0 chunk_count=…

@@ -39,14 +39,15 @@ Three corrections this rehearsal makes to its own task brief, found by actually 
 
 ## §1 Scratch database
 
-Never the dev or prod database. `postgres:test@localhost:5433` is the throwaway test-db
-container's own well-known local password (not a secret — the same value is already written in
-this file's own template and in `infra/deploy/VERIFY.md`).
+Never the dev or prod database. The container's local test password is never hard-coded or
+echoed — `DATABASE_URL` below is derived from the root `.env`'s own `TEST_DATABASE_URL` with the
+global-constraints extraction pattern (`grep`/`cut`/`tr`), then the database name is swapped for
+this scratch DB.
 
 ```sh
 cd /home/ak/Documents/github_akanksha/AdvisorDesk/apps/api
 docker exec advisordesk-test-db psql -U postgres -c 'CREATE DATABASE advisordesk_rehearsal'
-export DATABASE_URL="postgresql+psycopg://postgres:test@localhost:5433/advisordesk_rehearsal"
+export DATABASE_URL="$(grep -E '^TEST_DATABASE_URL=' /home/ak/Documents/github_akanksha/AdvisorDesk/.env | cut -d= -f2- | tr -d '"'"'"'\r' | sed -E 's#^postgresql://#postgresql+psycopg://#; s#/advisordesk_test$#/advisordesk_rehearsal#')"
 export OPENAI_API_KEY="$(grep -E '^OPENAI_API_KEY=' /home/ak/Documents/github_akanksha/AdvisorDesk/.env | cut -d= -f2- | tr -d '"'"'"'\r')"
 export LLM_PROVIDER="$(grep -E '^LLM_PROVIDER=' /home/ak/Documents/github_akanksha/AdvisorDesk/.env | cut -d= -f2- | tr -d '"'"'"'\r')"
 export CHAT_MODEL="$(grep -E '^CHAT_MODEL=' /home/ak/Documents/github_akanksha/AdvisorDesk/.env | cut -d= -f2- | tr -d '"'"'"'\r')"

@@ -1287,6 +1287,11 @@ def _run_from_cli(
                     retrieval_k=_RETRIEVAL_K,
                     git_sha=git_sha,
                 )
+                # Fix wave B4 (final-review I4): mirrors `agent_suite.py`'s own CLI
+                # (`_print_task_line`'s caller, `agent_suite.py:796`) — printed for EVERY
+                # persisted run in this invocation (a `--runs N` family included), needed live
+                # to feed `accept_proposal(eval_run_after_id=...)` without a `psql` round-trip.
+                print(f"recorded eval_runs id={last_run.id}")
 
         if not args.no_persist:
             session.commit()

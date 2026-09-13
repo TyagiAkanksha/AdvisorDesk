@@ -888,6 +888,30 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/weak-queries": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Weak Queries Get
+         * @description Client questions the system answered badly, grouped and classified (DESIGN §D).
+         *
+         *     No `threshold` query parameter — same reasoning as `ReportWeakQueriesArgs`' docstring
+         *     (`app.mcp.tools_gaps`): the band boundaries only mean something against the threshold the
+         *     answers were actually SERVED under (`settings.similarity_threshold`), not a caller's choice.
+         */
+        get: operations["weak_queries_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -1332,6 +1356,58 @@ export interface components {
              * @constant
              */
             token_type: "Bearer";
+        };
+        /**
+         * WeakQueriesResponse
+         * @description `GET /weak-queries`'s top-level wire shape (phase-9 DESIGN §D).
+         *
+         *     `items` (not the MCP tool's `weak_queries` key): REST list envelopes use `items`
+         *     (`ContentListResponse`, `ConnectedAppsResponse`) — the MCP tool `report_weak_queries` answers
+         *     the same data under the key `weak_queries` instead; this schema's docstring is the one place
+         *     that difference is spelled out.
+         */
+        WeakQueriesResponse: {
+            /** Count */
+            count: number;
+            /** Days */
+            days: number;
+            /** Items */
+            items: components["schemas"]["WeakQueryGroupOut"][];
+            /** Threshold */
+            threshold: number;
+        };
+        /**
+         * WeakQueryExampleOut
+         * @description One concrete turn behind a `WeakQueryGroupOut` (`app.services.chat.WeakQueryExample`).
+         */
+        WeakQueryExampleOut: {
+            /**
+             * Asked At
+             * Format: date-time
+             */
+            asked_at: string;
+            /** Kind */
+            kind: string;
+            /** Question */
+            question: string;
+            /** Top Similarity */
+            top_similarity: number | null;
+        };
+        /**
+         * WeakQueryGroupOut
+         * @description One normalised question and every weak turn that asked it (`WeakQueryGroup`).
+         */
+        WeakQueryGroupOut: {
+            /** Count */
+            count: number;
+            /** Examples */
+            examples: components["schemas"]["WeakQueryExampleOut"][];
+            /** Kinds */
+            kinds: string[];
+            /** Normalized Question */
+            normalized_question: string;
+            /** Worst Top Similarity */
+            worst_top_similarity: number | null;
         };
     };
     responses: never;
@@ -2588,6 +2664,47 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["TagWithCount"][];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    weak_queries_get: {
+        parameters: {
+            query?: {
+                days?: number;
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WeakQueriesResponse"];
                 };
             };
             /** @description Unauthorized */

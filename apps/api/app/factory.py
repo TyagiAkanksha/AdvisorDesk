@@ -30,6 +30,7 @@ from app.routes.oauth_admin_routes import router as oauth_admin_router
 from app.routes.oauth_routes import router as oauth_router
 from app.routes.public_routes import router as public_router
 from app.routes.ratelimit import RateLimiter
+from app.routes.weak_queries_routes import router as weak_queries_router
 from app.services.lifecycle import ChunkPipeline, NoopChunkPipeline
 
 _API_PREFIX = "/api/v1"
@@ -183,6 +184,10 @@ def create_app(
     app.include_router(health_router, prefix=_API_PREFIX)
     app.include_router(auth_router, prefix=_API_PREFIX)
     app.include_router(content_router, prefix=_API_PREFIX)
+    # phase-9 task-19: read-only admin report, mounted right after `content_router` — same
+    # `require_admin` cookie gate, no `mcp_http_enabled` conditional (unlike `mount_mcp_http`
+    # below), since this is a plain REST route, not the MCP transport.
+    app.include_router(weak_queries_router, prefix=_API_PREFIX)
     app.include_router(public_router, prefix=_API_PREFIX)
     app.include_router(agent_router, prefix=_API_PREFIX)
     # mcp-oauth plan, task 04: unconditional, unlike `mount_mcp_http` below — DCR must be

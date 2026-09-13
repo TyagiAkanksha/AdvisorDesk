@@ -923,6 +923,122 @@
         ],
         "title": "TokenResponse",
         "type": "object"
+      },
+      "WeakQueriesResponse": {
+        "description": "`GET /weak-queries`'s top-level wire shape (phase-9 DESIGN \u00a7D).\n\n`items` (not the MCP tool's `weak_queries` key): REST list envelopes use `items`\n(`ContentListResponse`, `ConnectedAppsResponse`) \u2014 the MCP tool `report_weak_queries` answers\nthe same data under the key `weak_queries` instead; this schema's docstring is the one place\nthat difference is spelled out.",
+        "properties": {
+          "count": {
+            "title": "Count",
+            "type": "integer"
+          },
+          "days": {
+            "title": "Days",
+            "type": "integer"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/WeakQueryGroupOut"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "threshold": {
+            "title": "Threshold",
+            "type": "number"
+          }
+        },
+        "required": [
+          "threshold",
+          "days",
+          "count",
+          "items"
+        ],
+        "title": "WeakQueriesResponse",
+        "type": "object"
+      },
+      "WeakQueryExampleOut": {
+        "description": "One concrete turn behind a `WeakQueryGroupOut` (`app.services.chat.WeakQueryExample`).",
+        "properties": {
+          "asked_at": {
+            "format": "date-time",
+            "title": "Asked At",
+            "type": "string"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "question": {
+            "title": "Question",
+            "type": "string"
+          },
+          "top_similarity": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Top Similarity"
+          }
+        },
+        "required": [
+          "question",
+          "kind",
+          "top_similarity",
+          "asked_at"
+        ],
+        "title": "WeakQueryExampleOut",
+        "type": "object"
+      },
+      "WeakQueryGroupOut": {
+        "description": "One normalised question and every weak turn that asked it (`WeakQueryGroup`).",
+        "properties": {
+          "count": {
+            "title": "Count",
+            "type": "integer"
+          },
+          "examples": {
+            "items": {
+              "$ref": "#/components/schemas/WeakQueryExampleOut"
+            },
+            "title": "Examples",
+            "type": "array"
+          },
+          "kinds": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Kinds",
+            "type": "array"
+          },
+          "normalized_question": {
+            "title": "Normalized Question",
+            "type": "string"
+          },
+          "worst_top_similarity": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Worst Top Similarity"
+          }
+        },
+        "required": [
+          "normalized_question",
+          "count",
+          "kinds",
+          "worst_top_similarity",
+          "examples"
+        ],
+        "title": "WeakQueryGroupOut",
+        "type": "object"
       }
     }
   },
@@ -2494,6 +2610,74 @@
           }
         },
         "summary": "Tags List"
+      }
+    },
+    "/api/v1/weak-queries": {
+      "get": {
+        "description": "Client questions the system answered badly, grouped and classified (DESIGN \u00a7D).\n\nNo `threshold` query parameter \u2014 same reasoning as `ReportWeakQueriesArgs`' docstring\n(`app.mcp.tools_gaps`): the band boundaries only mean something against the threshold the\nanswers were actually SERVED under (`settings.similarity_threshold`), not a caller's choice.",
+        "operationId": "weak_queries_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "days",
+            "required": false,
+            "schema": {
+              "default": 7,
+              "maximum": 90,
+              "minimum": 1,
+              "title": "Days",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 20,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WeakQueriesResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          }
+        },
+        "summary": "Weak Queries Get",
+        "tags": [
+          "weak-queries"
+        ]
       }
     }
   }

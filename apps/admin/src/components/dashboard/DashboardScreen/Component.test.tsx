@@ -200,6 +200,12 @@ describe('DashboardScreen', () => {
     global.fetch = vi.fn<(input: RequestInfo | URL) => Promise<Response>>(async (input) => {
       const url = new URL(requestUrl(input));
       if (url.pathname === '/api/v1/stats') return jsonResponse(statsFixture);
+      // phase-9 task-19: this bypasses `mockFetch` (same reasoning as the new "shows the card
+      // error" test below), so the weak-queries route needs its own success case here too — left
+      // in the catch-all 500 below, it would render a SECOND `role="alert"` (the weak-queries
+      // card's own `ErrorState`) and make this test's `findByRole('alert')` ambiguous. Unrelated
+      // to what this test actually asserts (recent-content failure).
+      if (url.pathname === '/api/v1/weak-queries') return jsonResponse(weakQueriesFixture);
       return jsonResponse({ error: { code: 'internal_error', message: 'boom' } }, 500);
     });
 

@@ -40,6 +40,16 @@ const statsFixture = {
 // task-17: the dashboard now also issues `GET /api/v1/content` (recent content). This mock's
 // assertions are unchanged — the route is added only so that query no longer 404s while this
 // screen exercises the background-refetch-resilience path on `GET /stats`.
+//
+// phase-9 task-19: same reasoning again for `GET /api/v1/weak-queries` (the new weak-queries
+// card) — left unmocked, that query 404s, `weakQueriesFailed` renders a SECOND `role="alert"`
+// element (`ErrorState`), and the test's own `findByRole('alert')` (looking only for the
+// stats-refetch-failure alert) throws "Found multiple elements with the role alert" — a false
+// failure unrelated to this test's own assertions, exactly the kind of staleness the `content`
+// mock above already had to absorb once before. `weakQueriesFixture` answers 200 with zero
+// items so no second alert renders; none of this test's assertions changed.
+const weakQueriesFixture = { threshold: 0.5, days: 7, count: 0, items: [] };
+
 const recentFixture: ContentListDto = {
   items: [
     {
@@ -92,6 +102,9 @@ describe('DashboardScreen resilient background refetch', () => {
         }
         if (requestUrl(input).includes('/api/v1/content')) {
           return jsonResponse(recentFixture);
+        }
+        if (requestUrl(input).includes('/api/v1/weak-queries')) {
+          return jsonResponse(weakQueriesFixture);
         }
         return jsonResponse({ error: { code: 'not_found', message: 'unmocked route' } }, 404);
       },

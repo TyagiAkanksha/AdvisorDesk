@@ -109,9 +109,9 @@ with real numbers, not with the general shape of the rule alone.
 - **Exemption phaseout (2026)** — for married filing jointly, the exemption begins to phase out
   once your AMT income passes $1,000,000 and is completely phased out at $1,280,400; for unmarried
   individuals, phaseout begins at $500,000 and completes at $680,200 (Rev. Proc. 2025-32).
-- **AMT rate brackets (2026)** — the tentative minimum tax is computed at 26% on AMT income up to
-  $244,500 ($122,250 if married filing separately) and 28% above that breakpoint (IRC §55(b)(1)(A);
-  Rev. Proc. 2025-32).
+- **AMT rate brackets (2026)** — the tentative minimum tax is computed at 26% on the first $244,500
+  of AMT income above your exemption ($122,250 if married filing separately) and 28% above that
+  (IRC §55(b)(1)(A); Rev. Proc. 2025-32).
 
 _Current as of 2026-09_
 

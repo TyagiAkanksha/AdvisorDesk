@@ -23,8 +23,9 @@ only be granted to employees, never to contractors, consultants, or outside dire
 keeps its special status if the company follows a specific set of statutory requirements, such as
 a written plan approved by shareholders and a strike price set at or above fair market value on
 the grant date. An NSO carries none of those restrictions: it can be granted to anyone providing
-services to the company, priced however the company chooses, with no special statutory conditions
-attached. Both types can sit side by side in the same startup equity package, and both are silent
+services to the company, priced as the company chooses, subject to the separate §409A valuation
+rules (a below-market strike price triggers them). Both types can sit side by side in the same
+startup equity package, and both are silent
 about tax at the grant date itself — neither one creates income when it is granted, only when you
 use it. The single sentence that matters for planning purposes is this: the difference between an
 ISO and an NSO does not show up at grant, and it does not show up while you are simply holding an
@@ -116,8 +117,7 @@ implies.
 - **ISO post-termination exercise window** — to preserve ISO tax treatment, you generally must
   exercise within three months after your employment ends (IRC §422(a)(2)).
 - **Form 3921 furnishing deadline** — your employer must furnish you a Form 3921 for an ISO
-  exercise by January 31 of the year following the exercise (Instructions for Forms 3921 and
-  3922).
+  exercise by January 31 of the year following the exercise (IRS Pub 525; 26 CFR §1.6039-2).
 
 _Current as of 2026-09_
 
@@ -127,5 +127,7 @@ _Current as of 2026-09_
 - Instructions for Forms 3921 and 3922 — https://www.irs.gov/instructions/i3921
 - Internal Revenue Code §422 — https://www.law.cornell.edu/uscode/text/26/422
 - IRS Publication 15 (Circular E), Employer's Tax Guide — https://www.irs.gov/publications/p15
+- 26 CFR §1.6039-2 — https://www.law.cornell.edu/cfr/text/26/1.6039-2
+- Treasury Regulation §1.409A-1 — https://www.law.cornell.edu/cfr/text/26/1.409A-1
 
 Sample content for demonstration purposes — not financial advice.

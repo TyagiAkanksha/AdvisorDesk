@@ -12,7 +12,7 @@ faster and more accurate. This page walks through what happens in your first wee
 to bring to your first meeting, why your equity paperwork specifically matters, and how we handle
 your account access and data once you're a client.
 
-## What happens in the first 30 days?
+## What happens in the first six weeks?
 
 Signing on with us starts a structured onboarding process, not an immediate jump into ongoing
 advice — we use it to build a complete picture of your situation before making any
@@ -34,14 +34,15 @@ onboarding-specific schedule.
 
 The more you bring to your first meeting, the more specific we can be from day one, rather than
 spending part of that meeting chasing down numbers we could have had in advance. At minimum, bring
-your most recent pay stub and your last two years' tax returns, so we can see both your current
+your most recent pay stub and your last two tax returns, so we can see both your current
 cash flow and how your total income and withholding actually played out. Bring statements for
 every investment and retirement account you hold, including your 401(k) and any brokerage
 accounts, so we can see your full asset allocation rather than just the pieces you remember off
 the top of your head. If your compensation includes equity, bring your grant agreements and
-vesting schedule and, if you've had any exercises or ESPP purchases already, the tax forms tied to
-them — a Form 3921 for an ISO exercise, a Form 3922 for an ESPP purchase, and any 1099-B from a
-sale, along with the W-2 that shows how prior equity events were reported as income. We also ask
+vesting schedule, your ESPP enrollment form, and, if you've had any exercises or ESPP purchases
+already, the tax forms tied to them — a Form 3921 for an ISO exercise, a Form 3922 for an ESPP
+purchase, and any 1099-B from a sale, along with the W-2 that shows how prior equity events were
+reported as income. We also ask
 for a summary of your workplace benefits, including health insurance, disability coverage, and any
 employer retirement match, so your plan accounts for what you already have rather than duplicating
 or ignoring it. None of this needs to be perfectly organized before you send it; we can work with
@@ -101,8 +102,7 @@ scattered across statements before now has a plan and a place.
 - **Ongoing advisory fee** — 0.75% per year of managed assets, billed quarterly in arrears (our fee
   schedule).
 - **Form 3921 / 3922 furnishing deadline** — your employer must furnish these forms to you by
-  January 31 of the year following the exercise or purchase (Instructions for Forms 3921 and
-  3922).
+  January 31 of the year following the exercise or purchase (IRS Pub 525; 26 CFR §1.6039-2).
 - **Form ADV Part 2A delivery** — SEC rules require an investment adviser to deliver its brochure
   (Form ADV Part 2A) to you before or at the time you enter into an advisory agreement (SEC Form
   ADV Part 2A instructions / Rule 204-3).
@@ -112,6 +112,8 @@ _Current as of 2026-09_
 ## Sources
 
 - Instructions for Forms 3921 and 3922 — https://www.irs.gov/instructions/i3921
+- IRS Publication 525, Taxable and Nontaxable Income — https://www.irs.gov/publications/p525
+- 26 CFR §1.6039-2 — https://www.law.cornell.edu/cfr/text/26/1.6039-2
 - 17 CFR §275.204-3 (SEC "brochure rule") — https://www.law.cornell.edu/cfr/text/17/275.204-3
 
 Sample content for demonstration purposes — not financial advice.

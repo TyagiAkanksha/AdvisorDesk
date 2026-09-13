@@ -26,8 +26,8 @@ property now, at transfer, rather than later as it vests. Filed early enough, ty
 spread between what you paid and the stock's current value is small or zero, the ordinary income
 you report at filing is small or nothing, and every dollar of appreciation after that point is
 treated as capital gain rather than compensation income when you eventually sell, with the holding
-period for long-term treatment starting on the day of the election rather than on each later
-vesting date. The trade is straightforward in concept: pay a small, known amount of tax now in
+period for long-term treatment starting just after the date the shares were transferred to you
+rather than on each later vesting date. The trade is straightforward in concept: pay a small, known amount of tax now in
 exchange for capital-gains treatment on everything that happens afterward — but as the rest of
 this article covers, that trade only works out if a few other things go right.
 
@@ -74,17 +74,17 @@ Filing an 83(b) election means sending a statement to the IRS service center whe
 tax return, within the 30-day window described above — no form is required: you may use the IRS's
 own standardized Form 15620, or a self-drafted written statement instead, as long as it contains
 specific required information: your name, address, and taxpayer ID; a description of the property
-and the date it was transferred; the restrictions that apply to it; its fair market value at
-transfer; what you paid for it, if anything; and a statement that copies were provided as required.
-You must also give a copy of the same statement to the
-company that transferred you the property, and it is worth keeping a copy for your own records
-permanently, not just until your next tax return is filed, since you will need to reference the
-election's terms again when you eventually sell the shares. Because the deadline is strict and
-unforgiving, mail the election by certified mail with a return receipt, or another method that
-gives you dated proof the IRS received it by day 30, rather than relying on a postmark alone; if
-the IRS ever questions whether the election was filed on time, the burden of proving it falls on
-you, and "I mailed it" without proof is a much weaker position than a certified-mail receipt with
-a legible date on it.
+and the date it was transferred; the taxable year for which the election is made; the restrictions
+that apply to it; its fair market value at transfer; what you paid for it, if anything; and a
+statement that copies were provided as required. You must also give a copy of the same statement
+to the company that transferred you the property, and it is worth keeping a copy for your own
+records permanently, not just until your next tax return is filed, since you will need to
+reference the election's terms again when you eventually sell the shares. Because the deadline is
+strict and unforgiving, mail the election by certified mail with a return receipt, or another
+method that gives you dated proof the IRS received it by day 30, rather than relying on a postmark
+alone; if the IRS ever questions whether the election was filed on time, the burden of proving it
+falls on you, and "I mailed it" without proof is a much weaker position than a certified-mail
+receipt with a legible date on it.
 
 ## Does an 83(b) election apply to my RSUs?
 
@@ -106,15 +106,17 @@ treatment at vest, covered elsewhere, is not something an election can move earl
 - **Revocability** — once filed, an 83(b) election cannot be revoked without the consent of the
   IRS (Treas. Reg. §1.83-2(f)).
 - **Required contents of the election** — the statement must identify the property, the transfer
-  date, its fair market value, what you paid, and the restrictions on it, with a copy delivered to
-  the company (Treas. Reg. §1.83-2(e)).
+  date and taxable year, its fair market value, what you paid, and the restrictions on it, with a
+  copy delivered to the company (Treas. Reg. §1.83-2(e)).
 
 _Current as of 2026-09_
 
 ## Sources
 
 - Internal Revenue Code §83 — https://www.law.cornell.edu/uscode/text/26/83
-- Treasury Regulation §1.83-2 — https://www.ecfr.gov/current/title-26/section-1.83-2
+- Treasury Regulation §1.83-2 — https://www.law.cornell.edu/cfr/text/26/1.83-2
+- Treasury Regulation §1.83-3 — https://www.law.cornell.edu/cfr/text/26/1.83-3
+- Treasury Regulation §1.83-4 — https://www.law.cornell.edu/cfr/text/26/1.83-4
 - Revenue Procedure 2012-29 — https://www.irs.gov/pub/irs-drop/rp-12-29.pdf
 - IRS Form 15620, Section 83(b) Election (rev. April 2025) — https://www.irs.gov/pub/irs-pdf/f15620.pdf
 - IRS Publication 525, Taxable and Nontaxable Income — https://www.irs.gov/publications/p525

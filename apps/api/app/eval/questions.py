@@ -86,7 +86,8 @@ def load_questions(questions_path: Path) -> list[EvalQuestion]:
             unique constraint on `EvalResult` would otherwise reject a whole run at `record_run`'s
             final `flush()`, after the run already paid for its embedder/chat/judge calls; pinned
             by `tests/test_groundedness.py::
-            test_run_eval_rejects_duplicate_question_text_before_any_retrieval_or_answering`).
+            test_run_eval_rejects_duplicate_question_text_before_any_retrieval_or_answering`);
+            an `answerable: false` item carries a `reference_answer` (phase-9 N5 ruling);
     """
     raw = yaml.safe_load(Path(questions_path).read_text(encoding="utf-8"))
     if not isinstance(raw, list):
@@ -168,6 +169,14 @@ def load_questions(questions_path: Path) -> list[EvalQuestion]:
             raise ValueError(
                 f"{questions_path}[{index}]: 'reference_answer' must be a non-blank string: "
                 f"{item!r}"
+            )
+
+        if reference_answer is not None and not answerable:
+            raise ValueError(
+                f"{questions_path}[{index}]: 'reference_answer' is not allowed on an "
+                f"answerable=False item (phase-9 N5 ruling: a reference answer on a row the corpus "
+                f"must NOT answer gives the answer-relevance and context-recall judges a target "
+                f"that cannot be supported, scoring a correct refusal as a miss): {item!r}"
             )
 
         questions.append(

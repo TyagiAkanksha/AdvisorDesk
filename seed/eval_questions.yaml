@@ -216,6 +216,7 @@
   class: multi_source
   persona: "Marcus"
   expected_chunks:
+    - "how-we-work-and-what-we-charge#how-does-queen-city-wealth-planning-get-paid"
     - "how-we-work-and-what-we-charge#what-does-your-fee-cover"
     - "what-happens-to-your-rsus-at-vest#should-i-sell-my-shares-at-vest-or-hold-them"
   reference_answer: >-
@@ -331,6 +332,7 @@
   persona: "Sam"
   expected_chunks:
     - "onboarding-with-us-and-what-to-bring#what-documents-should-i-bring-to-our-first-meeting"
+    - "onboarding-with-us-and-what-to-bring#what-do-you-need-from-my-equity-paperwork"
   reference_answer: >-
     Bring your recent pay statements and W-2, your last two tax returns, statements for your
     retirement and brokerage accounts, and your benefits summary. If you have equity, bring the
@@ -342,8 +344,10 @@
   class: multi_source
   persona: "Priya"
   expected_chunks:
+    - "onboarding-with-us-and-what-to-bring#what-documents-should-i-bring-to-our-first-meeting"
     - "onboarding-with-us-and-what-to-bring#what-do-you-need-from-my-equity-paperwork"
     - "isos-and-nsos-how-each-one-is-taxed#what-do-i-owe-when-i-exercise-an-iso"
+    - "isos-and-nsos-how-each-one-is-taxed#how-long-do-i-have-to-hold-iso-shares-for-the-best-tax-treatment"
   reference_answer: >-
     The firm asks for your grant agreement, the plan document, your exercise history, any Form 3921
     and your last two tax returns. Those show the strike price, the exercise dates and the holding
@@ -563,6 +567,7 @@
   class: answerable
   persona: "Marcus"
   expected_chunks:
+    - "wash-sales-across-rsu-and-espp-lots#what-is-a-wash-sale-in-plain-terms"
     - "wash-sales-across-rsu-and-espp-lots#how-can-my-own-vesting-schedule-cause-a-wash-sale"
   reference_answer: >-
     Yes. Shares delivered by a vest are an acquisition of the same stock, so a vest inside the
@@ -594,7 +599,7 @@
     Brokers apply the rule per account, so a purchase elsewhere can make your return differ from
     the form.
 
-- question: "Is there anything you will not help me with?"
+- question: "Besides not picking my stocks, is there anything else you won't help me with?"
   expected_slugs: ["what-we-do-not-do-and-why"]
   answerable: true
   class: answerable
@@ -614,9 +619,132 @@
   persona: "Marcus"
   expected_chunks:
     - "what-we-do-not-do-and-why#will-you-prepare-my-tax-return-or-give-me-legal-advice"
+    - "onboarding-with-us-and-what-to-bring#what-documents-should-i-bring-to-our-first-meeting"
     - "onboarding-with-us-and-what-to-bring#what-do-you-need-from-my-equity-paperwork"
   reference_answer: >-
     The firm does not prepare returns; it works alongside your CPA and gives them the numbers they
     need. It does collect and keep your equity paperwork — grant agreements, the plan document,
     exercise records and Forms 3921 and 3922 — so an exercise is planned and documented before it
     happens.
+
+# --- phase-9 golden set (task 14): persona-first questions + the class balance to 80 ---
+
+- question: "How much cash should I set aside for taxes on my stock comp?"
+  expected_slugs: ["what-happens-to-your-rsus-at-vest"]
+  answerable: true
+  class: answerable
+  persona: "Sam"
+  expected_chunks: ["what-happens-to-your-rsus-at-vest#how-do-i-cover-the-shortfall-before-april"]
+  reference_answer: >-
+    Set aside the difference between the flat supplemental rate your employer withheld and your own
+    marginal rate on the vested value. You can pre-pay it with an estimated payment or by raising
+    your payroll withholding instead of waiting for the return.
+
+- question: "Everyone at work says to exercise early. Is that right for me?"
+  expected_slugs: ["the-83-b-election-on-restricted-stock"]
+  answerable: true
+  class: answerable
+  persona: "Priya"
+  expected_chunks: ["the-83-b-election-on-restricted-stock#when-is-an-83-b-election-a-good-idea"]
+  reference_answer: >-
+    Early exercise with an 83(b) election works best when the spread at transfer is small, you plan
+    to hold the shares, and you can afford to lose the money. It backfires if the company fails or
+    you leave before vesting, because the tax you paid is not refundable.
+
+- question: "Half my money is in my employer's shares and I am nervous. What do you advise?"
+  expected_slugs: ["concentrated-employer-stock-and-our-10-rule"]
+  answerable: true
+  class: answerable
+  persona: "Marcus"
+  expected_chunks:
+    - "concentrated-employer-stock-and-our-10-rule#how-much-of-my-net-worth-should-sit-in-company-stock"
+    - "concentrated-employer-stock-and-our-10-rule#what-is-the-risk-i-am-actually-taking"
+  reference_answer: >-
+    The firm's policy ceiling is 10% of investable net worth in any single company, and at half your
+    portfolio the position is the dominant risk you carry alongside the salary it pays. The answer
+    is a written unwind schedule inside your trading windows rather than a judgement about the
+    share price.
+
+- question: "Is working with you worth it if I mostly just have a salary and some RSUs?"
+  expected_slugs: ["how-we-work-and-what-we-charge"]
+  answerable: true
+  class: answerable
+  persona: "Sam"
+  expected_chunks:
+    - "how-we-work-and-what-we-charge#who-do-you-work-with-and-who-are-you-not-a-fit-for"
+  reference_answer: >-
+    Queen City works with tech employees whose pay includes equity, which is exactly a salary plus
+    RSUs, and it offers a flat-fee planning engagement for people who do not want an ongoing
+    relationship yet. It is not a fit if you want stock picks or active trading.
+
+- question: "Nobody has touched my account mix in over a year and stocks ran up. Is that a problem?"
+  expected_slugs: ["our-rebalancing-policy-and-the-20-drawdown-rule"]
+  answerable: true
+  class: threshold
+  persona: "Marcus"
+  expected_chunks:
+    - "our-rebalancing-policy-and-the-20-drawdown-rule#when-do-you-rebalance-my-portfolio"
+  reference_answer: >-
+    After a run-up your allocation has drifted toward stocks, so the portfolio is riskier than the
+    plan it started from. The firm reviews allocations quarterly and rebalances when a holding
+    drifts outside its policy band, which is what a year of untouched growth tends to cause.
+
+- question: "My startup shares might qualify for the small business stock exclusion — do I owe nothing if I hold five years?"
+  expected_slugs: []
+  answerable: false
+  class: near_miss
+  persona: "Priya"
+
+- question: "Can I exclude the gain on my founder shares when we get acquired?"
+  expected_slugs: []
+  answerable: false
+  class: near_miss
+  persona: "Priya"
+
+- question: "I am relocating to our Dublin office next year — will my RSU vests still be taxed the same way?"
+  expected_slugs: []
+  answerable: false
+  class: near_miss
+  persona: "Sam"
+
+- question: "A crypto company is recruiting me and part of the pay is in tokens — how does that work?"
+  expected_slugs: []
+  answerable: false
+  class: near_miss
+  persona: "Marcus"
+
+- question: "We are separating and my options are on the table in the settlement — how are they valued?"
+  expected_slugs: []
+  answerable: false
+  class: near_miss
+  persona: "Marcus"
+
+- question: "If I take a loan from my 401(k), which investments get sold to fund it?"
+  expected_slugs: []
+  answerable: false
+  class: near_miss
+  persona: "Sam"
+
+- question: "What is the best credit card for travel rewards?"
+  expected_slugs: []
+  answerable: false
+  class: off_domain
+  persona: "Sam"
+
+- question: "How do I negotiate a higher signing bonus?"
+  expected_slugs: []
+  answerable: false
+  class: off_domain
+  persona: "Priya"
+
+- question: "Can you help me set up payroll and benefits for my side business?"
+  expected_slugs: []
+  answerable: false
+  class: off_domain
+  persona: "Marcus"
+
+- question: "Which mortgage lender should I use for my first home?"
+  expected_slugs: []
+  answerable: false
+  class: off_domain
+  persona: "Sam"

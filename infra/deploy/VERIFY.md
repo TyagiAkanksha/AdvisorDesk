@@ -397,3 +397,10 @@ check the actual container command in use before assuming the metrics code itsel
 ```text
 (recorded during deployment)
 ```
+
+## 8. Phase 9 loop on prod (publish wave 1 → replay → weak queries)
+
+The deployed steps for phase 9's evaluated/self-improving loop — publish the 16 wave-1 articles
+via MCP, verify the published count, run the traffic replay, and read `report_weak_queries` back
+— are an owner-gated checklist kept with the phase plan, not duplicated here:
+**see `docs/plans/phase-9-eval-data-loop/rehearsal.md` §4.**

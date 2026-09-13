@@ -97,3 +97,128 @@
 - question: "How do I structure a real estate investment trust syndication for a rental property?"
   expected_slugs: []
   answerable: false
+
+# --- phase-9 wave 1, batch A (task 10): RSU vest · double-trigger IPO · ESPP · firm fees ---
+
+- question: "My first RSU tranche vests next month — what actually happens on the vest date?"
+  expected_slugs: ["what-happens-to-your-rsus-at-vest"]
+  answerable: true
+  class: answerable
+  persona: "Sam"
+  expected_chunks: ["what-happens-to-your-rsus-at-vest#what-happens-when-my-rsus-vest"]
+  reference_answer: >-
+    On the vest date the shares are delivered to you and their full market value that day is
+    ordinary compensation income reported on your W-2. Your employer withholds tax on that
+    amount, most often by holding back some of the vesting shares.
+
+- question: "Why was the tax withheld on my RSU vest less than what I actually owe?"
+  expected_slugs: ["what-happens-to-your-rsus-at-vest"]
+  answerable: true
+  class: answerable
+  persona: "Sam"
+  expected_chunks: ["what-happens-to-your-rsus-at-vest#why-was-so-little-tax-withheld-on-my-vest"]
+  reference_answer: >-
+    RSU income is withheld at the flat supplemental-wage rate rather than at your marginal rate,
+    so if your marginal rate is higher the withholding covers only part of the bill. The
+    difference is due with your return unless you pre-pay it.
+
+- question: "What flat rate does my employer withhold on an RSU vest this year?"
+  expected_slugs: ["what-happens-to-your-rsus-at-vest"]
+  answerable: true
+  class: stale_number
+  persona: "Sam"
+  expected_chunks: ["what-happens-to-your-rsus-at-vest#key-numbers-2026"]
+  reference_answer: >-
+    Your employer withholds RSU vest income at a flat 22% federal rate for supplemental wages up
+    to $1,000,000 for the year. Once your cumulative supplemental wages cross $1,000,000, the
+    excess is withheld at a mandatory flat rate of 37%.
+
+- question: "What does double-trigger vesting actually mean for my RSUs?"
+  expected_slugs: ["double-trigger-rsus-and-an-ipo"]
+  answerable: true
+  class: answerable
+  persona: "Priya"
+  expected_chunks: ["double-trigger-rsus-and-an-ipo#what-does-double-trigger-vesting-mean"]
+  reference_answer: >-
+    Double-trigger RSUs need two conditions before you own shares: the time-based vesting
+    condition and a liquidity event such as an IPO or acquisition. Until both are met nothing is
+    delivered and nothing is taxed.
+
+- question: "My company just filed to go public — when will I owe tax on my RSUs?"
+  expected_slugs: ["double-trigger-rsus-and-an-ipo"]
+  answerable: true
+  class: answerable
+  persona: "Priya"
+  expected_chunks: ["double-trigger-rsus-and-an-ipo#when-do-i-owe-tax-if-my-company-goes-public"]
+  reference_answer: >-
+    Tax is due when the shares actually settle, which for double-trigger RSUs is when the
+    liquidity condition is met — at or shortly after the IPO, or at lock-up expiry if the plan
+    says so. The value at settlement is ordinary wage income.
+
+- question: "My RSUs settle at the IPO and then I am locked up for six months — how should I think about selling?"
+  expected_slugs: ["double-trigger-rsus-and-an-ipo", "what-happens-to-your-rsus-at-vest"]
+  answerable: true
+  class: multi_source
+  persona: "Priya"
+  expected_chunks:
+    - "double-trigger-rsus-and-an-ipo#how-does-the-lock-up-period-change-my-planning"
+    - "what-happens-to-your-rsus-at-vest#should-i-sell-my-shares-at-vest-or-hold-them"
+  reference_answer: >-
+    You already paid ordinary income tax on the settlement value, so selling soon after the
+    lock-up lifts usually creates little further gain or loss. Holding instead is a decision to
+    keep a concentrated position, which is a risk question rather than a tax question.
+
+- question: "How is my ESPP taxed if I sell the shares right after the purchase date?"
+  expected_slugs: ["espp-qualifying-and-disqualifying-dispositions"]
+  answerable: true
+  class: answerable
+  persona: "Sam"
+  expected_chunks:
+    - "espp-qualifying-and-disqualifying-dispositions#what-makes-a-sale-qualifying-or-disqualifying"
+    - "espp-qualifying-and-disqualifying-dispositions#how-much-of-my-espp-gain-is-ordinary-income"
+  reference_answer: >-
+    Selling that soon is a disqualifying disposition: the discount you received is ordinary income
+    on your W-2 and anything above the purchase price is a short-term capital gain. No part of the
+    sale gets long-term rates.
+
+- question: "I am on our Berlin payroll — how is my ESPP purchase taxed in Germany?"
+  expected_slugs: []
+  answerable: false
+  class: near_miss
+  persona: "Sam"
+
+- question: "I have been buying company shares through payroll deductions. What changes for me once I have held them a while?"
+  expected_slugs: ["espp-qualifying-and-disqualifying-dispositions"]
+  answerable: true
+  class: threshold
+  persona: "Sam"
+  expected_chunks:
+    - "espp-qualifying-and-disqualifying-dispositions#what-makes-a-sale-qualifying-or-disqualifying"
+  reference_answer: >-
+    An ESPP sale is qualifying only once both statutory holding periods are met, measured from the
+    offering date and from the purchase date; before that it is disqualifying. In a qualifying sale
+    a smaller part of the gain is ordinary income and the rest is long-term capital gain.
+
+- question: "How does Queen City Wealth Planning charge for its services?"
+  expected_slugs: ["how-we-work-and-what-we-charge"]
+  answerable: true
+  class: answerable
+  persona: "Marcus"
+  expected_chunks: ["how-we-work-and-what-we-charge#how-does-queen-city-wealth-planning-get-paid"]
+  reference_answer: >-
+    Queen City Wealth Planning is fee-only: it is paid directly by its clients and takes no
+    commissions or referral fees. Its published schedule sets out an ongoing advisory fee and a
+    flat-fee planning engagement.
+
+- question: "If I hire you, how do you help me decide whether to sell my RSUs at vest, and how are you paid for that?"
+  expected_slugs: ["how-we-work-and-what-we-charge", "what-happens-to-your-rsus-at-vest"]
+  answerable: true
+  class: multi_source
+  persona: "Marcus"
+  expected_chunks:
+    - "how-we-work-and-what-we-charge#what-does-your-fee-cover"
+    - "what-happens-to-your-rsus-at-vest#should-i-sell-my-shares-at-vest-or-hold-them"
+  reference_answer: >-
+    The sell-or-hold decision sits inside the ongoing advisory relationship the firm's fee covers,
+    alongside the withholding check and the concentration review. Because the firm is fee-only,
+    the recommendation does not change based on whether you sell.

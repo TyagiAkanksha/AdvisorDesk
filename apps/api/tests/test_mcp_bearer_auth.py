@@ -50,6 +50,7 @@ import uuid
 from pathlib import Path
 
 import pytest
+from _mcp_inventory import MCP_TOOL_NAMES
 from auth_helpers import FakeGoogleOAuthClient, login_as
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -83,23 +84,10 @@ _INITIALIZE_BODY = {
 # task-01 (search_content, count_content) + task-02 (create_draft, edit_content,
 # delete_content, tag_content, publish, archive) + phase-7 task-01 (report_content_gaps)
 # + phase-9 task-15 (report_weak_queries) + phase-9 task-16 (the four proposal tools)
-# — the full registry as of this task.
-_EXPECTED_TOOL_NAMES = {
-    "search_content",
-    "count_content",
-    "create_draft",
-    "edit_content",
-    "delete_content",
-    "tag_content",
-    "publish",
-    "archive",
-    "report_content_gaps",
-    "report_weak_queries",
-    "propose_content_fix",
-    "list_proposals",
-    "accept_proposal",
-    "reject_proposal",
-}
+# — the full registry as of this task. Fix wave D4 (t16-review M6): the NAME list itself is
+# single-sourced in `tests/_mcp_inventory.py` — only the count pin lives in
+# `tests/test_proposal_tools.py` — so a 15th tool touches one file, not four.
+_EXPECTED_TOOL_NAMES = MCP_TOOL_NAMES
 
 _SCRIPTS_DIR = Path(__file__).resolve().parent.parent / "scripts"
 

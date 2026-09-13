@@ -1,9 +1,12 @@
 """Metrics v2 (phase-9 task-05): pure IR math, the three rubric judges, per-class rollups.
 
 Task brief: `docs/plans/phase-9-eval-data-loop/task-05-metrics-v2.md`, Steps "RED — test-author".
-Every test below through `test_judge_model_setting_defaults_to_gpt_4o_and_is_zero_env_constructible`
-is copied VERBATIM from the task file's own code block (the brief hands the test-author complete,
-runnable tests, not a description to reimplement) — do not edit those without controller approval.
+Every test below through `test_judge_model_setting_defaults_to_the_gpt_5_4_pair_and_is_zero_env_
+constructible` (renamed by fix wave D3/M7 — the brief's task file itself still names the original
+`..._gpt_4o_...` spelling, since `Settings.judge_model`'s default moved from `gpt-4o` to `gpt-5.4`
+in a LATER task; only the test's NAME changed here, not its body) is copied VERBATIM from the task
+file's own code block (the brief hands the test-author complete, runnable tests, not a description
+to reimplement) — do not edit those without controller approval.
 
 `app.eval.metrics` does not exist yet: the pure-math and rubric-judge tests fail at collection
 (`ModuleNotFoundError: No module named 'app.eval.metrics'`) until the implementer creates it.
@@ -287,7 +290,7 @@ def test_metrics_judge_is_optional_so_the_pure_retrieval_metrics_still_land(
     assert metrics["context_precision"] is None
 
 
-def test_judge_model_setting_defaults_to_gpt_4o_and_is_zero_env_constructible() -> None:
+def test_judge_model_setting_defaults_to_the_gpt_5_4_pair_and_is_zero_env_constructible() -> None:
     settings = Settings()
 
     assert settings.judge_model == "gpt-5.4"

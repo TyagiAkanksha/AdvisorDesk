@@ -25,6 +25,7 @@ from __future__ import annotations
 
 from app.eval.metrics import split_sentences
 from app.rag.synthesis import SYSTEM_PROMPT
+from app.services.chat import _DECLINE_PHRASE
 
 # --- Ruling 1: split_sentences survives an abbreviation period ---------------
 
@@ -159,5 +160,8 @@ def test_system_prompt_stops_after_answering_but_keeps_the_refusal_advisory_line
         "suggestions to contact the advisory team, caveats, or next steps that the sources do "
         "not state."
     ) in SYSTEM_PROMPT
-    assert "no published guidance covers this" in SYSTEM_PROMPT
+    # Fix wave D5 (M4): imports the reporting heuristic's own constant rather than a duplicated
+    # string literal, so the two cannot silently drift apart — a reworded prompt that stops
+    # containing `_DECLINE_PHRASE` now fails HERE, not just in a downstream weak_queries surprise.
+    assert _DECLINE_PHRASE in SYSTEM_PROMPT
     assert "advisory team" in SYSTEM_PROMPT

@@ -267,6 +267,26 @@ def test_run_from_cli_compare_to_latest_diffs_against_the_previous_run(
     assert "regression: q" in out
 
 
+def test_run_from_cli_warns_when_no_persist_is_combined_with_compare_to(
+    db_session: Session, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Fix-wave D2 (t03 review M1): `--no-persist` means no run this invocation is ever written,
+    so a `--compare-to` alongside it can never have anything new to diff against — the printed
+    `compare ...` line never fires either. A printed warning names the flag combination; no
+    exception, no behaviour change (the run still executes, nothing is persisted)."""
+    _run_from_cli(
+        ["--label", "warn-check", "--no-persist", "--compare-to", "latest"],
+        run_eval_fn=lambda *_args, **_kwargs: _report(),
+        session_factory=lambda: db_session,
+    )
+
+    out = capsys.readouterr().out
+    assert "warning" in out.lower()
+    assert "--no-persist" in out
+    assert "--compare-to" in out
+    assert latest_runs(db_session, label="warn-check") == []
+
+
 def test_run_from_cli_a_run_that_raises_midway_persists_nothing(db_session: Session) -> None:
     calls = {"n": 0}
 

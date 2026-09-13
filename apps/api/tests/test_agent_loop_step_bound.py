@@ -23,6 +23,7 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Any
 
+from _mcp_inventory import MCP_TOOL_NAMES
 from sqlalchemy.orm import Session
 
 from app.agent.loop import AgentEvent, Done, Error, LlmStep, TextDelta, run_agent
@@ -95,9 +96,11 @@ def test_run_agent_bounds_a_never_terminating_llm_with_a_graceful_error(
     assert terminal.code
     assert terminal.message
 
-    # The loop kept offering the full, real tool registry on every query right up to the bound
-    # (14 registered tools — phase-9 task-16 added the four proposal tools) — the ceiling stops
-    # the EXCHANGE, not the loop's own normal behavior; this bound is orthogonal to
-    # `_MAX_TOOL_CALLS`, which never engages here since no tool is ever called.
+    # The loop kept offering the full, real tool registry on every query right up to the bound —
+    # the ceiling stops the EXCHANGE, not the loop's own normal behavior; this bound is orthogonal
+    # to `_MAX_TOOL_CALLS`, which never engages here since no tool is ever called. Fix wave D4
+    # (t16-review M6): membership against the single-sourced canonical name list
+    # (`tests/_mcp_inventory.py`), not a raw count — a 15th tool touches that one file, not this
+    # test too.
     assert llm.seen_tool_schema_names[0] == llm.seen_tool_schema_names[-1]
-    assert len(llm.seen_tool_schema_names[0]) == 14
+    assert set(llm.seen_tool_schema_names[0]) == MCP_TOOL_NAMES

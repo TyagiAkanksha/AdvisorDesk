@@ -206,3 +206,24 @@ def test_settings_constructs_with_zero_env_including_judge_temperature_default(
     settings = Settings()
 
     assert settings.judge_temperature == 0.0
+
+
+# --- fix wave D1: judge_max_retries is the judge client's OWN retry budget ---------------------
+
+
+def test_judge_max_retries_defaults_to_twelve_and_is_used_not_embedding_max_retries() -> None:
+    """Fix wave D1 (t03 review, the 30k-TPM incident's proper fix): `judge_max_retries` gives the
+    judge client its own, correctly-named retry budget instead of reusing `embedding_max_retries`
+    (task 09's incident needed `EMBEDDING_MAX_RETRIES=12` as an env override to survive the org's
+    judge rate limit -- discoverable only by reading `OpenAIJudge.from_settings`'s source). The
+    zero-env default is `12`, the incident's own established headroom; giving the two settings
+    DIFFERENT values and reading `OpenAIJudge`'s constructed client back proves `from_settings`
+    wires `judge_max_retries`, not `embedding_max_retries`.
+    """
+    settings = Settings()
+    assert settings.judge_max_retries == 12
+
+    settings = Settings(judge_max_retries=7, embedding_max_retries=3)
+    judge = OpenAIJudge.from_settings(settings)
+
+    assert judge._client.max_retries == 7

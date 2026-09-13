@@ -289,10 +289,12 @@ class OpenAIJudge:
     """The real `GroundednessJudge`/`MetricsJudge`, built from `Settings` (task-02 brief
     Interfaces; task-05 Interfaces for the three rubric methods).
 
-    Mirrors `app.rag.synthesis.OpenAICompatibleChatLLM`'s client construction exactly
-    (`from_settings`, `settings.llm_api_key`/`settings.llm_base_url`, the same reused
-    `embedding_timeout_seconds`/`embedding_max_retries` budgets) — but the model is
-    `settings.judge_model` (DESIGN D7: a STRONGER model than the answerer's `settings.chat_model`),
+    Mirrors `app.rag.synthesis.OpenAICompatibleChatLLM`'s client construction
+    (`from_settings`, `settings.llm_api_key`/`settings.llm_base_url`, the reused
+    `embedding_timeout_seconds` request timeout) — but the model is `settings.judge_model`
+    (DESIGN D7: a STRONGER model than the answerer's `settings.chat_model`), and the retry budget
+    is its OWN dedicated `settings.judge_max_retries` (fix wave D1), not the reused
+    `embedding_max_retries` the other two clients share,
     not `chat_model` itself. This moves the recorded groundedness number relative to every run
     before this task (see the implementer report). Judges at `temperature=settings.
     judge_temperature` (`0.0` by default — deterministic verdicts; phase-9 task-05d brief, ruling
@@ -309,13 +311,22 @@ class OpenAIJudge:
 
     @classmethod
     def from_settings(cls, settings: Settings) -> OpenAIJudge:
-        """Build the real client from `Settings` — the one non-test constructor."""
+        """Build the real client from `Settings` — the one non-test constructor.
+
+        Fix wave D1: `max_retries=settings.judge_max_retries` — a DEDICATED retry budget for the
+        judge client, not the reused `embedding_max_retries` (task 09's incident needed
+        `EMBEDDING_MAX_RETRIES=12` as an env override to survive the judge's own rate limit, which
+        only worked because this constructor happened to reuse that setting — the correctly-named
+        fix is `judge_max_retries`, config.py's own comment on the field). `timeout` still reuses
+        `embedding_timeout_seconds`, which is a per-request budget with no judge-specific reason
+        to diverge.
+        """
         api_key = settings.llm_api_key.get_secret_value() or "unset"
         client = OpenAI(
             api_key=api_key,
             base_url=settings.llm_base_url,
             timeout=settings.embedding_timeout_seconds,
-            max_retries=settings.embedding_max_retries,
+            max_retries=settings.judge_max_retries,
         )
         return cls(
             client=client, model=settings.judge_model, temperature=settings.judge_temperature
@@ -518,6 +529,13 @@ class _ClassificationSnapshot:
 def _model_declined(metrics_judge: MetricsJudge, question: str, answer_text: str) -> bool:
     """Call `metrics_judge.is_refusal(question, answer_text)` if the seam actually implements it
     (task-05c brief), else `False`.
+
+    This is the SEMANTIC counterpart of `app.services.chat._DECLINE_PHRASE` (fix wave D5, M5) —
+    that module's reporting heuristic does a cheap casefolded substring probe (it must not make an
+    LLM call on the `weak_queries` reporting path), while this function asks the judge model
+    whether `answer_text` is a genuine refusal. `app.services.chat._DECLINE_PHRASE`'s own comment
+    names this function as ITS counterpart; this docstring closes the loop the other way so an
+    edit to either side is more likely to prompt a look at the other.
 
     Judgment call (flagged for controller review): `MetricsJudge.is_refusal` is a Protocol member
     as of this task, satisfied by `OpenAIJudge` and by every `MetricsJudge` fake
@@ -1237,6 +1255,17 @@ def _run_from_cli(
     that ACTUALLY judged this run), not `settings.chat_model`.
     """
     args = _parse_args(argv)
+    # Fix wave D2 (t03 review M1): `--no-persist` means no run this invocation is ever written,
+    # so a `--compare-to` alongside it can never have a new run to diff against — the `if
+    # before_id is not None and last_run is not None:` block below simply never fires, and a
+    # caller who asked for a comparison gets silence instead of a diff with no clue why. A printed
+    # warning, no behaviour change: `record_run` is not called, and no exception is raised — the
+    # run still executes and prints its own report table.
+    if args.no_persist and args.compare_to is not None:
+        print(
+            "warning: --no-persist with --compare-to has no effect — no run is persisted this "
+            f"invocation, so there is nothing new to compare against {args.compare_to!r}."
+        )
     settings = Settings()
     embedder = OpenAICompatibleEmbedder.from_settings(settings)
     chat_llm = OpenAICompatibleChatLLM.from_settings(settings)

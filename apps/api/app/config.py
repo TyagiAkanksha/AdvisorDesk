@@ -150,6 +150,19 @@ class Settings(BaseSettings):
     # constructible (CONVENTIONS.md §5).
     judge_temperature: float | None = 0.0
 
+    # Fix wave D1 (t03 review, the 30k-TPM incident's proper fix): a DEDICATED retry budget for
+    # the judge client, rather than reusing `embedding_max_retries` below. Task 09's incident
+    # (global-constraints.md) needed `EMBEDDING_MAX_RETRIES=12` as an env override on every judge
+    # harness run to survive the org's 30,000-TPM ceiling on the (now-retired) `gpt-4o` judge —
+    # borrowing a SETTING NAMED FOR EMBEDDINGS to fix a JUDGE rate-limit problem, discoverable only
+    # by reading the CLI's own source. `judge_max_retries` gives the judge client its own,
+    # correctly-named knob, defaulting to the same `12` the incident already established as
+    # sufficient headroom (`gpt-5.4`'s 500,000-TPM ceiling has since removed the pressure that
+    # made this urgent, but the setting is the right fix regardless). Zero-env constructible
+    # (CONVENTIONS.md §5); `OpenAIJudge.from_settings` uses this instead of
+    # `embedding_max_retries`.
+    judge_max_retries: int = 12
+
     # Not part of the PRD §9 env roster (phase-3 task-02 review round 1,
     # finding I1): the `openai` SDK's own defaults for an unconfigured
     # client are `read=600s` with `max_retries=2` (3 attempts total) — since

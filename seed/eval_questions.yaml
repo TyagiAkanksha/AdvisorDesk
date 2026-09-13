@@ -484,3 +484,139 @@
     The drawdown review still runs, but a concentrated position changes what it can do: one company
     can fall much further than the market and need not recover with it. The firm keeps unwinding
     the position on its schedule rather than pausing sales because the price is down.
+
+# --- phase-9 wave 1, batch D (task 13): donating stock + DAF · leaving · wash sales · what we do not do ---
+
+- question: "Why is donating appreciated company stock better than donating cash?"
+  expected_slugs: ["donating-appreciated-stock-and-using-a-daf"]
+  answerable: true
+  class: answerable
+  persona: "Marcus"
+  expected_chunks: ["donating-appreciated-stock-and-using-a-daf#why-donate-shares-instead-of-cash"]
+  reference_answer: >-
+    Giving shares you have held more than a year lets you deduct their full fair market value
+    without ever realizing the capital gain, so the charity receives the whole position. If you sell
+    first and donate the proceeds, the gain is yours to pay tax on.
+
+- question: "Can I donate shares I just received from an RSU vest?"
+  expected_slugs: ["donating-appreciated-stock-and-using-a-daf"]
+  answerable: true
+  class: answerable
+  persona: "Marcus"
+  expected_chunks:
+    - "donating-appreciated-stock-and-using-a-daf#can-i-donate-shares-i-just-received-from-a-vest"
+  reference_answer: >-
+    You can give them away immediately, but shares held a year or less are short-term property, so
+    the deduction is limited to your basis. For newly vested RSU shares that basis is close to
+    today's price, so little is lost — the tax saving comes from giving shares held more than a year.
+
+- question: "How much of my income can I deduct for a gift of appreciated stock, and what is this year's standard deduction?"
+  expected_slugs: ["donating-appreciated-stock-and-using-a-daf"]
+  answerable: true
+  class: stale_number
+  persona: "Marcus"
+  expected_chunks: ["donating-appreciated-stock-and-using-a-daf#key-numbers-2026"]
+  reference_answer: >-
+    A gift of appreciated stock to a public charity is capped at 30% of your adjusted gross income
+    for the year. The 2026 standard deduction is $32,200 for married filing jointly and $16,100 for
+    a single filer.
+
+- question: "I am resigning next month — what happens to my unvested RSUs and my vested options?"
+  expected_slugs: ["leaving-your-employer-with-equity-on-the-table"]
+  answerable: true
+  class: answerable
+  persona: "Marcus"
+  expected_chunks:
+    - "leaving-your-employer-with-equity-on-the-table#what-happens-to-my-unvested-equity-when-i-resign"
+    - "leaving-your-employer-with-equity-on-the-table#how-long-do-i-have-to-exercise-my-vested-options"
+  reference_answer: >-
+    Unvested RSUs and options are normally forfeited on your last day unless your grant says
+    otherwise. Vested options stay exercisable only for the post-termination window in the plan, and
+    an incentive stock option exercised after the statutory post-termination period is taxed as a
+    nonqualified option instead.
+
+- question: "Can I borrow from my 401(k) when the balance is mostly employer stock?"
+  expected_slugs: []
+  answerable: false
+  class: near_miss
+  persona: "Marcus"
+
+- question: "If I leave before my ISO shares are long-term, what does that cost me in tax?"
+  expected_slugs:
+    - "leaving-your-employer-with-equity-on-the-table"
+    - "isos-and-nsos-how-each-one-is-taxed"
+  answerable: true
+  class: multi_source
+  persona: "Marcus"
+  expected_chunks:
+    - "leaving-your-employer-with-equity-on-the-table#how-long-do-i-have-to-exercise-my-vested-options"
+    - "isos-and-nsos-how-each-one-is-taxed#how-long-do-i-have-to-hold-iso-shares-for-the-best-tax-treatment"
+  reference_answer: >-
+    ISO treatment needs the shares held past both statutory holding periods; selling earlier is a
+    disqualifying disposition and the spread becomes ordinary income. Leaving also starts the
+    statutory post-termination clock, after which an exercise no longer qualifies as an ISO exercise
+    at all.
+
+- question: "Can an RSU vest two weeks after I sell at a loss create a wash sale?"
+  expected_slugs: ["wash-sales-across-rsu-and-espp-lots"]
+  answerable: true
+  class: answerable
+  persona: "Marcus"
+  expected_chunks:
+    - "wash-sales-across-rsu-and-espp-lots#how-can-my-own-vesting-schedule-cause-a-wash-sale"
+  reference_answer: >-
+    Yes. Shares delivered by a vest are an acquisition of the same stock, so a vest inside the
+    statutory window on either side of your loss sale disallows that loss for now. The disallowed
+    amount is added to the basis of the newly vested shares.
+
+- question: "Does my ESPP purchase count as buying replacement shares?"
+  expected_slugs: ["wash-sales-across-rsu-and-espp-lots"]
+  answerable: true
+  class: answerable
+  persona: "Sam"
+  expected_chunks:
+    - "wash-sales-across-rsu-and-espp-lots#does-my-espp-purchase-count-as-a-replacement-buy"
+  reference_answer: >-
+    Yes — an ESPP purchase is a purchase of the same stock, so it can trigger the wash-sale rule
+    against a loss taken within the window on either side. Because the purchase date is fixed by the
+    offering period, the lever you control is the timing of the loss sale.
+
+- question: "I sold company shares for less than I paid and my broker's form says the loss was not allowed. Why?"
+  expected_slugs: ["wash-sales-across-rsu-and-espp-lots"]
+  answerable: true
+  class: threshold
+  persona: "Marcus"
+  expected_chunks:
+    - "wash-sales-across-rsu-and-espp-lots#what-does-my-broker-report-and-what-do-i-have-to-fix"
+  reference_answer: >-
+    Your 1099-B is flagging a wash sale: you acquired the same stock within the statutory window
+    before or after the sale, so the loss is disallowed for now and added to the new lot's basis.
+    Brokers apply the rule per account, so a purchase elsewhere can make your return differ from
+    the form.
+
+- question: "Is there anything you will not help me with?"
+  expected_slugs: ["what-we-do-not-do-and-why"]
+  answerable: true
+  class: answerable
+  persona: "Sam"
+  expected_chunks:
+    - "what-we-do-not-do-and-why#do-you-pick-individual-stocks-or-time-the-market"
+    - "what-we-do-not-do-and-why#will-you-prepare-my-tax-return-or-give-me-legal-advice"
+  reference_answer: >-
+    Queen City does not pick individual stocks or time the market, does not sell insurance or
+    annuities, and does not prepare tax returns or give legal advice. It plans around those things
+    and refers you to a CPA or an attorney when the work belongs to one.
+
+- question: "Can you do my tax return and handle the paperwork for my ISO exercise?"
+  expected_slugs: ["what-we-do-not-do-and-why", "onboarding-with-us-and-what-to-bring"]
+  answerable: true
+  class: multi_source
+  persona: "Marcus"
+  expected_chunks:
+    - "what-we-do-not-do-and-why#will-you-prepare-my-tax-return-or-give-me-legal-advice"
+    - "onboarding-with-us-and-what-to-bring#what-do-you-need-from-my-equity-paperwork"
+  reference_answer: >-
+    The firm does not prepare returns; it works alongside your CPA and gives them the numbers they
+    need. It does collect and keep your equity paperwork — grant agreements, the plan document,
+    exercise records and Forms 3921 and 3922 — so an exercise is planned and documented before it
+    happens.

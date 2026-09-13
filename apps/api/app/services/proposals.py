@@ -18,10 +18,10 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app.models import ContentProposal, EvalRun
+from app.models import ContentProposal, EvalResult, EvalRun
 from app.services.content import archive_content, create_draft, get_content
 from app.services.errors import ConflictError, NotFoundError
 from app.services.eval_policy import PROPOSAL_KIND_BY_CAUSE, PROPOSAL_KINDS, PROPOSAL_STATUSES
@@ -253,11 +253,17 @@ def check_acceptance(
     mutating).
 
     Fix round 2 (reviewer I3, owner ruling): when `proposal.draft_content_id` is set, the linked
-    `Content` row must be `published` and the after-run's `corpus_max_updated_at` must be at or
-    after that `published_at` — otherwise this run cannot show it measured a corpus containing
-    THIS proposal's own fix, whatever else it shows. A proposal with no linked draft (nullable
-    column; `propose_content_fix` always sets one today, but the column itself allows `None`) is
-    exempt from both checks — there is no fix-specific publish event to compare against.
+    `Content` row must be `published` (fix wave C1: `status == "published"`, not merely
+    `published_at is not None` — see the rung's own comment below) and the after-run's
+    `corpus_max_updated_at` must be at or after that `published_at` — otherwise this run cannot
+    show it measured a corpus containing THIS proposal's own fix, whatever else it shows. A
+    proposal with no linked draft (nullable column; `propose_content_fix` always sets one today,
+    but the column itself allows `None`) is exempt from both checks — there is no fix-specific
+    publish event to compare against. This exemption is therefore RESERVED for a future
+    drafting-free proposal kind that does not exist yet; today it is reachable only by
+    hand-building a `ContentProposal` row directly (fix wave C4 pins the documented behaviour with
+    exactly such a row, so a day this kind is added, a test — not silent drift — notices whether
+    the exemption is still the intended reading).
     """
     before_id = proposal.eval_run_before_id
     if before_id is None:
@@ -294,7 +300,21 @@ def check_acceptance(
     # than folding into "incomplete_after_run") because the operator's fix differs: an empty
     # BEFORE-run means the baseline itself is worthless (re-propose against a real baseline), an
     # incomplete AFTER-run means re-run the harness more broadly.
-    if before.total_questions == 0:
+    #
+    # Fix wave C3 (t16-rereview2 M8): `before.total_questions` is the run's own HEADER, written by
+    # `record_run` in the same transaction as its `eval_results` rows — but nothing stops the two
+    # from disagreeing on a hand-built or partially-restored row (unreachable through shipped
+    # code; defence in depth after the source-side empty-questions guard in
+    # `app.eval.groundedness.run_eval`). Requiring an actual `eval_results` row, not just a
+    # nonzero header, closes that one layer down: a before-run whose header lies compares zero
+    # questions against anything, exactly like an honestly-empty one.
+    before_result_count = (
+        session.scalar(
+            select(func.count()).select_from(EvalResult).where(EvalResult.run_id == before_id)
+        )
+        or 0
+    )
+    if before.total_questions == 0 or before_result_count == 0:
         return AcceptanceCheck(
             before_id=before_id,
             after_id=None,
@@ -386,7 +406,15 @@ def check_acceptance(
             draft = get_content(session, proposal.draft_content_id)
         except NotFoundError:
             draft = None
-        if draft is None or draft.published_at is None:
+        # Fix wave C1 (t16-rereview2 I4): `published_at is not None` tests "was EVER published",
+        # which an ARCHIVED draft still satisfies — `archive_content` never clears `published_at`
+        # (by design: `publish_content` never overwrites it either, so the public feed's
+        # `published_at DESC` order stays stable across a later re-publish of something else).
+        # `status != "published"` tests "IS published now", which is what "this fix is live in
+        # the corpus the after-run measured" actually requires; it implies `published_at is not
+        # None` (nothing reaches `published` without being stamped), so this replaces rather than
+        # supplements the previous check.
+        if draft is None or draft.status != "published":
             return AcceptanceCheck(
                 before_id=before_id,
                 after_id=after_id,
@@ -397,6 +425,11 @@ def check_acceptance(
                 missing_questions=[],
                 blocked_by="draft_not_published",
             )
+        # `status == "published"` implies `published_at is not None` — `publish_content` stamps
+        # it on every draft/archived -> published transition and never clears it — but mypy
+        # cannot infer that cross-column invariant from the `status` check above, hence the
+        # assert (a real `None` here would be a `Content` model/service bug, not a caller error).
+        assert draft.published_at is not None
         if after.corpus_max_updated_at is None or after.corpus_max_updated_at < draft.published_at:
             return AcceptanceCheck(
                 before_id=before_id,
@@ -474,12 +507,15 @@ def accept_proposal(
     |   |                                    | silently allowed — a second accept against a
     |   |                                    | different after-run would rewrite history) |
     | 2 | `eval_run_before_id` is set, and that run row exists | `ConflictError` / `NotFoundError` |
-    | 3 | `before.total_questions != 0` (fix round 2, I2) | `ConflictError` |
+    | 3 | `before.total_questions != 0` AND ≥1 real `eval_results` row exists for it
+    |   | (fix round 2 I2; fix wave C3/M8 closes the header-vs-rows gap one layer down) |
+    |   | `ConflictError` |
     | 4 | `eval_run_after_id` names a run, of `kind="answer"` | `NotFoundError` / `ConflictError` |
     | 5 | `after.created_at > before.created_at` (fix round 1, I1) | `ConflictError` |
     | 6 | `after.corpus_digest != before.corpus_digest` | `ConflictError` |
     | 7 | `after.pct_fully_supported >= before.pct_fully_supported` | `ConflictError` |
-    | 8 | the proposal's draft (if any) is `published` (fix round 2, I3) | `ConflictError` |
+    | 8 | the proposal's draft (if any) `status == "published"` (fix round 2, I3; fix wave C1
+    |   | tightens "was ever published" to "is published now") | `ConflictError` |
     | 9 | the after-run's corpus postdates that publish (fix round 2, I3) | `ConflictError` |
     | 10 | the after-run covers every before-run question (fix round 1, C1) | `ConflictError`,
     |    |                                                                    | naming the count

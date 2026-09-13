@@ -20,7 +20,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.models import Chunk, Content, ContentProposal, EvalRun, User
-from app.services.content import publish_content
+from app.services.content import archive_content, create_draft, publish_content
 from app.services.errors import ConflictError, NotFoundError
 from app.services.eval_policy import PROPOSAL_KIND_BY_CAUSE
 from app.services.eval_runs import record_run
@@ -864,3 +864,161 @@ def test_reject_raises_not_found_for_an_unknown_proposal(db_session: Session) ->
         reject_proposal(
             db_session, uuid.uuid4(), reason="R", actor_id=None, pipeline=NoopChunkPipeline()
         )
+
+
+# ---------------------------------------------------------------------------
+# accept_proposal — fix wave, group C (t16-rereview2 I4/M8/M9/M10): rung 8's "was ever
+# published" hole, rung 3's header-only hole, the rung-9 tie boundary, and the NULL-draft
+# exemption path.
+# ---------------------------------------------------------------------------
+
+
+def test_accept_refuses_when_the_proposals_own_draft_was_published_then_archived(
+    db_session: Session, actor_id: uuid.UUID
+) -> None:
+    """C1 (t16-rereview2 I4): rung 8 tested `published_at is not None` ("was ever published"),
+    which an ARCHIVED draft still satisfies — `archive_content` never clears `published_at` (by
+    design, so the public feed's `published_at DESC` order stays stable across a later re-publish
+    of something else). An archived fix has left the corpus; `accept_proposal` must refuse it
+    exactly as it would an unpublished one, naming `draft_not_published`. An unrelated LATER
+    publish moves the digest/`corpus_max_updated_at` forward so this cannot pass "by accident"
+    via the `corpus_unchanged` gate instead (probe R2b in the same re-review)."""
+    _record(db_session, _report(("q1", "FAIL"), pct=0.0), label="baseline")
+    proposal = propose_content_fix(
+        db_session, kind="new_article", title="T", rationale="R", evidence=[], actor_id=actor_id
+    )
+    publish_content(
+        db_session, proposal.draft_content_id, actor_id=actor_id, pipeline=NoopChunkPipeline()
+    )
+    archive_content(
+        db_session, proposal.draft_content_id, actor_id=actor_id, pipeline=NoopChunkPipeline()
+    )
+    # An unrelated LATER publish — through the real service calls (not the `_publish` test
+    # helper) so its `updated_at` is Python-timestamped by `_touch`, strictly after the archived
+    # draft's own `published_at`, and genuinely moves `corpus_max_updated_at` forward. A raw
+    # `_publish` insert would instead rely on the column's DB-side `now()` default, which is the
+    # TRANSACTION's start time — possibly earlier than `published_at` within one open test
+    # transaction — and could trip `after_run_predates_publication` instead of the rung under
+    # test here.
+    unrelated = create_draft(db_session, title="Unrelated later change", actor_id=actor_id)
+    publish_content(db_session, unrelated.id, actor_id=actor_id, pipeline=NoopChunkPipeline())
+    after = _record(db_session, _report(("q1", "PASS"), pct=100.0), label="after")
+
+    with pytest.raises(ConflictError, match="not published"):
+        accept_proposal(db_session, proposal.id, eval_run_after_id=after.id)
+
+    db_session.refresh(proposal)
+    assert proposal.status == "proposed"
+    assert proposal.eval_run_after_id is None
+
+
+def test_accept_still_succeeds_when_the_after_runs_corpus_exactly_ties_the_publish_instant(
+    db_session: Session, actor_id: uuid.UUID
+) -> None:
+    """C2 (t16-rereview2 M9): rung 9 refuses only when `corpus_max_updated_at < published_at`
+    (strict) — an EXACT tie must ACCEPT ("at or after", not "strictly after"). A real publish can
+    never naturally produce this tie (`publish_content` stamps `published_at` first and then
+    `_touch`'s `updated_at` a few microseconds later — re-review probe R3), so this test
+    hand-stamps the tie to pin the boundary itself rather than leave it to accident. Mutation
+    testing (re-review MUT-G: `<` -> `<=`) showed the whole suite passed even when a tie was
+    refused."""
+    _record(db_session, _report(("q1", "FAIL"), pct=0.0), label="baseline")
+    proposal = propose_content_fix(
+        db_session, kind="new_article", title="T", rationale="R", evidence=[], actor_id=actor_id
+    )
+    publish_content(
+        db_session, proposal.draft_content_id, actor_id=actor_id, pipeline=NoopChunkPipeline()
+    )
+    draft = db_session.get(Content, proposal.draft_content_id)
+    assert draft is not None and draft.published_at is not None
+    after = _record(db_session, _report(("q1", "PASS"), pct=100.0), label="after")
+    after.corpus_max_updated_at = draft.published_at  # hand-stamped exact tie
+    db_session.flush()
+
+    check = check_acceptance(db_session, proposal, after.id)
+    assert check.blocked_by is None
+
+    accepted = accept_proposal(db_session, proposal.id, eval_run_after_id=after.id)
+    assert accepted.status == "accepted"
+
+
+def test_accept_refuses_when_the_before_runs_header_lies_about_having_rows(
+    db_session: Session, actor_id: uuid.UUID
+) -> None:
+    """C3 (t16-rereview2 M8): rung 3 read only the before-run's `total_questions` HEADER — a
+    before-run whose header says N > 0 but whose `eval_results` table holds ZERO actual rows
+    (hand-built here; unreachable through `record_run`, which always writes the header and the
+    rows together in one transaction) compared zero questions against anything and accepted for
+    free, the same hole as an honestly-empty before-run one layer down. Rung 3 now also requires
+    at least one real `eval_results` row for the before-run."""
+    before = EvalRun(
+        kind="answer",
+        label="header-only-baseline",
+        embedding_model="text-embedding-3-small",
+        chat_model="gpt-4o-mini",
+        judge_model="gpt-4o",
+        similarity_threshold=0.5,
+        retrieval_k=6,
+        corpus_content_count=0,
+        corpus_chunk_count=0,
+        corpus_max_updated_at=None,
+        corpus_digest="deadbeef",
+        total_questions=2,  # the header LIES — zero eval_results rows exist for this run
+        pct_fully_supported=100.0,
+        refusal_correct=0,
+        refusal_total=0,
+    )
+    db_session.add(before)
+    db_session.flush()
+    proposal = ContentProposal(
+        kind="new_article",
+        title="T",
+        rationale="R",
+        evidence={},
+        eval_run_before_id=before.id,
+        created_by=actor_id,
+    )
+    db_session.add(proposal)
+    db_session.flush()
+    after = _record(db_session, _report(("q1", "PASS"), pct=100.0), label="after")
+
+    with pytest.raises(ConflictError, match="no baseline"):
+        accept_proposal(db_session, proposal.id, eval_run_after_id=after.id)
+
+    db_session.refresh(proposal)
+    assert proposal.status == "proposed"
+    assert proposal.eval_run_after_id is None
+
+
+def test_accept_exempts_a_proposal_with_no_linked_draft_from_the_publish_gates(
+    db_session: Session, actor_id: uuid.UUID
+) -> None:
+    """C4 (t16-rereview2 M10): `propose_content_fix` always creates a draft today (`draft_
+    content_id` is nullable only for a future drafting-free proposal kind — see
+    `check_acceptance`'s own docstring), so this path is reachable only by hand-building the
+    row, as done here. Pinned so the documented behaviour (rungs 8/9 are skipped entirely; there
+    is no fix-specific publish event to compare against) does not silently become a live bypass
+    the day such a kind exists, without a test noticing."""
+    before = _record(db_session, _report(("q1", "FAIL"), pct=0.0), label="baseline")
+    proposal = ContentProposal(
+        kind="retune",
+        title="No draft, by hand",
+        rationale="R",
+        evidence={},
+        eval_run_before_id=before.id,
+        draft_content_id=None,
+        created_by=actor_id,
+    )
+    db_session.add(proposal)
+    db_session.flush()
+    # The exemption skips rungs 8/9 only — the corpus still has to have changed at all (rung 6),
+    # so a real publish (not this proposal's own, since it has no draft) moves the digest.
+    unrelated = create_draft(db_session, title="Some other fix entirely", actor_id=actor_id)
+    publish_content(db_session, unrelated.id, actor_id=actor_id, pipeline=NoopChunkPipeline())
+    after = _record(db_session, _report(("q1", "PASS"), pct=100.0), label="after")
+
+    check = check_acceptance(db_session, proposal, after.id)
+    assert check.blocked_by is None
+
+    accepted = accept_proposal(db_session, proposal.id, eval_run_after_id=after.id)
+    assert accepted.status == "accepted"

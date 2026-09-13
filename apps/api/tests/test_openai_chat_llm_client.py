@@ -138,7 +138,7 @@ def test_from_settings_uses_the_openai_default_chat_model() -> None:
     """
     chat_llm = OpenAICompatibleChatLLM.from_settings(Settings())
 
-    assert chat_llm._model == "gpt-4o-mini"
+    assert chat_llm._model == "gpt-5.4-mini"
 
 
 # ---- Wire shape: standard chat-completions, no NVIDIA extra_body (design pin #3: "no change") --

@@ -368,9 +368,19 @@ def _fmt_spot(value: float | None, *, sampled: int) -> str:
     return f"{value * 100:.1f}% (n={sampled})"
 
 
-def _print_scorecard(card: JudgeScorecard, *, model: str, total: int) -> None:
-    """Print the scorecard in the task-08 CLI format."""
-    print(f"judge scorecard (model={model}, labels={card.labelled} labelled / {total} total)")
+def _print_scorecard(
+    card: JudgeScorecard, *, model: str, temperature: float | None, total: int
+) -> None:
+    """Print the scorecard in the task-08 CLI format, headed by the judge model + temperature
+    (phase-9 task-05d brief, ruling 4: "a printed scorecard always says which judge produced
+    it") — `temperature=None` prints as `default (omitted)` since that means the request omitted
+    the parameter entirely and the provider's own default sampling temperature applied.
+    """
+    temperature_str = "default (omitted)" if temperature is None else str(temperature)
+    print(
+        f"judge scorecard (model={model}, temperature={temperature_str}, "
+        f"labels={card.labelled} labelled / {total} total)"
+    )
 
     agreement_str = _fmt_ratio(card.agreement, none_label="n/a (no human labels yet)")
     print(f"  {'agreement':<23}{agreement_str}")
@@ -395,9 +405,25 @@ def _print_scorecard(card: JudgeScorecard, *, model: str, total: int) -> None:
     print(f"  {'verbosity consistency':<23}{verbosity_str}")
 
 
+# Phase-9 task-05d brief, ruling 4 item 3: `--judge-temperature`'s argparse `default` — a
+# sentinel distinct from `None` (a legitimate PARSED value, from the literal `none`) so
+# `_run_from_cli` can tell "flag not passed, use Settings().judge_temperature" apart from
+# "flag passed as `none`, use `None`" (argparse never runs `type=` on a non-string default).
+_JUDGE_TEMPERATURE_UNSET = object()
+
+
+def _parse_judge_temperature(value: str) -> float | None:
+    """`--judge-temperature`'s `type=`: the literal `none` (case-insensitive) parses to Python
+    `None` — omit the judge's `temperature` request parameter entirely (ruling 4, p9 t05d);
+    anything else parses as a `float`.
+    """
+    return None if value.strip().lower() == "none" else float(value)
+
+
 def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     """Parse the CLI's flags (task-08: `[--labels PATH] [--repeats 3] [--sample 10]
-    [--export-pending N] [--out PATH]`)."""
+    [--export-pending N] [--out PATH]`; task-05d ruling 4 adds `[--judge-model MODEL]
+    [--judge-temperature VALUE]`, both defaulting to the `Settings` values when omitted)."""
     parser = argparse.ArgumentParser(
         description="Score the groundedness judge against seed/judge_labels.yaml, or export "
         "unlabelled rows from the latest answer run for a labelling session."
@@ -419,6 +445,18 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         help="Export N unlabelled rows from the latest answer run instead of scoring.",
     )
     parser.add_argument("--out", type=Path, default=None, help="Output path for --export-pending.")
+    parser.add_argument(
+        "--judge-model",
+        default=None,
+        help="Override Settings.judge_model for this run (default: the Settings value).",
+    )
+    parser.add_argument(
+        "--judge-temperature",
+        type=_parse_judge_temperature,
+        default=_JUDGE_TEMPERATURE_UNSET,
+        help="Override Settings.judge_temperature for this run — 'none' omits the judge's "
+        "temperature request parameter entirely (default: the Settings value).",
+    )
     return parser.parse_args(argv)
 
 
@@ -448,9 +486,24 @@ def _run_from_cli(argv: list[str] | None = None) -> None:
 
     labels_path = args.labels if args.labels is not None else seed_data_dir() / "judge_labels.yaml"
     labels = load_judge_labels(labels_path)
-    judge = OpenAIJudge.from_settings(settings)
+
+    # Ruling 4 item 3: `--judge-model`/`--judge-temperature` override the `Settings` values for
+    # this run only — built via `model_copy` (never re-validated: both values are already the
+    # right type) rather than a second, hand-built `OpenAIJudge(...)` construction, so
+    # `OpenAIJudge.from_settings`'s own client-construction logic (API key/base URL/timeout/
+    # retries) is never duplicated here.
+    judge_model = args.judge_model if args.judge_model is not None else settings.judge_model
+    judge_temperature = (
+        settings.judge_temperature
+        if args.judge_temperature is _JUDGE_TEMPERATURE_UNSET
+        else args.judge_temperature
+    )
+    judge_settings = settings.model_copy(
+        update={"judge_model": judge_model, "judge_temperature": judge_temperature}
+    )
+    judge = OpenAIJudge.from_settings(judge_settings)
     card = score_judge(judge, labels, repeats=args.repeats, sample=args.sample)
-    _print_scorecard(card, model=settings.judge_model, total=len(labels))
+    _print_scorecard(card, model=judge_model, temperature=judge_temperature, total=len(labels))
 
 
 if __name__ == "__main__":

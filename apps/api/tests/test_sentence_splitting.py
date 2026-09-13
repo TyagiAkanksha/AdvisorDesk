@@ -113,25 +113,26 @@ def test_split_sentences_drops_bare_ordinal_markers_not_abbreviation_fragments()
 
 
 def test_split_sentences_pins_the_digit_initial_merge_case() -> None:
-    """Table row 8 -- the one row the brief pins as "whichever result the algorithm produces."
+    """Table row 8. Controller ruling (p9 t05d, post-implementation review): the brief's original
+    rule 2 had a second clause merging on EITHER a lowercase-initial OR a digit-initial following
+    piece; the digit branch was dropped, since it only ever did harm where it could fire -- it
+    glued the bare ordinal marker onto its neighbour in table row 7 (breaking the 05b pin that
+    "Sell at vest." stays its own sentence), and it swallowed the genuine boundary in this row
+    ("Pay it. 0.75% per year applies.", where the brief's own table already called for 2
+    sentences). Every case the digit branch was meant for ("vs. 2026", "No. 409") is already
+    covered by the abbreviation/initialism clause.
 
-    Worked by hand and cross-checked with a standalone run of the brief's own algorithm: step 1
-    splits "Pay it. 0.75% per year applies." into exactly two pieces (`["Pay it.",
+    With the digit branch gone: step 1 splits this input into exactly two pieces (`["Pay it.",
     "0.75% per year applies."]` -- the internal period inside "0.75" has no following whitespace,
-    so it is never a boundary). Step 2 asks whether piece 1 ("0.75% per year applies.") begins
-    with a lowercase letter or a digit (rule 2's SECOND, independent clause) -- its first
-    character is "0", a digit, so the clause fires regardless of piece 0's final word ("it" is
-    not an abbreviation/initialism; the FIRST clause never fires here, but the second does on its
-    own). The two pieces merge back into one string, byte-identical to the original input. The
-    table's lead-in text ("2 sentences") describes how the input reads to a person, not the
-    algorithm's actual output -- per the brief's own instruction to "assert the ACTUAL behaviour
-    ... pin whichever result the algorithm produces," this test pins the one-sentence merge, not
-    the naive two-sentence reading. Genuinely RED now: the current splitter (no merge step)
-    returns the naive 2-piece list instead.
+    so it is never a boundary). Step 2: piece 0 ("Pay it.") does not end with a known
+    abbreviation/initialism ("it" is neither), and piece 1 ("0.75% per year applies.") opens with
+    a digit, not a lowercase letter, so the surviving clause does not fire either. No merge --
+    the two pieces stay split, matching the table's own "2 sentences" lead-in exactly, with no
+    contradiction between the prose and the algorithm's actual output.
     """
     result = split_sentences("Pay it. 0.75% per year applies.")
 
-    assert result == ["Pay it. 0.75% per year applies."]
+    assert result == ["Pay it.", "0.75% per year applies."]
 
 
 def test_split_sentences_returns_empty_list_for_blank_input() -> None:

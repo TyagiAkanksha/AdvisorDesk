@@ -292,17 +292,20 @@ class OpenAIJudge:
     Mirrors `app.rag.synthesis.OpenAICompatibleChatLLM`'s client construction exactly
     (`from_settings`, `settings.llm_api_key`/`settings.llm_base_url`, the same reused
     `embedding_timeout_seconds`/`embedding_max_retries` budgets) — but the model is
-    `settings.judge_model` (DESIGN D7: `"gpt-4o"`, a STRONGER model than the answerer's
-    `settings.chat_model`/`"gpt-4o-mini"`), not `chat_model` itself. This moves the recorded
-    groundedness number relative to every run before this task (see the implementer report).
-    Judges at `temperature=0` (deterministic verdicts). Only exercised in the real recorded run
+    `settings.judge_model` (DESIGN D7: a STRONGER model than the answerer's `settings.chat_model`),
+    not `chat_model` itself. This moves the recorded groundedness number relative to every run
+    before this task (see the implementer report). Judges at `temperature=settings.
+    judge_temperature` (`0.0` by default — deterministic verdicts; phase-9 task-05d brief, ruling
+    4: `None` omits the request's `temperature` parameter entirely, for a judge model that only
+    accepts its own default sampling temperature). Only exercised in the real recorded run
     (`_run_from_cli`) — never in unit tests, which inject `ScriptedJudge`/`FakeMetricsJudge`
     instead.
     """
 
-    def __init__(self, *, client: OpenAI, model: str) -> None:
+    def __init__(self, *, client: OpenAI, model: str, temperature: float | None = 0.0) -> None:
         self._client = client
         self._model = model
+        self._temperature = temperature
 
     @classmethod
     def from_settings(cls, settings: Settings) -> OpenAIJudge:
@@ -314,37 +317,74 @@ class OpenAIJudge:
             timeout=settings.embedding_timeout_seconds,
             max_retries=settings.embedding_max_retries,
         )
-        return cls(client=client, model=settings.judge_model)
+        return cls(
+            client=client, model=settings.judge_model, temperature=settings.judge_temperature
+        )
 
     def is_supported(self, claim_text: str, chunk_texts: Sequence[str]) -> bool:
-        """Ask the judge model whether `claim_text` is supported by `chunk_texts`."""
+        """Ask the judge model whether `claim_text` is supported by `chunk_texts`.
+
+        Phase-9 task-05d brief, ruling 4: `temperature=self._temperature` is sent only when it is
+        not `None` — omitted from the request entirely otherwise, mirroring
+        `app.rag.embeddings.OpenAICompatibleEmbedder.embed_texts`'s own two-full-calls style for a
+        conditional request parameter (never a sentinel value passed through).
+        """
         sources = (
             "\n\n".join(f"[{i + 1}] {text}" for i, text in enumerate(chunk_texts))
             if chunk_texts
             else "(no source passages)"
         )
         user_message = f"SOURCES:\n{sources}\n\nCLAIM: {claim_text}\n\nIs the claim supported?"
-        response = self._client.chat.completions.create(
-            model=self._model,
-            temperature=0,
-            messages=[
-                {"role": "system", "content": _JUDGE_SYSTEM_PROMPT},
-                {"role": "user", "content": user_message},
-            ],
-        )
+        # The message list is a literal at EACH call site (never hoisted into a shared variable)
+        # so mypy's bidirectional inference can match it against the SDK's TypedDict union — the
+        # same reason `OpenAICompatibleEmbedder.embed_texts` repeats `input=list(texts)` verbatim
+        # in both of its own provider branches instead of factoring it out.
+        if self._temperature is None:
+            response = self._client.chat.completions.create(
+                model=self._model,
+                messages=[
+                    {"role": "system", "content": _JUDGE_SYSTEM_PROMPT},
+                    {"role": "user", "content": user_message},
+                ],
+            )
+        else:
+            response = self._client.chat.completions.create(
+                model=self._model,
+                temperature=self._temperature,
+                messages=[
+                    {"role": "system", "content": _JUDGE_SYSTEM_PROMPT},
+                    {"role": "user", "content": user_message},
+                ],
+            )
         content = response.choices[0].message.content or ""
         return content.strip().upper().startswith("YES")
 
     def _ask(self, system: str, user: str) -> str:
-        """One `chat.completions.create` call at `temperature=0`; returns the stripped content."""
-        response = self._client.chat.completions.create(
-            model=self._model,
-            temperature=0,
-            messages=[
-                {"role": "system", "content": system},
-                {"role": "user", "content": user},
-            ],
-        )
+        """One `chat.completions.create` call — the shared call site for `is_answer_relevant`,
+        `is_chunk_relevant`, `is_claim_covered`, `is_refusal` (via `_ask_yes_no`) and
+        `rank_chunk_relevance`. `temperature=self._temperature` is sent only when it is not `None`
+        (phase-9 task-05d brief, ruling 4 — same rule as `is_supported`'s own call site above);
+        returns the stripped content.
+        """
+        # See `is_supported`'s own comment above: the message list stays a literal at each call
+        # site rather than a shared variable, for mypy's benefit.
+        if self._temperature is None:
+            response = self._client.chat.completions.create(
+                model=self._model,
+                messages=[
+                    {"role": "system", "content": system},
+                    {"role": "user", "content": user},
+                ],
+            )
+        else:
+            response = self._client.chat.completions.create(
+                model=self._model,
+                temperature=self._temperature,
+                messages=[
+                    {"role": "system", "content": system},
+                    {"role": "user", "content": user},
+                ],
+            )
         content = response.choices[0].message.content or ""
         return content.strip()
 

@@ -40,29 +40,122 @@ _SENTENCE_BOUNDARY_RE = re.compile(r"(?<=[.!?])\s+")
 # post-split rather than judged.
 _HAS_ALPHA_RE = re.compile(r"[A-Za-z]")
 
+# Task-05d (third splitter-class fix; evidence: persisted run `wave1-c`): `_SENTENCE_BOUNDARY_RE`
+# also splits inside an abbreviation period ("vs.", "U.S.") — a fragment like "vs" or "The U.S"
+# can never be supported by any chunk, sinking an otherwise-flawless row. `_ABBREVIATIONS` is the
+# closed list of common non-sentence-ending abbreviations (task-05d brief, exact list); an
+# initialism like "U.S"/"I.R.S" has no closed list, so it is recognised structurally instead, by
+# `_INITIALISM_RE`.
+_ABBREVIATIONS = (
+    "vs",
+    "e.g",
+    "i.e",
+    "etc",
+    "no",
+    "inc",
+    "corp",
+    "co",
+    "ltd",
+    "mr",
+    "mrs",
+    "ms",
+    "dr",
+    "jr",
+    "sr",
+    "st",
+    "approx",
+    "sec",
+    "pub",
+    "rev",
+    "proc",
+    "reg",
+    "est",
+    "fig",
+    "vol",
+)
+_INITIALISM_RE = re.compile(r"^(?:[A-Za-z]\.)+[A-Za-z]$")
+
+
+def _ends_with_abbreviation(piece: str) -> bool:
+    """Whether `piece` (a `_SENTENCE_BOUNDARY_RE`-split piece) ends with a period whose final
+    word — the trailing `.` stripped — is a known abbreviation (case-insensitive,
+    `_ABBREVIATIONS`) or matches the initialism shape `_INITIALISM_RE` (`U.S`, `I.R.S`, ...).
+    Task-05d brief, ruling 1 algorithm step 2's first merge clause.
+    """
+    if not piece.endswith("."):
+        return False
+    words = piece.split()
+    if not words:
+        return False
+    final_word = words[-1].rstrip(".")
+    return bool(final_word) and (
+        final_word.lower() in _ABBREVIATIONS or bool(_INITIALISM_RE.match(final_word))
+    )
+
+
+def _starts_lowercase(piece: str) -> bool:
+    """Whether `piece` opens with a lowercase letter — task-05d brief, ruling 1 algorithm step
+    2's second, independent merge clause (a genuine new sentence, by convention, opens with a
+    capital letter).
+
+    Controller ruling (p9 t05d, post-implementation review): the brief's original clause also
+    fired on a piece opening with a DIGIT, but that did active harm in both places it could fire —
+    it glued a bare ordinal list marker onto the preceding sentence (`"Sell at vest." + "2."` ->
+    `"Sell at vest. 2."`, breaking the 05b pin that `"Sell at vest."` stays its own sentence) and
+    it swallowed the genuine boundary in `"Pay it. 0.75% per year applies."` (the brief's own table
+    called for 2 sentences there). Every case the digit branch was meant for — `"vs. 2026"`,
+    `"No. 409"` — is already covered by `_ends_with_abbreviation`'s abbreviation list, so the digit
+    check added no coverage the abbreviation clause didn't already have, only false merges. Dropped
+    entirely; only a lowercase-initial piece merges under this clause now.
+    """
+    return bool(piece) and piece[0].islower()
+
 
 def split_sentences(text: str) -> list[str]:
-    """Split `text` into sentences on `.`/`!`/`?` followed by whitespace.
+    """Split `text` into sentences on `.`/`!`/`?` followed by whitespace, merging back across an
+    abbreviation/initialism period or a lowercase-initial continuation (task-05d, ruling 1 — the
+    third splitter-class fix).
 
     Moved verbatim from `groundedness._split_sentences` (same regex, same docstring rationale) —
     `context_recall` below needs the identical splitter to turn a reference answer into claims,
     and the per-sentence faithfulness judge in `groundedness.py` now calls this copy instead of
     keeping a private one.
 
-    Task-05b: a fragment with no alphabetic character (e.g. an ordinal list marker `1.` / `(b)` /
-    `2)`) is never returned as a sentence — it is dropped, since the marker itself carries no
-    claim for the judge to score (task-10 re-review §3, row 1). Sentences that merely START with a
-    marker (`"Step 1. Sell."` splits to `["Step 1.", "Sell."]`) keep it — only markers that split
-    off into their OWN fragment are affected.
+    Algorithm (task-05d brief, as corrected by the controller's post-implementation ruling — see
+    `_starts_lowercase`'s own docstring for why the brief's original "or a digit" clause was
+    dropped):
+      1. Split on `_SENTENCE_BOUNDARY_RE`.
+      2. Walk the pieces left to right, merging piece *i* into the last OUTPUT piece so far
+         (re-joined with one space) when EITHER the last output piece ends with a known
+         abbreviation/initialism period (`_ends_with_abbreviation`) OR piece *i* opens with a
+         lowercase letter (`_starts_lowercase`). A merge feeds the next comparison too — the "last
+         output piece" can already be the result of an earlier merge.
+      3. Task-05b: drop any remaining piece with no alphabetic character (e.g. an ordinal list
+         marker `1.` / `(b)` / `2)`) — the marker itself carries no claim for the judge to score
+         (task-10 re-review §3, row 1). Sentences that merely START with a marker
+         (`"Step 1. Sell."` splits to `["Step 1.", "Sell."]`) keep it — only markers that split
+         off into their OWN fragment are affected.
+
+    Accepted trade-off (task-05d brief): a genuine sentence break right after an initialism,
+    followed by a capitalised word (`"…in the U.S. The firm says…"`), under-splits into one merged
+    sentence — `_ends_with_abbreviation` cannot distinguish "U.S." ending a sentence from "U.S."
+    abbreviating mid-sentence, and a capitalised follower cannot fire the second merge clause
+    either. This is deliberately left uncorrected: under-splitting only makes the faithfulness
+    judge STRICTER (it must support the whole longer, merged claim at once), never looser, so it
+    can only ever depress a row's score, never inflate the headline number.
     """
     stripped = text.strip()
     if not stripped:
         return []
-    return [
-        sentence
-        for sentence in _SENTENCE_BOUNDARY_RE.split(stripped)
-        if sentence and _HAS_ALPHA_RE.search(sentence)
-    ]
+
+    merged: list[str] = []
+    for piece in _SENTENCE_BOUNDARY_RE.split(stripped):
+        if merged and (_ends_with_abbreviation(merged[-1]) or _starts_lowercase(piece)):
+            merged[-1] = f"{merged[-1]} {piece}"
+        else:
+            merged.append(piece)
+
+    return [sentence for sentence in merged if sentence and _HAS_ALPHA_RE.search(sentence)]
 
 
 # Task-05b (task-10 re-review §3, row 2): the answerer numbers `[n]` markers by content

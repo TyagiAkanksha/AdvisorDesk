@@ -267,7 +267,7 @@ Binding rules:
 
 **H2 outline (verbatim headings, in this order):**
 
-1. `## What happens in the first 30 days?` — the sequence of meetings and deliverables.
+1. `## What happens in the first six weeks?` — the sequence of meetings and deliverables.
    `[FIRM POLICY — fictional, skip fact-check]`
 2. `## What documents should I bring to our first meeting?` — pay statements, last year's return,
    account statements, insurance and benefits summaries. The document *names* are real (W-2, 1099-B,

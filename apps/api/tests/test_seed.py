@@ -176,8 +176,8 @@ def _all_seed_records() -> list[dict[str, Any]]:
 
 # Phase-9 wave 1 (DESIGN §C2) grows the phase-4 corpus of 21 files by four per batch. Exact
 # counts, not bands: a content wave that lands three of its four files must fail loudly.
-_EXPECTED_SEED_FILE_COUNT = 33
-_EXPECTED_PUBLISHED_COUNT = 29
+_EXPECTED_SEED_FILE_COUNT = 37
+_EXPECTED_PUBLISHED_COUNT = 33
 _EXPECTED_DRAFT_COUNT = 4
 
 # Tag vocabulary = PRD §8's six + the wave-1 additions (INDEX Global Constraints: the vocabulary is
@@ -602,6 +602,22 @@ _WAVE1_ARTICLES: dict[str, tuple[str, frozenset[str]]] = {
         "Our Rebalancing Policy and the 20% Drawdown Rule",
         frozenset({"our-firm", "investing-basics"}),
     ),
+    "donating-appreciated-stock-and-using-a-daf": (
+        "Donating Appreciated Stock and Using a DAF",
+        frozenset({"tax-planning", "equity-compensation"}),
+    ),
+    "leaving-your-employer-with-equity-on-the-table": (
+        "Leaving Your Employer With Equity on the Table",
+        frozenset({"equity-compensation", "retirement"}),
+    ),
+    "wash-sales-across-rsu-and-espp-lots": (
+        "Wash Sales Across RSU and ESPP Lots",
+        frozenset({"tax-planning", "equity-compensation"}),
+    ),
+    "what-we-do-not-do-and-why": (
+        "What We Do Not Do, and Why",
+        frozenset({"our-firm"}),
+    ),
 }
 
 _KEY_NUMBERS_HEADING = "Key numbers (2026)"
@@ -729,20 +745,44 @@ def test_wave_1_expected_chunks_refs_name_real_headings_in_their_file() -> None:
             )
 
 
+# DESIGN §C2's four firm pages, by slug. Pinned by slug rather than by the `our-firm` tag because
+# `concentrated-employer-stock-and-our-10-rule` also carries that tag (it states a firm policy)
+# while being one of the twelve equity/benefits explainers.
+_WAVE1_FIRM_PAGES = {
+    "how-we-work-and-what-we-charge",
+    "onboarding-with-us-and-what-to-bring",
+    "our-rebalancing-policy-and-the-20-drawdown-rule",
+    "what-we-do-not-do-and-why",
+}
+
+
+def test_wave_1_is_complete_at_sixteen_articles() -> None:
+    """DESIGN §C2: wave 1 is 12 equity/benefits explainers + 4 firm pages. The two "where you live"
+    articles and the fundamentals upgrade are wave 2 — `north-carolina` stays out of the tag
+    vocabulary until then."""
+    assert len(_WAVE1_ARTICLES) == 16
+    assert _WAVE1_FIRM_PAGES <= set(_WAVE1_ARTICLES), (
+        f"missing firm pages: {sorted(_WAVE1_FIRM_PAGES - set(_WAVE1_ARTICLES))}"
+    )
+    assert len(set(_WAVE1_ARTICLES) - _WAVE1_FIRM_PAGES) == 12
+    assert all("our-firm" in _WAVE1_ARTICLES[slug][1] for slug in _WAVE1_FIRM_PAGES)
+    assert "north-carolina" not in _ALLOWED_TAGS
+
+
 # ---- eval-question class balance (DESIGN §B2: 80 rows at the end of task 14) ----
 
 # Running totals after the batch this task lands. Phase-4 baseline: 17 answerable + 4 off_domain
 # (both by the loader's default rule — those rows carry no explicit `class`). Batch A adds
 # 6 answerable + 2 multi_source + 1 near_miss + 1 threshold + 1 stale_number.
 _EXPECTED_CLASS_COUNTS = {
-    "answerable": 35,
-    "multi_source": 6,
-    "near_miss": 3,
+    "answerable": 41,
+    "multi_source": 8,
+    "near_miss": 4,
     "off_domain": 4,
-    "threshold": 3,
-    "stale_number": 3,
+    "threshold": 4,
+    "stale_number": 4,
 }
-_EXPECTED_QUESTION_TOTAL = 54
+_EXPECTED_QUESTION_TOTAL = 65
 
 
 def _question_class(item: dict[str, Any]) -> str:

@@ -412,3 +412,12 @@ precedence over `env_file:`, so a value hard-coded there would silently override
 `CHAT_MODEL` line for the code default (`gpt-5.4-mini`) to take effect — remove one if present so
 it cannot shadow the default. `JUDGE_MODEL` is not needed on the box (the judge only runs locally,
 never on prod).
+
+**Deploy record 2026-09-13 (`ca4e634`, PR #50):** images `ca4e634` pushed via `push_ecr.sh`; SSM
+rollout backed up the box compose (`docker-compose.yml.bak-c3fca19`), bumped the three tags,
+deleted the `EMBEDDING_MODEL`/`CHAT_MODEL` pins, ran `alembic upgrade head` from the NEW image
+FIRST (`0008 -> 0009`, additive), then `up -d`. Verified: all three containers healthy on
+`ca4e634`, `alembic current` = `0009 (head)`, effective settings in the api container
+`gpt-5.4-mini gpt-5.4 text-embedding-3-small 1024`, `/api/v1/healthz` 200, all three public
+origins 200, 0 error lines in the api log, the box's `.env` has no `CHAT_MODEL` line. Wave 1 is
+NOT yet published on prod (28 published items) — that is §8's owner checklist above.

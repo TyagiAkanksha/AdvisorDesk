@@ -715,7 +715,8 @@ def test_report_weak_queries_is_registered_with_a_description_and_schema() -> No
 
     assert "report_weak_queries" in by_name
     assert "report_content_gaps" in by_name
-    assert len(by_name) == 10
+    # The registry COUNT is pinned once, in tests/test_proposal_tools.py — not duplicated here,
+    # so the two never collide again (phase-9 task-16 fix round).
     entry = by_name["report_weak_queries"]
     assert "near_miss" in entry["description"]
     assert set(entry["inputSchema"]["properties"]) == {"days", "limit"}

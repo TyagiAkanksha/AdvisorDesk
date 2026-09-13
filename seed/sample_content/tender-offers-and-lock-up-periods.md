@@ -121,6 +121,8 @@ _Current as of 2026-09_
 
 - 17 CFR 240.13e-4, Tender offers by issuers —
   https://www.law.cornell.edu/cfr/text/17/240.13e-4
+- SEC Investor.gov, "Initial Public Offerings: Lockup Agreements" —
+  https://www.investor.gov/introduction-investing/investing-basics/glossary/initial-public-offerings-lockup-agreements
 - IRS Publication 525, Taxable and Nontaxable Income — https://www.irs.gov/publications/p525
 - IRS Topic No. 409, Capital Gains and Losses — https://www.irs.gov/taxtopics/tc409
 - Instructions for Form 8960, Net Investment Income Tax —

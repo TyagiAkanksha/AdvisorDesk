@@ -35,7 +35,9 @@ A decline of 20% or more triggers an out-of-cycle review regardless of where we 
 quarterly schedule — we do not wait for the next scheduled date once a drawdown of that size has
 happened. That review does several things at once: we rebalance into whatever has fallen the most,
 which in practice means directing new money and any available cash toward the asset classes that
-dropped, buying at a lower price than before the decline; in taxable accounts, we look for
+dropped, buying at a lower price than before the decline (your employer-stock position is the one
+holding this does not touch — it keeps to its own unwind schedule, described below, rather than
+being bought into because it fell); in taxable accounts, we look for
 tax-loss harvesting opportunities where a loss can be realized without triggering the wash-sale
 rule; we revisit your cash reserve to confirm it still covers what you are likely to need from the
 portfolio over the next 12 months, since a drawdown is exactly the wrong time to be forced to sell

@@ -104,8 +104,8 @@ in a separate article on what we don't do.
 - **Review cadence** — progress against the unwind schedule is checked at your spring review, which
   covers your equity calendar for the year (our meeting cadence).
 - **Rule 10b5-1 cooling-off period** — 90 days after adoption, or, if later, two business days after
-  the issuer discloses the relevant quarter's financial results (capped at 120 days), for directors
-  and officers; 30 days for other insiders (17 CFR 240.10b5-1(a)(1)(iv)).
+  the issuer discloses financial results for the quarter in which the plan was adopted (capped at
+  120 days), for directors and officers; 30 days for other insiders (17 CFR 240.10b5-1(c)(1)(ii)(B)).
 - **Long-term capital gains holding period** — a sale qualifies for long-term treatment once you have
   held the shares for more than one year (IRS Topic No. 409).
 

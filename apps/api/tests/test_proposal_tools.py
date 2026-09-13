@@ -270,6 +270,40 @@ def test_accept_tool_surfaces_the_gate_refusal_as_a_conflict(
         )
 
 
+def test_accept_tool_surfaces_an_incomplete_after_run_as_a_conflict(
+    db_session: Session, actor_id: uuid.UUID
+) -> None:
+    """Fix round 1, reviewer C1, through the real `call_tool` seam: an after-run with zero
+    results must not silently accept just because the tool layer adds no logic of its own — same
+    "no `try/except`" rule as the sibling test above, now exercised against the new gate."""
+    _record(db_session, label="baseline", pct=0.0, verdict="FAIL")
+    proposed = call_tool(
+        "propose_content_fix",
+        {"title": "Narrow fix", "rationale": "R", "kind": "new_article"},
+        session=db_session,
+        actor_id=actor_id,
+    )
+    _publish_something(db_session, "narrow-fix-published")
+    after = record_run(
+        db_session,
+        FakeReport(rows=[], pct_fully_supported=0.0),
+        label="after",
+        embedding_model="text-embedding-3-small",
+        chat_model="gpt-4o-mini",
+        judge_model="gpt-4o",
+        similarity_threshold=0.5,
+        retrieval_k=6,
+    )
+
+    with pytest.raises(ConflictError, match="did not measure"):
+        call_tool(
+            "accept_proposal",
+            {"proposal_id": proposed["id"], "eval_run_after_id": str(after.id)},
+            session=db_session,
+            actor_id=actor_id,
+        )
+
+
 def test_reject_tool_archives_the_published_draft_through_the_call_tool_pipeline(
     db_session: Session, actor_id: uuid.UUID
 ) -> None:

@@ -45,8 +45,14 @@ class AcceptanceCheck:
 
     `blocked_by` is `None` when the proposal is acceptable, else the name of the first gate (in
     evaluation order) that failed: one of `"no_before_run"`, `"missing_before_run"`,
-    `"missing_after_run"`, `"after_run_wrong_kind"`, `"corpus_unchanged"`, `"pct_dropped"`,
-    `"regressions"`.
+    `"missing_after_run"`, `"after_run_wrong_kind"`, `"after_run_not_newer"`,
+    `"corpus_unchanged"`, `"pct_dropped"`, `"incomplete_after_run"`, `"regressions"`.
+
+    Fix round 1 (reviewer C1): `missing_questions` names the before-run questions the after-run
+    did not measure (`app.services.eval_runs.RunDiff.removed`) — populated only for
+    `blocked_by="incomplete_after_run"`, `[]` otherwise. Mirrors `regressions`' own shape: both
+    exist so `accept_proposal` can name specific questions in its refusal message without a
+    second `compare_runs` call.
     """
 
     before_id: uuid.UUID | None
@@ -55,6 +61,7 @@ class AcceptanceCheck:
     pct_before: float | None
     pct_after: float | None
     regressions: list[str]
+    missing_questions: list[str]
     blocked_by: str | None
 
 
@@ -220,9 +227,23 @@ def list_proposals(
 def check_acceptance(
     session: Session, proposal: ContentProposal, after_id: uuid.UUID
 ) -> AcceptanceCheck:
-    """Evaluate `accept_proposal`'s data gates without mutating anything, in order, so a caller
+    """Evaluate `accept_proposal`'s DATA gates without mutating anything, in order, so a caller
     (a human operator, or `accept_proposal` itself) can explain a refusal before committing to
     one. The FIRST failing gate stops evaluation; `blocked_by` names it (`None` when acceptable).
+
+    Fix round 1 (reviewer M1): this covers the comparison gates only (2-8 in `accept_proposal`'s
+    table) — it does not look at `proposal.status` at all, so calling it directly on an
+    already-`accepted`/`rejected` proposal can return `blocked_by=None` ("the data supports it")
+    even though `accept_proposal` would still refuse on `status` alone (gate 1, checked before
+    `accept_proposal` ever calls this function). Read `blocked_by=None` from this function as "the
+    DATA gates pass", not "accept_proposal would accept".
+
+    Fix round 1 (reviewer M3): when `proposal.eval_run_before_id` names a run of `kind !=
+    "answer"` (reachable only by hand-stamping that column — `propose_content_fix` always picks
+    an answer run), this function does not check `before.kind` itself and instead lets
+    `compare_runs`' own `ConflictError` ("Cannot compare a ... run to a ... run") propagate out of
+    this function — a documented exception to "without mutating anything" (raising is not
+    mutating).
     """
     before_id = proposal.eval_run_before_id
     if before_id is None:
@@ -233,6 +254,7 @@ def check_acceptance(
             pct_before=None,
             pct_after=None,
             regressions=[],
+            missing_questions=[],
             blocked_by="no_before_run",
         )
 
@@ -245,6 +267,7 @@ def check_acceptance(
             pct_before=None,
             pct_after=None,
             regressions=[],
+            missing_questions=[],
             blocked_by="missing_before_run",
         )
 
@@ -257,6 +280,7 @@ def check_acceptance(
             pct_before=before.pct_fully_supported,
             pct_after=None,
             regressions=[],
+            missing_questions=[],
             blocked_by="missing_after_run",
         )
 
@@ -268,7 +292,28 @@ def check_acceptance(
             pct_before=before.pct_fully_supported,
             pct_after=after.pct_fully_supported,
             regressions=[],
+            missing_questions=[],
             blocked_by="after_run_wrong_kind",
+        )
+
+    # Fix round 1 (reviewer I1): a DIFFERENT corpus digest is not a LATER one. Without this,
+    # any historical answer-run recorded when the corpus happened to look different qualifies as
+    # "after" — and since `propose_content_fix` always stamps `before` as the LATEST answer run
+    # at proposal time (`:178-179`), every other run already in the table is older than `before`,
+    # making the entire run history a pool of candidate "after" runs. Checked before the digest/
+    # pct/coverage/regression comparisons below: none of them can substitute for it (a stale run
+    # can easily have a different digest and a higher pct than `before`, by coincidence of when
+    # it happened to run).
+    if after.created_at <= before.created_at:
+        return AcceptanceCheck(
+            before_id=before_id,
+            after_id=after_id,
+            corpus_changed=False,
+            pct_before=before.pct_fully_supported,
+            pct_after=after.pct_fully_supported,
+            regressions=[],
+            missing_questions=[],
+            blocked_by="after_run_not_newer",
         )
 
     corpus_changed = after.corpus_digest != before.corpus_digest
@@ -280,6 +325,7 @@ def check_acceptance(
             pct_before=before.pct_fully_supported,
             pct_after=after.pct_fully_supported,
             regressions=[],
+            missing_questions=[],
             blocked_by="corpus_unchanged",
         )
 
@@ -291,10 +337,35 @@ def check_acceptance(
             pct_before=before.pct_fully_supported,
             pct_after=after.pct_fully_supported,
             regressions=[],
+            missing_questions=[],
             blocked_by="pct_dropped",
         )
 
     diff = compare_runs(session, before_id, after_id)
+
+    # Fix round 1 (reviewer C1 — CRITICAL): `compare_runs` can only find a regression in a
+    # question BOTH runs measured, so the regression gate below passes VACUOUSLY on an empty
+    # after-run and PARTIALLY on a truncated one (e.g. a narrowed `--questions <path>` re-run) —
+    # neither the digest gate (only needs "different") nor the pct gate (computed over whatever
+    # rows the after-run happens to contain, so a narrower run can score HIGHER, not lower) catch
+    # this. `diff.removed` names exactly the before-run questions the after-run did not measure;
+    # `after.total_questions < before.total_questions` is a cheap belt-and-braces check on data
+    # already loaded (a genuine subset always leaves `diff.removed` non-empty too, given
+    # `eval_results`' `(run_id, question)` uniqueness — this is defence in depth, not a distinct
+    # scenario). This must run BEFORE the regressions check: an after-run that does not cover a
+    # regressed question would otherwise make gate 8 non-vacuous only by accident.
+    if diff.removed or after.total_questions < before.total_questions:
+        return AcceptanceCheck(
+            before_id=before_id,
+            after_id=after_id,
+            corpus_changed=True,
+            pct_before=before.pct_fully_supported,
+            pct_after=after.pct_fully_supported,
+            regressions=[],
+            missing_questions=diff.removed,
+            blocked_by="incomplete_after_run",
+        )
+
     if diff.regressions:
         return AcceptanceCheck(
             before_id=before_id,
@@ -303,6 +374,7 @@ def check_acceptance(
             pct_before=before.pct_fully_supported,
             pct_after=after.pct_fully_supported,
             regressions=diff.regressions,
+            missing_questions=[],
             blocked_by="regressions",
         )
 
@@ -313,6 +385,7 @@ def check_acceptance(
         pct_before=before.pct_fully_supported,
         pct_after=after.pct_fully_supported,
         regressions=[],
+        missing_questions=[],
         blocked_by=None,
     )
 
@@ -323,7 +396,7 @@ def accept_proposal(
     """Accept a proposal the DATA supports — the evidence behind "validated before acceptance".
 
     Gates 0-1 are proposal-level (existence, still-`proposed`) and are checked here directly;
-    gates 2-6 are the data comparison and live entirely in `check_acceptance` — this function is
+    gates 2-8 are the data comparison and live entirely in `check_acceptance` — this function is
     a thin raiser on top of it, so one place owns the rules:
 
     | # | Gate | Raises |
@@ -334,10 +407,23 @@ def accept_proposal(
     |   |                                    | different after-run would rewrite history) |
     | 2 | `eval_run_before_id` is set, and that run row exists | `ConflictError` / `NotFoundError` |
     | 3 | `eval_run_after_id` names a run, of `kind="answer"` | `NotFoundError` / `ConflictError` |
-    | 4 | `after.corpus_digest != before.corpus_digest` | `ConflictError` |
-    | 5 | `after.pct_fully_supported >= before.pct_fully_supported` | `ConflictError` |
-    | 6 | `compare_runs(before, after).regressions == []` | `ConflictError`, naming up to the
+    | 4 | `after.created_at > before.created_at` (fix round 1, I1) | `ConflictError` |
+    | 5 | `after.corpus_digest != before.corpus_digest` | `ConflictError` |
+    | 6 | `after.pct_fully_supported >= before.pct_fully_supported` | `ConflictError` |
+    | 7 | the after-run covers every before-run question (fix round 1, C1) | `ConflictError`,
+    |   |                                                                   | naming the count
+    |   |                                                                   | and up to three
+    |   |                                                                   | missing questions |
+    | 8 | `compare_runs(before, after).regressions == []` | `ConflictError`, naming up to the
     |   |                                                  | first three regressed questions |
+
+    Fix round 1 (reviewer C1, CRITICAL): gate 7 closes the hole where an after-run that does not
+    measure a regressed question made gate 8 pass vacuously (an empty after-run) or partially (a
+    narrowed re-run, e.g. a shipped `--questions <path>` CLI flag) — neither gate 5 nor gate 6
+    would catch either case, since a narrower run is only ever compared against the rows it
+    actually contains. Fix round 1 (reviewer I1, Important): gate 4 closes the hole where a
+    historical answer-run older than `before` — a DIFFERENT digest is not a LATER digest — was
+    accepted as "after" with no ordering check at all.
 
     On success: `status = "accepted"`, `eval_run_after_id` stamped, `flush()`, return. Nothing is
     mutated on any refusal — every gate above is evaluated (via `check_acceptance`) BEFORE this
@@ -369,6 +455,12 @@ def accept_proposal(
             f"eval_run_after_id {eval_run_after_id} does not name an 'answer'-kind eval run; "
             "accept_proposal only accepts against an answer-kind run."
         )
+    if check.blocked_by == "after_run_not_newer":
+        raise ConflictError(
+            f"eval_run_after_id {eval_run_after_id} is not newer than before-run "
+            f"{check.before_id} — accept_proposal requires the after-run to have been recorded "
+            "strictly after the before-run, not merely a run that happens to look different."
+        )
     if check.blocked_by == "corpus_unchanged":
         raise ConflictError(
             f"The corpus did not change between eval run {check.before_id} and "
@@ -379,6 +471,13 @@ def accept_proposal(
         raise ConflictError(
             f"pct_fully_supported dropped from {check.pct_before} (run {check.before_id}) to "
             f"{check.pct_after} (run {check.after_id})."
+        )
+    if check.blocked_by == "incomplete_after_run":
+        named = ", ".join(check.missing_questions[:3])
+        raise ConflictError(
+            f"eval_run_after_id {eval_run_after_id} did not measure "
+            f"{len(check.missing_questions)} of the before-run's questions ({named}), so it "
+            "cannot show whether they regressed."
         )
     if check.blocked_by == "regressions":
         named = ", ".join(check.regressions[:3])

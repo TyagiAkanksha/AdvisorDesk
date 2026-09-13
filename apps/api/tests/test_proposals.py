@@ -472,6 +472,117 @@ def test_a_decided_proposal_cannot_be_accepted_again(
 
 
 # ---------------------------------------------------------------------------
+# accept_proposal — fix round 1 (reviewer C1 CRITICAL, I1 Important): an after-run that does
+# not cover the before-run's questions, or that predates it, must not pass the gate.
+# ---------------------------------------------------------------------------
+
+
+def test_accept_refuses_an_after_run_with_zero_results(
+    db_session: Session, actor_id: uuid.UUID
+) -> None:
+    """C1: `compare_runs` can only find a regression in a question BOTH runs measured, so an
+    EMPTY after-run gives `regressions == []` and the old gate 6 passed vacuously — no forged
+    header needed either, since the real harness writes `pct_fully_supported = 0.0` for an empty
+    report, and `0.0 >= 0.0` clears the pct gate against a `0.0` baseline (exactly this shape)."""
+    _record(db_session, _report(("q1", "FAIL"), pct=0.0), label="baseline")
+    proposal = propose_content_fix(
+        db_session, kind="new_article", title="T", rationale="R", evidence=[], actor_id=actor_id
+    )
+    _publish(db_session, "the-fix")
+    after = _record(db_session, _report(pct=0.0), label="after")  # zero rows
+
+    with pytest.raises(ConflictError, match="did not measure") as excinfo:
+        accept_proposal(db_session, proposal.id, eval_run_after_id=after.id)
+
+    assert "1" in str(excinfo.value)
+    assert "q1" in str(excinfo.value)
+
+    db_session.refresh(proposal)
+    assert proposal.status == "proposed"
+    assert proposal.eval_run_after_id is None
+
+
+def test_accept_refuses_an_after_run_covering_only_some_of_the_before_runs_questions(
+    db_session: Session, actor_id: uuid.UUID
+) -> None:
+    """C1 — the realistic version: a narrowed re-run (a shipped `--questions <path>` CLI flag)
+    legitimately measures fewer questions. A higher pct over a SMALLER question set must not read
+    as "no regressions" when the missing questions are exactly the ones that broke."""
+    _record(
+        db_session,
+        _report(("planted", "FAIL"), ("a", "PASS"), ("b", "PASS"), ("c", "PASS"), pct=75.0),
+        label="baseline",
+    )
+    proposal = propose_content_fix(
+        db_session, kind="new_article", title="T", rationale="R", evidence=[], actor_id=actor_id
+    )
+    _publish(db_session, "the-narrow-fix")
+    after = _record(db_session, _report(("planted", "PASS"), pct=100.0), label="after")
+
+    with pytest.raises(ConflictError, match="did not measure") as excinfo:
+        accept_proposal(db_session, proposal.id, eval_run_after_id=after.id)
+
+    message = str(excinfo.value)
+    assert "3" in message
+    assert "a" in message and "b" in message and "c" in message
+
+    db_session.refresh(proposal)
+    assert proposal.status == "proposed"
+
+
+def test_accept_refuses_an_after_run_older_than_the_before_run(
+    db_session: Session, actor_id: uuid.UUID
+) -> None:
+    """I1: a DIFFERENT corpus digest is not a LATER one. `stale` here has a genuinely different
+    (earlier) digest and a HIGHER pct than `baseline` — neither the digest gate nor the pct gate
+    would catch it on their own — so only an explicit ordering check closes this hole."""
+    stale = _record(db_session, _report(("q1", "PASS"), pct=100.0), label="stale-but-good")
+    _publish(db_session, "an-earlier-unrelated-change")
+    baseline = _record(db_session, _report(("q1", "FAIL"), pct=0.0), label="baseline")
+    proposal = propose_content_fix(
+        db_session, kind="new_article", title="T", rationale="R", evidence=[], actor_id=actor_id
+    )
+    assert proposal.eval_run_before_id == baseline.id
+
+    with pytest.raises(ConflictError, match="newer"):
+        accept_proposal(db_session, proposal.id, eval_run_after_id=stale.id)
+
+    db_session.refresh(proposal)
+    assert proposal.status == "proposed"
+    assert proposal.eval_run_after_id is None
+
+
+def test_accept_still_succeeds_with_equal_pct_full_coverage_and_a_later_after_run(
+    db_session: Session, actor_id: uuid.UUID
+) -> None:
+    """Regression pin (fix round 1): the two new gates (I1 ordering, C1 coverage) must not
+    over-refuse a genuinely clean accept — equal pct, zero regressions, full question coverage,
+    and a strictly later after-run must still ACCEPT, exactly as it did before this fix round."""
+    before = _record(
+        db_session, _report(("planted", "FAIL"), ("a", "PASS"), pct=50.0), label="baseline"
+    )
+    proposal = propose_content_fix(
+        db_session, kind="new_article", title="T", rationale="R", evidence=[], actor_id=actor_id
+    )
+    _publish(db_session, "the-fix-for-equal-pct")
+    after = _record(
+        db_session, _report(("planted", "FAIL"), ("a", "PASS"), pct=50.0), label="after"
+    )
+
+    assert after.created_at > before.created_at
+    assert after.pct_fully_supported == before.pct_fully_supported
+
+    check = check_acceptance(db_session, proposal, after.id)
+    assert check.blocked_by is None
+    assert check.missing_questions == []
+
+    accepted = accept_proposal(db_session, proposal.id, eval_run_after_id=after.id)
+
+    assert accepted.status == "accepted"
+    assert accepted.eval_run_after_id == after.id
+
+
+# ---------------------------------------------------------------------------
 # reject_proposal
 # ---------------------------------------------------------------------------
 

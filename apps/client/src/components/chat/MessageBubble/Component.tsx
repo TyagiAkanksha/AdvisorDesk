@@ -2,6 +2,7 @@ import { Alert, Box, Paper, Typography } from '@/components/common';
 import { Markdown } from '@/components/content/Markdown';
 
 import { CitationList } from '../CitationList';
+import { FeedbackButtons } from '../FeedbackButtons';
 import type { MessageBubbleProps } from './interface';
 
 // task-05 (phase-4), PRD §2.2/§5.3. Dumb, one purpose: render one turn. `role="article"` named
@@ -18,7 +19,7 @@ import type { MessageBubbleProps } from './interface';
 // text, MUI's own warning styling.
 const BUBBLE_MAX_WIDTH = 'min(100%, 640px)';
 
-export default function Component({ message }: MessageBubbleProps) {
+export default function Component({ message, feedback }: MessageBubbleProps) {
   if (message.role === 'user') {
     return (
       <Box
@@ -54,6 +55,16 @@ export default function Component({ message }: MessageBubbleProps) {
       <CitationList citations={citations} />
     </>
   );
+  // phase-9 task-17 (DESIGN §A/D2): the 👍/👎 control, appended under the answer — `undefined`
+  // when the parent (`ChatScreen`) has no `messageId` yet to rate this turn against.
+  const feedbackButtons =
+    feedback !== undefined ? (
+      <FeedbackButtons
+        value={feedback.value}
+        disabled={feedback.disabled}
+        onSelect={feedback.onSelect}
+      />
+    ) : null;
 
   return (
     <Box
@@ -69,6 +80,7 @@ export default function Component({ message }: MessageBubbleProps) {
           sx={{ maxWidth: BUBBLE_MAX_WIDTH }}
         >
           {answer}
+          {feedbackButtons}
         </Alert>
       ) : (
         <Paper
@@ -76,6 +88,7 @@ export default function Component({ message }: MessageBubbleProps) {
           sx={{ px: 2, py: 1.5, borderRadius: 2, maxWidth: BUBBLE_MAX_WIDTH }}
         >
           {answer}
+          {feedbackButtons}
         </Paper>
       )}
     </Box>

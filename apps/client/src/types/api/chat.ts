@@ -21,3 +21,12 @@ export interface CitationDto {
   slug: string;
 }
 export type Citation = CitationDto;
+
+// phase-9 task-17 (DESIGN §A/D2): `POST /public/chat/{message_id}/feedback`'s body — a real
+// Pydantic schema, so it comes from the generated OpenAPI types like every other wire type
+// (docs/FRONTEND-CONVENTIONS.md §5), not hand-authored like `Citation` above.
+export type ChatFeedbackRequestDto = components['schemas']['ChatFeedbackRequest'];
+export type ChatFeedbackRequest = ChatFeedbackRequestDto;
+/** `-1 | 1` — the endpoint's whole value domain. `0` is deliberately illegal (task 02): a row with
+ *  no feedback stays NULL, so "never asked" and "asked, felt neutral" are never conflated. */
+export type ChatFeedbackValue = ChatFeedbackRequestDto['value'];

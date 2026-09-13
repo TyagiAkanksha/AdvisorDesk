@@ -65,3 +65,8 @@ export const STOP_LABEL = 'Stop';
 export const NEW_CONVERSATION_LABEL = 'New conversation';
 export const CHAT_HELPER_TEXT =
   'Educational answers grounded in the published articles — not financial advice.';
+
+// phase-9 task-17 (DESIGN §A/D2): the 👍/👎 control under an assistant answer. Accessible names,
+// not decoration — they are what a screen-reader user hears and what the tests query by.
+export const FEEDBACK_UP_LABEL = 'Helpful';
+export const FEEDBACK_DOWN_LABEL = 'Not helpful';

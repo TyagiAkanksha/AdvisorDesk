@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
+import { resolveBrowserApiBaseUrl } from '@/lib/browserApiBase';
 import { GENERIC_ERROR_MESSAGE } from '@/lib/copy';
 import type { ChatRequest, Citation } from '@/types';
 
@@ -27,6 +28,12 @@ export interface ChatMessage {
   citations?: Citation[];
   /** PRD §5.3/§7.5: no published guidance covers the question — an empty `citations` array. */
   refusal?: boolean;
+  /**
+   * The server-minted `chat_messages.id` from this turn's `done` event — the only capability
+   * needed to rate the answer (phase-9 DESIGN §A: "no wire change"). `undefined` until `done`
+   * lands, and on every user turn.
+   */
+  messageId?: string;
 }
 
 /**
@@ -229,24 +236,6 @@ export async function parseSseStream(
 }
 
 const SESSION_STORAGE_KEY = 'advisordesk_session';
-// Browser-reachable API origin: this hook runs client-side, so (unlike `src/lib/publicApi.ts`'s
-// server-only `API_URL`) it needs a `NEXT_PUBLIC_`-prefixed var to be inlined into the JS bundle
-// at build time — the same mechanism/idiom `apps/admin/src/lib/apiBase.ts` already uses for its
-// own (also browser-side) RTK Query base URL. Dev/test fall back to the documented local API
-// origin so an unset var never blocks `pnpm dev`/`pnpm test`; production fails loudly at request
-// time instead of silently shipping a request to `undefined/api/v1/public/chat`.
-const DEV_FALLBACK_API_URL = 'http://localhost:8000';
-
-function resolveApiBaseUrl(): string {
-  const value = process.env.NEXT_PUBLIC_API_URL;
-  if (value) {
-    return value;
-  }
-  if (process.env.NODE_ENV === 'production') {
-    throw new Error('NEXT_PUBLIC_API_URL must be set at build time');
-  }
-  return DEV_FALLBACK_API_URL;
-}
 
 /**
  * PRD §5.3: session id lives in `localStorage` only (no cookies) — read before every `send()`,
@@ -355,6 +344,20 @@ function attachCitations(messages: ChatMessage[], citations: Citation[]): ChatMe
   return [...messages, { role: 'assistant', text: '', citations, refusal: citations.length === 0 }];
 }
 
+/** Attach the server's message id to the in-progress assistant message. Pure.
+ *
+ * phase-9 task-17 (DESIGN §A/D2): unlike `attachCitations` this returns `messages` unchanged when
+ * there is no assistant turn — an id with no bubble to hang it on has nothing to render; creating
+ * an empty bubble for it would invent UI, where `attachCitations` had a real refusal to show.
+ */
+function attachMessageId(messages: ChatMessage[], messageId: string): ChatMessage[] {
+  const last = messages[messages.length - 1];
+  if (last !== undefined && last.role === 'assistant') {
+    return [...messages.slice(0, -1), { ...last, messageId }];
+  }
+  return messages;
+}
+
 export interface UseChatStreamResult {
   messages: ChatMessage[];
   streaming: boolean;
@@ -435,7 +438,7 @@ export function useChatStream(): UseChatStreamResult {
         try {
           const sessionId = readStoredSessionId();
           const payload: ChatRequest = { message: text, session_id: sessionId ?? undefined };
-          const response = await fetch(`${resolveApiBaseUrl()}/api/v1/public/chat`, {
+          const response = await fetch(`${resolveBrowserApiBaseUrl()}/api/v1/public/chat`, {
             method: 'POST',
             headers: { 'content-type': 'application/json' },
             body: JSON.stringify(payload),
@@ -478,9 +481,10 @@ export function useChatStream(): UseChatStreamResult {
                 setMessages((prev) => attachCitations(prev, citations));
               });
             },
-            onDone: ({ session_id }) => {
+            onDone: ({ session_id, message_id }) => {
               applyIfNotAborted(() => {
                 persistSessionId(session_id);
+                setMessages((prev) => attachMessageId(prev, message_id));
               });
             },
             onError: ({ message }) => {

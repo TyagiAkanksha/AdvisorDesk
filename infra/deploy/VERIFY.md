@@ -421,3 +421,13 @@ FIRST (`0008 -> 0009`, additive), then `up -d`. Verified: all three containers h
 `gpt-5.4-mini gpt-5.4 text-embedding-3-small 1024`, `/api/v1/healthz` 200, all three public
 origins 200, 0 error lines in the api log, the box's `.env` has no `CHAT_MODEL` line. Wave 1 is
 NOT yet published on prod (28 published items) — that is §8's owner checklist above.
+
+**Deploy record 2026-09-13, second release (`b59c253`, PR #53 — task 19):** images `b59c253`
+pushed via `push_ecr.sh`; SSM rollout backed up the box compose (`docker-compose.yml.bak-ca4e634`),
+bumped the three tags, `up -d` — **no migration** (schema stays `0009`). Verified: all three
+containers healthy on `b59c253`, `alembic current` = `0009 (head)`, `/api/v1/healthz` 200, three
+public origins 200, 0 api error lines, and the new admin route `GET /api/v1/weak-queries` answers
+`401 auth_required` without a session (mounted and gated). Wave 1 had been published between the
+two releases (`app.seed` inside the `ca4e634` image: 16 created/published, 28 → 44 public items),
+the 40-question replay run, and `weak_queries` read back — see
+`docs/plans/phase-9-eval-data-loop/rehearsal.md` §4 record.

@@ -71,6 +71,6 @@ const baseQueryWithReauth: BaseQueryFn<string | FetchArgs, unknown, FetchBaseQue
 // no override is needed for `fetch` mocking to work in tests either.
 export const baseApi = createApi({
   baseQuery: baseQueryWithReauth,
-  tagTypes: ['Content', 'Tags', 'Stats', 'Me', 'ConnectedApps'],
+  tagTypes: ['Content', 'Tags', 'Stats', 'Me', 'ConnectedApps', 'WeakQueries'],
   endpoints: () => ({}),
 });

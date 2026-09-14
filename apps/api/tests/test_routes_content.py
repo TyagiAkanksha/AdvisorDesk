@@ -161,6 +161,7 @@ def _unauthenticated_route_cases() -> list[tuple[str, str, str, dict[str, str] |
         ("content_archive", "POST", f"/api/v1/content/{content_id}/archive", None),
         ("tags_list", "GET", "/api/v1/tags", None),
         ("stats_get", "GET", "/api/v1/stats", None),
+        ("weak_queries_get", "GET", "/api/v1/weak-queries", None),
     ]
 
 

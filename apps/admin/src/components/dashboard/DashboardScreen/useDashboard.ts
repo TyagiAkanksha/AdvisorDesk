@@ -1,9 +1,11 @@
 import { useRisingEdgeNotice, useSnackbar } from '@/components/common';
 import { useListContentQuery } from '@/lib/api/contentApi';
 import { useGetStatsQuery } from '@/lib/api/statsApi';
+import { useGetWeakQueriesQuery } from '@/lib/api/weakQueriesApi';
 import { DASHBOARD_REFRESH_ERROR } from '@/lib/copy';
 import type { ContentDto } from '@/types/api/content';
 import type { StatsDto } from '@/types/api/stats';
+import type { WeakQueryGroupDto } from '@/types/api/weakQueries';
 
 // task-17 (DESIGN.md §2, §5 C3): replaces useDashboardStats.ts — the dashboard now also reads
 // `GET /api/v1/content` (recent content) and derives the tag table rows, so one hook owns both
@@ -19,6 +21,8 @@ export interface UseDashboardResult {
   tagRows: TagRow[];
   recent: ContentDto[] | undefined;
   recentFailed: boolean;
+  weakQueries: WeakQueryGroupDto[] | undefined;
+  weakQueriesFailed: boolean;
   isLoading: boolean;
   loadFailed: boolean;
 }
@@ -38,6 +42,10 @@ export function useDashboard(): UseDashboardResult {
     page: 1,
     page_size: 5,
   });
+  const { data: weakQueriesData, isError: weakQueriesIsError } = useGetWeakQueriesQuery({
+    days: 7,
+    limit: 20,
+  });
 
   // Final review, finding F8/C-4 (propagated from useDashboardStats.ts): a background refetch
   // (e.g. another screen's mutation invalidating the `'Stats'` tag while this screen is still
@@ -54,6 +62,8 @@ export function useDashboard(): UseDashboardResult {
     tagRows: toTagRows(stats?.by_tag),
     recent: recentList?.items,
     recentFailed: recentList === undefined && recentIsError,
+    weakQueries: weakQueriesData?.items,
+    weakQueriesFailed: weakQueriesData === undefined && weakQueriesIsError,
     isLoading: stats === undefined && statsIsLoading,
     loadFailed: stats === undefined && statsIsError,
   };

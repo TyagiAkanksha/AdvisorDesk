@@ -152,3 +152,10 @@ export const TOOL_RUNNING_PREFIX = 'Running';
 export const TOOL_RAN_PREFIX = 'Ran';
 export const TOOL_ARGUMENTS_LABEL = 'Arguments';
 export const TOOL_RESULT_LABEL = 'Result';
+
+// phase-9 task-19 (DESIGN §D): the dashboard's weak-queries card — panel title, empty/error copy
+// and the leaf table's aria-label.
+export const WEAK_QUERIES_TITLE = 'Weak queries (last 7 days)';
+export const NO_WEAK_QUERIES_MESSAGE = 'No weak queries in the last 7 days.';
+export const WEAK_QUERIES_LOAD_ERROR = "Couldn't load weak queries.";
+export const WEAK_QUERIES_ARIA_LABEL = 'Weak queries';

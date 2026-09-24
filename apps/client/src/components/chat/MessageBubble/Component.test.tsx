@@ -88,6 +88,27 @@ describe('MessageBubble', () => {
     expect(screen.queryByRole('status')).not.toBeInTheDocument();
   });
 
+  // cw t01 (PRD §5.3/§7.5 amended): a props-level pin that `MessageBubble` already satisfies
+  // today — it renders off `message.refusal` directly (Component.tsx:75, `message.refusal ?`),
+  // never off `citations.length === 0`. Task 02's small-talk reply is the real case this
+  // documents: zero citations is not, on its own, a refusal. Expected to PASS at RED (see
+  // t01-test-author.md's RED evidence for confirmation) — no production change needed for this
+  // one; it exists to guard the behavior task 02 depends on, and to catch a future regression
+  // that reintroduces a `citations.length === 0` inference here.
+  it('renders a plain bubble for zero citations when refusal is false', () => {
+    const message: ChatMessage = {
+      role: 'assistant',
+      text: 'Hi!',
+      citations: [],
+      refusal: false,
+    };
+
+    render(<MessageBubble message={message} />);
+
+    expect(screen.queryByRole('status')).not.toBeInTheDocument();
+    expect(screen.queryByRole('region', { name: 'Sources' })).not.toBeInTheDocument();
+  });
+
   // phase-8 task-03 (DESIGN.md §A2): assistant answers switch the shared Markdown renderer to
   // the compact `chat` variant (body2, tighter margins). RED until `MessageBubble` passes
   // `variant="chat"` to `<Markdown>`.

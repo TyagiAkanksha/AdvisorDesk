@@ -177,3 +177,57 @@ describe('parseSseStream — M-7 payload validation (parser half)', () => {
     expect(calls).toEqual([{ kind: 'done', payload: { session_id: 's', message_id: 'm' } }]);
   });
 });
+
+describe('parseSseStream — cw t01: explicit refusal flag on the citations event', () => {
+  it('dispatches citations and refusal as one payload', async () => {
+    const body = sseBody([
+      {
+        event: 'citations',
+        data: {
+          citations: [{ content_id: 'c-1', title: 'Roth IRA Basics', slug: 'roth-ira-basics' }],
+          refusal: true,
+        },
+      },
+    ]);
+    const { reader } = readerForBody(body);
+    const { calls, onToken, onCitations, onDone, onError } = recordingHandlers();
+
+    await parseSseStream(reader, { onToken, onCitations, onDone, onError });
+
+    expect(calls).toEqual([
+      {
+        kind: 'citations',
+        payload: {
+          citations: [{ content_id: 'c-1', title: 'Roth IRA Basics', slug: 'roth-ira-basics' }],
+          refusal: true,
+        },
+      },
+    ]);
+  });
+
+  it('ignores a citations event whose refusal is missing', async () => {
+    const body = sseBody([
+      { event: 'citations', data: { citations: [] } },
+      { event: 'done', data: { session_id: 's', message_id: 'm' } },
+    ]);
+    const { reader } = readerForBody(body);
+    const { calls, onToken, onCitations, onDone, onError } = recordingHandlers();
+
+    await parseSseStream(reader, { onToken, onCitations, onDone, onError });
+
+    expect(calls).toEqual([{ kind: 'done', payload: { session_id: 's', message_id: 'm' } }]);
+  });
+
+  it('ignores a citations event whose refusal is not a boolean', async () => {
+    const body = sseBody([
+      { event: 'citations', data: { citations: [], refusal: 'yes' } },
+      { event: 'done', data: { session_id: 's', message_id: 'm' } },
+    ]);
+    const { reader } = readerForBody(body);
+    const { calls, onToken, onCitations, onDone, onError } = recordingHandlers();
+
+    await parseSseStream(reader, { onToken, onCitations, onDone, onError });
+
+    expect(calls).toEqual([{ kind: 'done', payload: { session_id: 's', message_id: 'm' } }]);
+  });
+});

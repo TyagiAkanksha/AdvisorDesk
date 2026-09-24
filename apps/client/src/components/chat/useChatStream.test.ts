@@ -294,7 +294,7 @@ describe('useChatStream', () => {
       vi.fn().mockResolvedValue(
         streamResponse([
           { event: 'token', data: { text: 'Both are retirement accounts.' } },
-          { event: 'citations', data: { citations } },
+          { event: 'citations', data: { citations, refusal: false } },
           { event: 'done', data: { session_id: 's-2', message_id: 'm-2' } },
         ]),
       ),
@@ -313,13 +313,13 @@ describe('useChatStream', () => {
     expect(assistant?.refusal).not.toBe(true);
   });
 
-  it('an empty citations array ([]) flags the assistant message as a refusal', async () => {
+  it('an empty citations array with refusal:true flags the assistant message as a refusal', async () => {
     vi.stubGlobal(
       'fetch',
       vi.fn().mockResolvedValue(
         streamResponse([
           { event: 'token', data: { text: 'No published guidance covers this.' } },
-          { event: 'citations', data: { citations: [] } },
+          { event: 'citations', data: { citations: [], refusal: true } },
           { event: 'done', data: { session_id: 's-3', message_id: 'm-3' } },
         ]),
       ),
@@ -336,6 +336,34 @@ describe('useChatStream', () => {
     );
     expect(assistant?.citations).toEqual([]);
     expect(assistant?.refusal).toBe(true);
+  });
+
+  // cw t01 (PRD §5.3/§7.5 amended): an empty `citations` array alone is NOT a refusal — the
+  // server's explicit `refusal` flag is the only signal. Task 02's small-talk reply is the real
+  // case this documents: zero citations, `refusal: false`.
+  it('an empty citations array with refusal:false is NOT flagged as a refusal', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(
+        streamResponse([
+          { event: 'token', data: { text: 'Hi! Ask me about the firm’s articles.' } },
+          { event: 'citations', data: { citations: [], refusal: false } },
+          { event: 'done', data: { session_id: 's-3b', message_id: 'm-3b' } },
+        ]),
+      ),
+    );
+
+    const { result } = renderHook(() => useChatStream());
+    act(() => {
+      result.current.send('hi');
+    });
+    await waitFor(() => expect(result.current.streaming).toBe(false));
+
+    const assistant = result.current.messages.find(
+      (message: ChatMessage) => message.role === 'assistant',
+    );
+    expect(assistant?.citations).toEqual([]);
+    expect(assistant?.refusal).toBe(false);
   });
 
   it('streaming is true immediately after send() and false once the stream completes', async () => {

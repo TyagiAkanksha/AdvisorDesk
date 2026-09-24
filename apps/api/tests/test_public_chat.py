@@ -325,7 +325,10 @@ def test_happy_path_streams_tokens_then_citations_then_done(
     assert _accumulated_token_text(events) == "".join(answer_tokens)
 
     citations_event = next(e for e in events if e.name == "citations")
-    assert citations_event.data == {"citations": [_content_level_citation(content)]}
+    assert citations_event.data == {
+        "citations": [_content_level_citation(content)],
+        "refusal": False,
+    }
 
     done_event = next(e for e in events if e.name == "done")
     assert isinstance(done_event.data["session_id"], str) and done_event.data["session_id"]
@@ -454,7 +457,8 @@ def test_citation_asymmetry_wire_deduped_content_level_row_chunk_level_from_one_
     # Content level, deduped, ordered by first use: A before B (2 entries, not 3).
     citations_event = next(e for e in events if e.name == "citations")
     assert citations_event.data == {
-        "citations": [_content_level_citation(content_a), _content_level_citation(content_b)]
+        "citations": [_content_level_citation(content_a), _content_level_citation(content_b)],
+        "refusal": False,
     }
 
     done_event = next(e for e in events if e.name == "done")
@@ -533,7 +537,7 @@ def test_outcome_recording_uncovered_question_refuses_with_zero_sources_and_retr
     assert _accumulated_token_text(events) == "".join(refusal_tokens)
 
     citations_event = next(e for e in events if e.name == "citations")
-    assert citations_event.data == {"citations": []}
+    assert citations_event.data == {"citations": [], "refusal": True}
 
     done_event = next(e for e in events if e.name == "done")
     message_id = uuid.UUID(str(done_event.data["message_id"]))
@@ -548,6 +552,82 @@ def test_outcome_recording_uncovered_question_refuses_with_zero_sources_and_retr
         assert assistant_row.retrieval_found is False
         assert assistant_row.top_similarity is None
         assert not assistant_row.citations
+
+
+# ---------------------------------------------------------------------------
+# 4a. Explicit `refusal` flag on the `citations` wire event (cw t01; PRD §5.3/§7.5).
+# ---------------------------------------------------------------------------
+
+
+def test_citations_event_carries_refusal_true_for_a_declining_answer(
+    tmp_engine: Engine, db_session: Session
+) -> None:
+    """cw t01: zero chunks (an empty index) -> the default `FakeChatLLM` refusal tokens open with
+    the decline phrase -> the `citations` event carries `"refusal": True` alongside the (still
+    empty) `citations` array."""
+    chat_llm = FakeChatLLM(answer_tokens=["Should ", "never ", "stream."])
+    embedder = FakeEmbedder(vector=QUERY_VECTOR)
+    client = _build_client(tmp_engine, chat_llm=chat_llm, embedder=embedder)
+
+    status, _content_type, body = _post_chat(client, {"message": "An uncovered question."})
+
+    assert status == 200, body
+    events = _parse_sse_events(body)
+    _assert_ok_event_shape(events)
+
+    citations_event = next(e for e in events if e.name == "citations")
+    assert citations_event.data == {"citations": [], "refusal": True}
+
+
+def test_citations_event_carries_refusal_false_for_a_grounded_answer(
+    tmp_engine: Engine, db_session: Session
+) -> None:
+    """cw t01: one retrieved chunk -> the grounded `answer_tokens` script runs (no decline
+    phrase) -> the `citations` event carries `"refusal": False` alongside that content's
+    citation."""
+    content = _add_content(db_session, slug="refusal-flag-grounded-content")
+    _add_chunk(db_session, content.id, chunk_index=0, text="grounded chunk", cos_theta=0.9)
+    db_session.commit()
+
+    chat_llm = FakeChatLLM(answer_tokens=["Grounded ", "answer."])
+    embedder = FakeEmbedder(vector=QUERY_VECTOR)
+    client = _build_client(tmp_engine, chat_llm=chat_llm, embedder=embedder)
+
+    status, _content_type, body = _post_chat(client, {"message": "A covered question."})
+
+    assert status == 200, body
+    events = _parse_sse_events(body)
+    _assert_ok_event_shape(events)
+
+    citations_event = next(e for e in events if e.name == "citations")
+    assert citations_event.data == {
+        "citations": [_content_level_citation(content)],
+        "refusal": False,
+    }
+
+
+def test_citations_event_carries_refusal_false_for_a_small_talk_reply_with_zero_citations(
+    tmp_engine: Engine, db_session: Session
+) -> None:
+    """cw t01: zero chunks (an empty index), but the answerer's refusal-slot tokens are a
+    small-talk reply that never opens with the decline phrase -> `"refusal": False` even though
+    `citations` is still empty — an empty `citations` array alone is NOT a refusal (task 02's
+    small-talk case, PRD §5.3's amended wire block)."""
+    chat_llm = FakeChatLLM(
+        answer_tokens=["Should ", "never ", "stream."],
+        refusal_tokens=["Hi! ", "Ask me about the firm's articles."],
+    )
+    embedder = FakeEmbedder(vector=QUERY_VECTOR)
+    client = _build_client(tmp_engine, chat_llm=chat_llm, embedder=embedder)
+
+    status, _content_type, body = _post_chat(client, {"message": "hi"})
+
+    assert status == 200, body
+    events = _parse_sse_events(body)
+    _assert_ok_event_shape(events)
+
+    citations_event = next(e for e in events if e.name == "citations")
+    assert citations_event.data == {"citations": [], "refusal": False}
 
 
 # ---------------------------------------------------------------------------

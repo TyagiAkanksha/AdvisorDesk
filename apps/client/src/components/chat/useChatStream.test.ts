@@ -185,7 +185,7 @@ describe('parseSseStream', () => {
         { event: 'token', data: { text: 'world.' } },
         {
           event: 'citations',
-          data: { citations: [{ content_id: 'c-1', title: 'T', slug: 't' }] },
+          data: { citations: [{ content_id: 'c-1', title: 'T', slug: 't' }], refusal: false },
         },
         { event: 'done', data: { session_id: 's-1', message_id: 'm-1' } },
       ]),
@@ -197,7 +197,10 @@ describe('parseSseStream', () => {
     expect(calls).toEqual([
       { kind: 'token', payload: 'Hello ' },
       { kind: 'token', payload: 'world.' },
-      { kind: 'citations', payload: [{ content_id: 'c-1', title: 'T', slug: 't' }] },
+      {
+        kind: 'citations',
+        payload: { citations: [{ content_id: 'c-1', title: 'T', slug: 't' }], refusal: false },
+      },
       { kind: 'done', payload: { session_id: 's-1', message_id: 'm-1' } },
     ]);
   });

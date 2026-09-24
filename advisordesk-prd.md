@@ -265,7 +265,7 @@ All routes prefixed `/api/v1`. JSON in/out; streaming endpoints use SSE with the
 
 ```
 event: token       data: {"text": "..."}                                  (repeated)
-event: citations   data: {"citations": [{"content_id","title","slug"}]}   (deduped by content item, ordered by first use)
+event: citations   data: {"citations": [{"content_id","title","slug"}], "refusal": bool}   (deduped by content item, ordered by first use; refusal = the answer opens with the decline phrase, see §7.5)
 event: done        data: {"session_id": "...", "message_id": "..."}
 event: error       data: {"error": {"code","message"}}
 ```

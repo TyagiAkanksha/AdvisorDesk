@@ -22,6 +22,17 @@ export interface CitationDto {
 }
 export type Citation = CitationDto;
 
+// cw t01 (PRD §5.3/§7.5): the `citations` SSE event's full payload — hand-authored for the same
+// reason `CitationDto` above is (the SSE body is an opaque string in openapi.json). `refusal` is
+// the server's EXPLICIT signal that the answer declined (its first sentence contains "no
+// published guidance", `app.services.chat.is_declining_answer`), not inferred client-side from an
+// empty `citations` array.
+export interface CitationsEventDto {
+  citations: CitationDto[];
+  refusal: boolean;
+}
+export type CitationsEvent = CitationsEventDto;
+
 // phase-9 task-17 (DESIGN §A/D2): `POST /public/chat/{message_id}/feedback`'s body — a real
 // Pydantic schema, so it comes from the generated OpenAPI types like every other wire type
 // (docs/FRONTEND-CONVENTIONS.md §5), not hand-authored like `Citation` above.

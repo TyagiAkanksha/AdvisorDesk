@@ -378,7 +378,10 @@ _WEAK_QUERY_SCAN_LIMIT = 2000
 # 05c, backed by `MetricsJudge.is_refusal`) is the semantic, judge-based counterpart the eval
 # harness uses instead — naming both here, in one place, is what keeps a future phrasing change in
 # `app.rag.synthesis` from silently blinding this heuristic without either side ever raising an
-# error.
+# error. cw t01: `app.routes.public_routes._generate_chat_stream` is a third consumer — it calls
+# the public `is_declining_answer` (below) to compute the `citations` SSE event's explicit
+# `refusal` wire flag (PRD §5.3/§7.5), replacing the client's old `citations.length === 0`
+# inference.
 #
 # Fix round 1 narrowed the ORIGINAL match (the full phrase "no published guidance covers this",
 # anywhere in the answer) two ways the review's boundary probe proved were both wrong:
@@ -409,7 +412,7 @@ _SENTENCE_END_RE = re.compile(r"[.!?](?=\s|$)")
 
 
 def _first_sentence_prefix(answer: str) -> str:
-    """A minimal, LOCAL "first sentence" approximation for `_is_declining_answer` — deliberately
+    """A minimal, LOCAL "first sentence" approximation for `is_declining_answer` — deliberately
     NOT `app.eval.metrics.split_sentences` (the repo's real, abbreviation-aware sentence
     splitter): that module lives in `app.eval`, and the import-linter contract "app.services
     imports only app.models and app.config" (`apps/api/pyproject.toml`) forbids `app.services`
@@ -424,7 +427,7 @@ def _first_sentence_prefix(answer: str) -> str:
     return window[: match.end()] if match else window
 
 
-def _is_declining_answer(answer: str) -> bool:
+def is_declining_answer(answer: str) -> bool:
     """True when `answer`'s FIRST SENTENCE (see `_first_sentence_prefix`) matches the canonical
     refusal phrasing (see `_DECLINE_PHRASE`'s own comment for why this is a reporting heuristic,
     not a judge call, and why the match is scoped to the first sentence). Casefolded substring
@@ -476,7 +479,7 @@ def _classify_turn(turn: _PairedTurn, *, threshold: float) -> str | None:
     # a `retrieval_found is False` row is untouched by a declining answer here — "something was
     # close" (or wasn't) is information about RETRIEVAL, which rows 3-4 already classify on their
     # own; a decline adds nothing there.
-    if turn.retrieval_found is True and _is_declining_answer(turn.answer):
+    if turn.retrieval_found is True and is_declining_answer(turn.answer):
         return NEAR_MISS
 
     # Row 3: nothing retrieved close enough to call it a near miss.
@@ -517,7 +520,7 @@ def weak_queries(
 
     Row 1 outranks every inferred signal — a human said so. Row 2 (controller ruling,
     2026-09-12) is the case `retrieval_found` alone cannot see: retrieval cleared the threshold
-    and the answerer declined anyway (see `_is_declining_answer`). Narrower than it looks: this
+    and the answerer declined anyway (see `is_declining_answer`). Narrower than it looks: this
     fires ONLY when `retrieval_found IS True` — a not-found row's classification (rows 3-4) is
     unaffected by a declining answer, because "something was close" is information about
     RETRIEVAL, and a decline adds nothing there.

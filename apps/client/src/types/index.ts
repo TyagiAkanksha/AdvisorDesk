@@ -20,4 +20,6 @@ export type {
   ChatRequestDto,
   Citation,
   CitationDto,
+  CitationsEvent,
+  CitationsEventDto,
 } from './api/chat';

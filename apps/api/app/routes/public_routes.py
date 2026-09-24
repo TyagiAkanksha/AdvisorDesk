@@ -74,6 +74,7 @@ from app.routes.sse import sse_event, sse_response
 from app.services import content as content_service
 from app.services.chat import (
     get_or_create_session,
+    is_declining_answer,
     record_assistant_message,
     record_user_message,
     set_message_feedback,
@@ -273,9 +274,13 @@ def _generate_chat_stream(
 
         # PRD §4 citation asymmetry, wire half: deduped to content level (§5.3) right here, right
         # before it goes over the wire — the DB row just written above kept the chunk-level shape
-        # (`app.services.chat.record_assistant_message`'s own comment is the other half).
+        # (`app.services.chat.record_assistant_message`'s own comment is the other half). cw t01:
+        # `refusal` rides the same event, computed from the same `answer_text` already in scope —
+        # explicit now (PRD §5.3/§7.5), not inferred client-side from an empty `citations` array.
         citations = dedupe_citations(retrieval.chunks)
-        yield sse_event("citations", {"citations": citations})
+        yield sse_event(
+            "citations", {"citations": citations, "refusal": is_declining_answer(answer_text)}
+        )
         yield sse_event(
             "done", {"session_id": str(chat_session.id), "message_id": str(assistant_message.id)}
         )
@@ -408,9 +413,10 @@ def public_chat(
     # text. Fix round 1, finding I-2: only a genuine `token` event records anything — a stream
     # whose first (and, on the failure path, only) block is an `error` event no longer lands a
     # sample in the reserved "public_chat" first-TOKEN bucket, which PRD §9.1 defines as
-    # time-to-first-token specifically, not time-to-first-SSE-block-of-any-kind. A refusal (no
-    # matching content) is unaffected: `_generate_chat_stream` still streams real `token` events
-    # for a refusal, so it still belongs in the metric. When it does fire, it records the elapsed
+    # time-to-first-token specifically, not time-to-first-SSE-block-of-any-kind. A refusal (cw
+    # t01: `is_declining_answer(answer_text)` is true) is unaffected: `_generate_chat_stream`
+    # still streams real `token` events for a refusal, so it still belongs in the metric. When it
+    # does fire, it records the elapsed
     # time under `app.state.latency_tracker`'s reserved `"public_chat"` key, logging the greppable
     # `chat_latency ...` line every 100 samples (`app.routes.metrics.
     # observe_and_maybe_log_chat_latency`, §9.1's phase-7-consumed metric).

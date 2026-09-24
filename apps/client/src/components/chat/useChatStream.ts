@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { resolveBrowserApiBaseUrl } from '@/lib/browserApiBase';
 import { GENERIC_ERROR_MESSAGE } from '@/lib/copy';
-import type { ChatRequest, Citation } from '@/types';
+import type { ChatRequest, Citation, CitationsEvent } from '@/types';
 
 export type { Citation };
 
@@ -26,7 +26,8 @@ export interface ChatMessage {
   text: string;
   /** Present once the `citations` event has landed for this assistant turn. */
   citations?: Citation[];
-  /** PRD §5.3/§7.5: no published guidance covers the question — an empty `citations` array. */
+  /** PRD §5.3/§7.5: the server's explicit refusal flag from the `citations` event — the answer
+   *  opens with the decline phrase. Not inferred from an empty citations array. */
   refusal?: boolean;
   /**
    * The server-minted `chat_messages.id` from this turn's `done` event — the only capability
@@ -43,7 +44,7 @@ export interface ChatMessage {
  */
 export interface SseHandlers {
   onToken: (text: string) => void;
-  onCitations: (citations: Citation[]) => void;
+  onCitations: (payload: CitationsEvent) => void;
   onDone: (payload: { session_id: string; message_id: string }) => void;
   onError: (payload: { code: string; message: string }) => void;
 }
@@ -107,7 +108,8 @@ function parseFrame(frame: string): SseFrame | null {
  * task-05 review round 1, M-7: each payload is validated before use rather than blindly cast —
  * a `token` event whose `data.text` isn't a string is ignored outright (never appends the
  * literal string `"undefined"` to the answer, probe P-A11); a `citations` event whose
- * `data.citations` isn't an array is likewise ignored. `done`/`error` are left as direct casts:
+ * `data.citations` isn't an array, or whose `data.refusal` isn't a boolean (cw t01: the
+ * explicit refusal flag), is likewise ignored. `done`/`error` are left as direct casts:
  * both are only ever consumed as opaque pass-through payloads (a session/message id string pair,
  * an error code/message pair) with no string-concatenation hazard the way `onToken` has. */
 function dispatchFrame(frame: string, handlers: SseHandlers): void {
@@ -125,9 +127,12 @@ function dispatchFrame(frame: string, handlers: SseHandlers): void {
       return;
     }
     case 'citations': {
-      const payload = parsed.data as { citations?: unknown };
-      if (Array.isArray(payload.citations)) {
-        handlers.onCitations(payload.citations as Citation[]);
+      const payload = parsed.data as { citations?: unknown; refusal?: unknown };
+      if (Array.isArray(payload.citations) && typeof payload.refusal === 'boolean') {
+        handlers.onCitations({
+          citations: payload.citations as Citation[],
+          refusal: payload.refusal,
+        });
       }
       return;
     }
@@ -327,8 +332,9 @@ function appendAssistantToken(
 }
 
 /**
- * Attach `citations` to the in-progress assistant message; an empty array flags it as a refusal
- * (PRD §7.4/§7.5 — no published guidance covers the question). Pure.
+ * Attach `citations` and the server's `refusal` flag to the in-progress assistant message (PRD
+ * §5.3/§7.5: the server's explicit refusal flag from the `citations` event — the answer opens
+ * with the decline phrase. Not inferred from an empty citations array). Pure.
  *
  * task-05 review round 1, M-7 (probe P-C2): previously a no-op when the last message wasn't an
  * assistant turn, which silently dropped a `citations` event that arrives with NO preceding
@@ -336,12 +342,16 @@ function appendAssistantToken(
  * a silent blank region FRONTEND-CONVENTIONS.md §9 forbids. Now it starts a (empty-text)
  * assistant turn in that case instead, so the exchange always surfaces *something*.
  */
-function attachCitations(messages: ChatMessage[], citations: Citation[]): ChatMessage[] {
+function attachCitations(
+  messages: ChatMessage[],
+  citations: Citation[],
+  refusal: boolean,
+): ChatMessage[] {
   const last = messages[messages.length - 1];
   if (last !== undefined && last.role === 'assistant') {
-    return [...messages.slice(0, -1), { ...last, citations, refusal: citations.length === 0 }];
+    return [...messages.slice(0, -1), { ...last, citations, refusal }];
   }
-  return [...messages, { role: 'assistant', text: '', citations, refusal: citations.length === 0 }];
+  return [...messages, { role: 'assistant', text: '', citations, refusal }];
 }
 
 /** Attach the server's message id to the in-progress assistant message. Pure.
@@ -476,9 +486,9 @@ export function useChatStream(): UseChatStreamResult {
                 firstTokenSeen = true;
               });
             },
-            onCitations: (citations) => {
+            onCitations: (payload) => {
               applyIfNotAborted(() => {
-                setMessages((prev) => attachCitations(prev, citations));
+                setMessages((prev) => attachCitations(prev, payload.citations, payload.refusal));
               });
             },
             onDone: ({ session_id, message_id }) => {

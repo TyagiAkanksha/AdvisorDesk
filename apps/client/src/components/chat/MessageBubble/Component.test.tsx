@@ -62,6 +62,7 @@ describe('MessageBubble', () => {
     // '[n]' chips — a reader no longer has to hover to learn what a citation points to.
     const link = screen.getByRole('link', { name: '[1] Roth IRA Basics' });
     expect(link).toHaveAttribute('href', '/content/roth-ira-basics');
+    expect(screen.getByRole('region', { name: SOURCES_LABEL })).toBeInTheDocument();
   });
 
   it('renders the message in a status region when the assistant message is flagged as a refusal', () => {

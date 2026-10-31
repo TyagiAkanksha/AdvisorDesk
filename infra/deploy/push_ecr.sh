@@ -146,7 +146,7 @@ build_tag_push() {
   # 2026-10-31). A second run for the SAME commit would otherwise die here with
   # ImageTagAlreadyExistsException, so an already-pushed sha tag is skipped, not re-pushed —
   # to ship a changed image, commit (new sha) and run again.
-  if aws ecr describe-images --repository-name "${image_uri#*/}" --image-ids "imageTag=${GIT_SHA}" >/dev/null 2>&1; then
+  if aws ecr describe-images --region "$AWS_REGION" --repository-name "$repo_name" --image-ids "imageTag=${GIT_SHA}" >/dev/null 2>&1; then
     echo "   ${image_uri}:${GIT_SHA} already exists (sha tags are immutable) -- skipping push"
   else
     docker push "${image_uri}:${GIT_SHA}"

@@ -1,4 +1,4 @@
-"""Failing (RED) tests for MCP tool annotations (vrf t01).
+"""Tests for MCP tool annotations (vrf t01).
 
 Brief: docs/plans/video-review-fixes/task-01-mcp-tool-annotations.md. Every registered tool must
 advertise `readOnlyHint`/`destructiveHint` so hosts (claude.ai) run read tools without asking.
@@ -14,6 +14,7 @@ import pytest
 from app.agent.llm import _to_openai_tools
 from app.mcp.runtime import list_tool_schemas
 from app.mcp.server import _handle_list_tools
+from app.mcp.tool_spec import ToolHints
 
 # tool -> (readOnlyHint, destructiveHint); exact table from the brief.
 _EXPECTED: dict[str, tuple[bool, bool]] = {
@@ -80,3 +81,7 @@ def test_openai_tool_definitions_do_not_leak_annotations() -> None:
     for tool in _to_openai_tools(with_ann):
         assert "annotations" not in tool
         assert "annotations" not in tool["function"]
+
+
+def test_tool_hints_default_is_not_read_only_and_destructive() -> None:
+    assert ToolHints() == ToolHints(read_only=False, destructive=True)

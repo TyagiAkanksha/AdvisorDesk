@@ -431,7 +431,7 @@ Definition of done: a stranger can follow the README, run the demo script end to
 
 ## 14. Changelog
 
-- **v1.8** — A refusal renders without a Sources list in the client, even when retrieval returned a
+- **v1.7** — A refusal renders without a Sources list in the client, even when retrieval returned a
   near-miss chunk (§7 step 5; video-review fixes t02, 2026-10-31); the `citations` event's
   `refusal` flag (§5.3) is what the client keys on.
 - **v1.6** — LLM provider switched back to OpenAI by default (task 6R-14, 2026-09-06; P0

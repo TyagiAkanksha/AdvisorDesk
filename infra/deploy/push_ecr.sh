@@ -24,7 +24,9 @@ set -euo pipefail
 #     (`aws configure`, or exported AWS_* env vars / an SSO profile) that can
 #     create/describe ECR repositories and push images in the target account.
 #   - Re-running this script is safe: it never fails just because a repo or
-#     tag already exists (see "idempotent" notes inline below).
+#     tag already exists (see "idempotent" notes inline below). Since 2026-10-31 the
+#     repos are tag-immutable except `latest`, so an existing sha tag is skipped rather
+#     than overwritten.
 #
 # Usage:
 #   AWS_ACCOUNT_ID=123456789012 ./infra/deploy/push_ecr.sh
@@ -140,7 +142,15 @@ build_tag_push() {
   echo "-- Pushing ${image_uri}:latest"
   docker push "${image_uri}:latest"
   echo "-- Pushing ${image_uri}:${GIT_SHA}"
-  docker push "${image_uri}:${GIT_SHA}"
+  # The three repos are IMMUTABLE_WITH_EXCLUSION (only `latest` may be overwritten; set
+  # 2026-10-31). A second run for the SAME commit would otherwise die here with
+  # ImageTagAlreadyExistsException, so an already-pushed sha tag is skipped, not re-pushed —
+  # to ship a changed image, commit (new sha) and run again.
+  if aws ecr describe-images --repository-name "${image_uri#*/}" --image-ids "imageTag=${GIT_SHA}" >/dev/null 2>&1; then
+    echo "   ${image_uri}:${GIT_SHA} already exists (sha tags are immutable) -- skipping push"
+  else
+    docker push "${image_uri}:${GIT_SHA}"
+  fi
 }
 
 # api: no build args. infra/Dockerfile.api's own top-of-file comment: runtime config is

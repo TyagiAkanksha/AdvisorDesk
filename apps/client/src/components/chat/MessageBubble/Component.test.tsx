@@ -3,6 +3,7 @@ import { render, screen } from '@testing-library/react';
 import '@testing-library/jest-dom/vitest';
 import { describe, expect, it } from 'vitest';
 
+import { SOURCES_LABEL } from '@/lib/copy';
 import type { ChatMessage } from '../useChatStream';
 import { MessageBubble } from '.';
 
@@ -86,6 +87,21 @@ describe('MessageBubble', () => {
     render(<MessageBubble message={message} />);
 
     expect(screen.queryByRole('status')).not.toBeInTheDocument();
+  });
+
+  // vrf t02: a refusal never advertises Sources, even when retrieval returned a near-miss chunk.
+  it('renders no Sources region for a refusal even when citations are present (near miss)', () => {
+    const message: ChatMessage = {
+      role: 'assistant',
+      text: 'No published guidance covers this.',
+      citations: [{ content_id: 'c-1', title: 'ISOs and NSOs', slug: 'isos-and-nsos' }],
+      refusal: true,
+    };
+
+    render(<MessageBubble message={message} />);
+
+    expect(screen.queryByRole('region', { name: SOURCES_LABEL })).not.toBeInTheDocument();
+    expect(screen.getByRole('status')).toBeInTheDocument();
   });
 
   // cw t01 (PRD §5.3/§7.5 amended): a props-level pin that `MessageBubble` already satisfies

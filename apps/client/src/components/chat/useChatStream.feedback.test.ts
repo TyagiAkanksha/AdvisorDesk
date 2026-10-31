@@ -42,7 +42,7 @@ describe('useChatStream message ids', () => {
           { event: 'token', data: { text: 'RSUs vest on a schedule.' } },
           {
             event: 'citations',
-            data: { citations: [{ content_id: 'c-1', title: 'T', slug: 't' }] },
+            data: { citations: [{ content_id: 'c-1', title: 'T', slug: 't' }], refusal: false },
           },
           { event: 'done', data: { session_id: 's-1', message_id: 'm-42' } },
         ]),

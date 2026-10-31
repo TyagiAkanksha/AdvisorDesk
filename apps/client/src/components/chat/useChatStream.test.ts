@@ -375,7 +375,7 @@ describe('useChatStream', () => {
       vi.fn().mockResolvedValue(
         streamResponse([
           { event: 'token', data: { text: 'An answer.' } },
-          { event: 'citations', data: { citations: [] } },
+          { event: 'citations', data: { citations: [], refusal: false } },
           { event: 'done', data: { session_id: 's-4', message_id: 'm-4' } },
         ]),
       ),
@@ -398,14 +398,14 @@ describe('useChatStream', () => {
       .mockResolvedValueOnce(
         streamResponse([
           { event: 'token', data: { text: 'First answer.' } },
-          { event: 'citations', data: { citations: [] } },
+          { event: 'citations', data: { citations: [], refusal: false } },
           { event: 'done', data: { session_id: 'session-abc', message_id: 'm-5' } },
         ]),
       )
       .mockResolvedValueOnce(
         streamResponse([
           { event: 'token', data: { text: 'Second answer.' } },
-          { event: 'citations', data: { citations: [] } },
+          { event: 'citations', data: { citations: [], refusal: false } },
           { event: 'done', data: { session_id: 'session-abc', message_id: 'm-6' } },
         ]),
       );
@@ -444,7 +444,7 @@ describe('useChatStream', () => {
     const fetchMock = vi.fn().mockResolvedValue(
       streamResponse([
         { event: 'token', data: { text: 'Answer.' } },
-        { event: 'citations', data: { citations: [] } },
+        { event: 'citations', data: { citations: [], refusal: false } },
         { event: 'done', data: { session_id: 'existing-session-id', message_id: 'm-7' } },
       ]),
     );
@@ -573,7 +573,7 @@ describe('useChatStream', () => {
       vi.fn().mockResolvedValue(
         streamResponse([
           { event: 'token', data: { text: 'Hi' } },
-          { event: 'citations', data: { citations: [] } },
+          { event: 'citations', data: { citations: [], refusal: false } },
           { event: 'done', data: { session_id: 's-1', message_id: 'm-1' } },
         ]),
       ),
@@ -602,7 +602,7 @@ describe('useChatStream', () => {
       .mockResolvedValueOnce(
         streamResponse([
           { event: 'token', data: { text: 'Answer' } },
-          { event: 'citations', data: { citations: [] } },
+          { event: 'citations', data: { citations: [], refusal: false } },
           { event: 'done', data: { session_id: 's-2', message_id: 'm-2' } },
         ]),
       );

@@ -358,7 +358,8 @@ function attachCitations(
  *
  * phase-9 task-17 (DESIGN §A/D2): unlike `attachCitations` this returns `messages` unchanged when
  * there is no assistant turn — an id with no bubble to hang it on has nothing to render; creating
- * an empty bubble for it would invent UI, where `attachCitations` had a real refusal to show.
+ * an empty bubble for it would invent UI. (`attachCitations` does create one, because a `citations`
+ * event carries the explicit `refusal` flag and a refusal always has something to show.)
  */
 function attachMessageId(messages: ChatMessage[], messageId: string): ChatMessage[] {
   const last = messages[messages.length - 1];

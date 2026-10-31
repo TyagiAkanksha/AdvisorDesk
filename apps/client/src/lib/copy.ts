@@ -32,7 +32,7 @@ export const DISCLAIMER = 'Sample content for demonstration purposes — not fin
 // phase-8 task-09 (DESIGN.md §B2): home page header, tag filter, and empty-state copy.
 export const HOME_TITLE = 'Articles';
 export const HOME_DESCRIPTION =
-  'Plain-English explainers on retirement, insurance, taxes and college savings.';
+  'Plain-English explainers on taxes, retirement, equity compensation, investing, insurance, estate planning and college savings.';
 export const HOME_CTA_LABEL = 'Ask a question';
 export const ALL_TAGS_LABEL = 'All';
 export const NO_CONTENT_MESSAGE = 'No published content yet.';

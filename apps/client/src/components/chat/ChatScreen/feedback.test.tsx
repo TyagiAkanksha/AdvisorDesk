@@ -26,7 +26,10 @@ function streamResponse(frames: { event: string; data: unknown }[]): Response {
 
 const ANSWER_FRAMES = [
   { event: 'token', data: { text: 'RSUs are taxed as ordinary income at vest.' } },
-  { event: 'citations', data: { citations: [{ content_id: 'c-1', title: 'RSUs', slug: 'rsus' }] } },
+  {
+    event: 'citations',
+    data: { citations: [{ content_id: 'c-1', title: 'RSUs', slug: 'rsus' }], refusal: false },
+  },
   { event: 'done', data: { session_id: 's-1', message_id: 'm-7' } },
 ];
 

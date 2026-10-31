@@ -74,6 +74,16 @@ def pipeline_from_session(session: Session) -> ChunkPipeline:
 
 
 @dataclass(frozen=True)
+class ToolHints:
+    """MCP ToolAnnotations we publish. `read_only=True` tools perform no mutation at all;
+    `destructive=True` tools may overwrite or remove data (MCP's own default when a tool is
+    not read-only — we state it explicitly so the exported baseline is exact)."""
+
+    read_only: bool = False
+    destructive: bool = True
+
+
+@dataclass(frozen=True)
 class ToolSpec:
     """One registered MCP tool: its wire name/description, args model, and handler.
 
@@ -92,9 +102,12 @@ class ToolSpec:
             covariant `Callable[[SomeBaseModel], ...]` annotation without
             each individual handler failing that check; `...` is the
             standard escape for a heterogeneous callback registry.
+        hints: the MCP annotations advertised on `tools/list`; the default is
+            conservative (not read-only, destructive).
     """
 
     name: str
     description: str
     args_model: type[BaseModel]
     handler: Callable[..., dict[str, Any]]
+    hints: ToolHints = ToolHints()

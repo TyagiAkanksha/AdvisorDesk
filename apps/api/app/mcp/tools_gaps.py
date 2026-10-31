@@ -28,7 +28,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.orm import Session
 
 from app.config import Settings
-from app.mcp.tool_spec import ToolSpec
+from app.mcp.tool_spec import ToolHints, ToolSpec
 from app.services.chat import content_gaps, weak_queries
 
 # PRD §6: `report_content_gaps(days=30, limit=20)`.
@@ -144,6 +144,7 @@ GAPS_TOOLS: tuple[ToolSpec, ...] = (
         ),
         args_model=ReportContentGapsArgs,
         handler=_report_content_gaps,
+        hints=ToolHints(read_only=True, destructive=False),
     ),
     ToolSpec(
         name="report_weak_queries",
@@ -158,5 +159,6 @@ GAPS_TOOLS: tuple[ToolSpec, ...] = (
         ),
         args_model=ReportWeakQueriesArgs,
         handler=_report_weak_queries,
+        hints=ToolHints(read_only=True, destructive=False),
     ),
 )

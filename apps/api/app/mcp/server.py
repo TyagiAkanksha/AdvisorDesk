@@ -132,6 +132,10 @@ async def _handle_list_tools(
             name=cast(str, schema["name"]),
             description=cast(str, schema["description"]),
             input_schema=cast(dict[str, object], schema["inputSchema"]),
+            annotations=types.ToolAnnotations(
+                read_only_hint=cast(dict[str, bool], schema["annotations"])["readOnlyHint"],
+                destructive_hint=cast(dict[str, bool], schema["annotations"])["destructiveHint"],
+            ),
         )
         for schema in list_tool_schemas()
     ]

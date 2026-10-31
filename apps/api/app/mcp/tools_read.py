@@ -21,7 +21,7 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.orm import Session
 
-from app.mcp.tool_spec import ToolSpec
+from app.mcp.tool_spec import ToolHints, ToolSpec
 from app.services import content as content_service
 from app.services.tags import normalize_tag_name, tags_for_contents
 
@@ -141,11 +141,13 @@ READ_TOOLS: tuple[ToolSpec, ...] = (
         ),
         args_model=SearchContentArgs,
         handler=_search_content,
+        hints=ToolHints(read_only=True, destructive=False),
     ),
     ToolSpec(
         name="count_content",
         description="Count non-deleted content, optionally filtered by status and/or tag.",
         args_model=CountContentArgs,
         handler=_count_content,
+        hints=ToolHints(read_only=True, destructive=False),
     ),
 )

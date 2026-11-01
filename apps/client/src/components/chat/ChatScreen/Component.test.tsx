@@ -145,6 +145,7 @@ describe('ChatScreen', () => {
             event: 'citations',
             data: {
               citations: [{ content_id: 'c-1', title: 'Roth IRA Basics', slug: 'roth-ira-basics' }],
+              refusal: false,
             },
           },
           { event: 'done', data: { session_id: 's-1', message_id: 'm-1' } },
@@ -174,6 +175,7 @@ describe('ChatScreen', () => {
             event: 'citations',
             data: {
               citations: [{ content_id: 'c-1', title: 'Roth IRA Basics', slug: 'roth-ira-basics' }],
+              refusal: false,
             },
           },
           { event: 'done', data: { session_id: 's-2', message_id: 'm-2' } },
@@ -206,6 +208,7 @@ describe('ChatScreen', () => {
                   slug: 'traditional-ira-basics',
                 },
               ],
+              refusal: false,
             },
           },
           { event: 'done', data: { session_id: 's-3', message_id: 'm-3' } },
@@ -231,7 +234,7 @@ describe('ChatScreen', () => {
       vi.fn().mockResolvedValue(
         streamResponse([
           { event: 'token', data: { text: 'No published guidance covers this.' } },
-          { event: 'citations', data: { citations: [] } },
+          { event: 'citations', data: { citations: [], refusal: true } },
           { event: 'done', data: { session_id: 's-4', message_id: 'm-4' } },
         ]),
       ),
@@ -248,7 +251,7 @@ describe('ChatScreen', () => {
   it('disables the message input while streaming, and re-enables it once the stream completes', async () => {
     const { response, release } = gatedStreamResponse([
       { event: 'token', data: { text: 'An answer.' } },
-      { event: 'citations', data: { citations: [] } },
+      { event: 'citations', data: { citations: [], refusal: false } },
       { event: 'done', data: { session_id: 's-5', message_id: 'm-5' } },
     ]);
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(response));
@@ -290,7 +293,7 @@ describe('ChatScreen', () => {
       vi.fn().mockResolvedValue(
         streamResponse([
           { event: 'token', data: { text: 'Answer.' } },
-          { event: 'citations', data: { citations: [] } },
+          { event: 'citations', data: { citations: [], refusal: false } },
           { event: 'done', data: { session_id: 's-9', message_id: 'm-9' } },
         ]),
       ),
@@ -310,7 +313,7 @@ describe('ChatScreen', () => {
   it('shows Thinking… after sending until the first token arrives', async () => {
     const { response, release } = gatedStreamResponse([
       { event: 'token', data: { text: 'First token.' } },
-      { event: 'citations', data: { citations: [] } },
+      { event: 'citations', data: { citations: [], refusal: false } },
       { event: 'done', data: { session_id: 's-10', message_id: 'm-10' } },
     ]);
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(response));
@@ -334,7 +337,7 @@ describe('ChatScreen', () => {
       .mockResolvedValueOnce(
         streamResponse([
           { event: 'token', data: { text: 'Second try.' } },
-          { event: 'citations', data: { citations: [] } },
+          { event: 'citations', data: { citations: [], refusal: false } },
           { event: 'done', data: { session_id: 's-11', message_id: 'm-11' } },
         ]),
       );
@@ -361,7 +364,7 @@ describe('ChatScreen', () => {
       vi.fn().mockResolvedValue(
         streamResponse([
           { event: 'token', data: { text: 'Answer.' } },
-          { event: 'citations', data: { citations: [] } },
+          { event: 'citations', data: { citations: [], refusal: false } },
           { event: 'done', data: { session_id: 's-13', message_id: 'm-13' } },
         ]),
       ),
@@ -390,7 +393,7 @@ describe('ChatScreen', () => {
       vi.fn().mockResolvedValue(
         streamResponse([
           { event: 'token', data: { text: 'Answer.' } },
-          { event: 'citations', data: { citations: [] } },
+          { event: 'citations', data: { citations: [], refusal: false } },
           { event: 'done', data: { session_id: 's-12', message_id: 'm-12' } },
         ]),
       ),

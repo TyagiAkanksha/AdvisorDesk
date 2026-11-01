@@ -1,5 +1,9 @@
 [
   {
+    "annotations": {
+      "destructiveHint": false,
+      "readOnlyHint": true
+    },
     "description": "Metadata search over CMS content (title/tag/status \u2014 not vector search). Returns matching items and the total match count.",
     "inputSchema": {
       "additionalProperties": false,
@@ -55,6 +59,10 @@
     "name": "search_content"
   },
   {
+    "annotations": {
+      "destructiveHint": false,
+      "readOnlyHint": true
+    },
     "description": "Count non-deleted content, optionally filtered by status and/or tag.",
     "inputSchema": {
       "additionalProperties": false,
@@ -91,6 +99,10 @@
     "name": "count_content"
   },
   {
+    "annotations": {
+      "destructiveHint": false,
+      "readOnlyHint": false
+    },
     "description": "Create a draft CMS content item. Creates missing tags (reactivating soft-deleted names). Always returns status 'draft' \u2014 never auto-published.",
     "inputSchema": {
       "additionalProperties": false,
@@ -124,6 +136,10 @@
     "name": "create_draft"
   },
   {
+    "annotations": {
+      "destructiveHint": true,
+      "readOnlyHint": false
+    },
     "description": "Partially update a content item's title/body/tags. Re-embeds if the item is already published. The slug never changes.",
     "inputSchema": {
       "additionalProperties": false,
@@ -184,6 +200,10 @@
     "name": "edit_content"
   },
   {
+    "annotations": {
+      "destructiveHint": true,
+      "readOnlyHint": false
+    },
     "description": "Soft-delete a content item (tombstone, not restorable) and remove its chunks in one transaction.",
     "inputSchema": {
       "additionalProperties": false,
@@ -204,6 +224,10 @@
     "name": "delete_content"
   },
   {
+    "annotations": {
+      "destructiveHint": false,
+      "readOnlyHint": false
+    },
     "description": "Add and/or remove tags on a content item in one call. Tags in `add` are created if missing (reactivating soft-deleted names).",
     "inputSchema": {
       "additionalProperties": false,
@@ -240,6 +264,10 @@
     "name": "tag_content"
   },
   {
+    "annotations": {
+      "destructiveHint": false,
+      "readOnlyHint": false
+    },
     "description": "Publish a content item: runs the full publish transaction (\u00a74).",
     "inputSchema": {
       "additionalProperties": false,
@@ -260,6 +288,10 @@
     "name": "publish"
   },
   {
+    "annotations": {
+      "destructiveHint": true,
+      "readOnlyHint": false
+    },
     "description": "Archive a content item: status -> archived, removes its chunks.",
     "inputSchema": {
       "additionalProperties": false,
@@ -280,6 +312,10 @@
     "name": "archive"
   },
   {
+    "annotations": {
+      "destructiveHint": false,
+      "readOnlyHint": true
+    },
     "description": "Report client questions the content didn't cover: user messages whose next assistant reply found no matching content (retrieval_found=false), asked within the last `days` days, newest first.",
     "inputSchema": {
       "additionalProperties": false,
@@ -305,6 +341,10 @@
     "name": "report_content_gaps"
   },
   {
+    "annotations": {
+      "destructiveHint": false,
+      "readOnlyHint": true
+    },
     "description": "Report client questions the system answered BADLY, grouped and classified: negative_feedback (a client pressed thumbs-down), refused (nothing in the corpus was close), near_miss (a source was just under the retrieval threshold, or retrieval succeeded and the answer still declined \u2014 either way the corpus nearly had it), low_confidence (answered, but only just above the threshold). Newest `days` days, most-asked first. Use this to decide what content to write or expand next.",
     "inputSchema": {
       "additionalProperties": false,
@@ -330,6 +370,10 @@
     "name": "report_weak_queries"
   },
   {
+    "annotations": {
+      "destructiveHint": false,
+      "readOnlyHint": false
+    },
     "description": "Record a proposed content fix for detected weak queries and create its draft. Pass either kind (new_article/expand_article/retune) or failure_cause (from the eval failure taxonomy) and the weak-query rows as evidence. Creates a DRAFT only \u2014 publishing is a separate, explicitly requested step.",
     "inputSchema": {
       "additionalProperties": false,
@@ -414,6 +458,10 @@
     "name": "propose_content_fix"
   },
   {
+    "annotations": {
+      "destructiveHint": false,
+      "readOnlyHint": true
+    },
     "description": "List content-fix proposals, newest first, optionally filtered by status (proposed/accepted/rejected).",
     "inputSchema": {
       "additionalProperties": false,
@@ -450,6 +498,10 @@
     "name": "list_proposals"
   },
   {
+    "annotations": {
+      "destructiveHint": true,
+      "readOnlyHint": false
+    },
     "description": "Accept a proposal \u2014 allowed ONLY when the eval data supports it: a baseline run and the eval_run_after_id run must both exist, the after-run must have measured a changed corpus, pct_fully_supported must not have dropped, and the run must show no regressions. When eval_run_after_id belongs to a run family (multiple runs sharing a label and corpus, e.g. from --runs N), every run in that family must individually qualify (same corpus, newer than the baseline, full coverage), and pct_fully_supported and regressions are judged by majority across the family \u2014 a single flaky run can neither force nor block acceptance, but a regression that reproduces in a majority of N runs still refuses. The family is every run sharing this label and corpus digest, not just the runs just written, so re-running under the same label until a regression is outvoted counts against the fix, not for it: an even split on the after side still refuses. Otherwise this fails with a conflict explaining which check said no.",
     "inputSchema": {
       "additionalProperties": false,
@@ -476,6 +528,10 @@
     "name": "accept_proposal"
   },
   {
+    "annotations": {
+      "destructiveHint": false,
+      "readOnlyHint": false
+    },
     "description": "Reject a proposal with a reason; if its draft was published, it is archived so the change leaves the corpus.",
     "inputSchema": {
       "additionalProperties": false,

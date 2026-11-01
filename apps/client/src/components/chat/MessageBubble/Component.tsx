@@ -17,6 +17,10 @@ import type { MessageBubbleProps } from './interface';
 // turn edge-to-edge; a refusal is now a real `common/Alert` (`severity="warning"
 // variant="outlined"`) instead of a bordered `Box` + `Info` icon — same pinned `role="status"` +
 // text, MUI's own warning styling.
+//
+// vrf t02: a refusal never advertises Sources, even when retrieval returned a near-miss chunk
+// (a citation on a refusal is the artefact `SIMILARITY_THRESHOLD` exists to hide), so
+// `CitationList` renders only for a non-refusal.
 const BUBBLE_MAX_WIDTH = 'min(100%, 640px)';
 
 export default function Component({ message, feedback }: MessageBubbleProps) {
@@ -52,7 +56,7 @@ export default function Component({ message, feedback }: MessageBubbleProps) {
   const answer = (
     <>
       <Markdown markdown={message.text} variant="chat" headingOffset={1} />
-      <CitationList citations={citations} />
+      {message.refusal ? null : <CitationList citations={citations} />}
     </>
   );
   // phase-9 task-17 (DESIGN §A/D2): the 👍/👎 control, appended under the answer — `undefined`

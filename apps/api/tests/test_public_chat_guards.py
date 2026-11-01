@@ -280,7 +280,9 @@ def test_below_threshold_nonempty_refuses_and_records_real_top_similarity(
     )
 
     citations_event = next(e for e in events if e.name == "citations")
-    assert citations_event.data == {"citations": []}
+    # cw t01: `refusal_tokens` above ("No published guidance covers this.") opens with the
+    # decline phrase, so the wire event's explicit flag is True here.
+    assert citations_event.data == {"citations": [], "refusal": True}
 
     done_event = next(e for e in events if e.name == "done")
     message_id = uuid.UUID(str(done_event.data["message_id"]))
@@ -431,5 +433,6 @@ def test_first_use_order_survives_when_alphabetical_order_disagrees(
         "citations": [
             _content_level_citation(content_zebra),
             _content_level_citation(content_alpha),
-        ]
+        ],
+        "refusal": False,
     }

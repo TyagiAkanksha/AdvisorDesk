@@ -265,7 +265,7 @@ All routes prefixed `/api/v1`. JSON in/out; streaming endpoints use SSE with the
 
 ```
 event: token       data: {"text": "..."}                                  (repeated)
-event: citations   data: {"citations": [{"content_id","title","slug"}]}   (deduped by content item, ordered by first use)
+event: citations   data: {"citations": [{"content_id","title","slug"}], "refusal": bool}   (deduped by content item, ordered by first use; refusal = the answer opens with the decline phrase, see §7.5)
 event: done        data: {"session_id": "...", "message_id": "..."}
 event: error       data: {"error": {"code","message"}}
 ```
@@ -318,7 +318,7 @@ All tools read and write non-deleted rows only (§4.1) — a `content_id` addres
 5. **Answer synthesis:** same config-driven provider as embedding (v1.6). Default **`openai`**: `gpt-4o-mini` (controller-verified live — responds, supports tool-calling for the admin agent) over OpenAI's chat-completions API. Back-compat branch **`nvidia`**: the NVIDIA-hosted instruct model pinned in the phase-4 plan (`meta/llama-3.1-8b-instruct`) — **EOL'd 2026-08-26 (410 Gone)**. `CHAT_MODEL` env-configurable either way; the chat-completions wire shape carries no provider-specific parameters, so it is identical for both branches. System prompt (verbatim intent, wording adjustable):
    - Answer ONLY from the provided context chunks.
    - Cite with bracketed numbers [1], [2] mapping to the provided sources.
-   - If the context does not contain the answer: reply that no published guidance covers this, suggest asking the advisory team, and DO NOT answer from general knowledge.
+   - If the context does not contain the answer: reply that no published guidance covers this, suggest asking the advisory team, and DO NOT answer from general knowledge. The client renders a refusal without a Sources list, even when retrieval returned a near-miss chunk.
    - Never give personalized financial advice; frame answers as "the firm's published guidance says…".
 6. **Streaming:** stream tokens per §5.3; after the stream, emit the deduped content-level citations array.
 7. **Persistence:** store user + assistant messages in `chat_messages` — assistant rows carry chunk-level citations, `retrieval_found`, and `top_similarity` (§4).
@@ -431,6 +431,9 @@ Definition of done: a stranger can follow the README, run the demo script end to
 
 ## 14. Changelog
 
+- **v1.7** — A refusal renders without a Sources list in the client, even when retrieval returned a
+  near-miss chunk (§7 step 5; video-review fixes t02, 2026-10-31); the `citations` event's
+  `refusal` flag (§5.3) is what the client keys on.
 - **v1.6** — LLM provider switched back to OpenAI by default (task 6R-14, 2026-09-06; P0
   production-outage remediation): both v1.5 NVIDIA NIM models this app was pinned to went
   end-of-life (410 Gone) — `nvidia/nv-embedqa-e5-v5` (embedding) on 2026-08-25, `meta/llama-3.1-

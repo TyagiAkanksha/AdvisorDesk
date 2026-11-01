@@ -16,7 +16,7 @@ from typing import Any, Literal, cast
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from sqlalchemy.orm import Session
 
-from app.mcp.tool_spec import ToolSpec, pipeline_from_session
+from app.mcp.tool_spec import ToolHints, ToolSpec, pipeline_from_session
 from app.models import Content, EvalRun
 from app.services.errors import ToolInputError
 from app.services.eval_runs import compare_runs
@@ -288,6 +288,7 @@ PROPOSAL_TOOLS: tuple[ToolSpec, ...] = (
         ),
         args_model=ProposeContentFixArgs,
         handler=_propose_content_fix,
+        hints=ToolHints(read_only=False, destructive=False),
     ),
     ToolSpec(
         name="list_proposals",
@@ -297,6 +298,7 @@ PROPOSAL_TOOLS: tuple[ToolSpec, ...] = (
         ),
         args_model=ListProposalsArgs,
         handler=_list_proposals,
+        hints=ToolHints(read_only=True, destructive=False),
     ),
     ToolSpec(
         name="accept_proposal",
@@ -317,6 +319,7 @@ PROPOSAL_TOOLS: tuple[ToolSpec, ...] = (
         ),
         args_model=AcceptProposalArgs,
         handler=_accept_proposal,
+        hints=ToolHints(read_only=False, destructive=True),
     ),
     ToolSpec(
         name="reject_proposal",
@@ -326,5 +329,6 @@ PROPOSAL_TOOLS: tuple[ToolSpec, ...] = (
         ),
         args_model=RejectProposalArgs,
         handler=_reject_proposal,
+        hints=ToolHints(read_only=False, destructive=False),
     ),
 )

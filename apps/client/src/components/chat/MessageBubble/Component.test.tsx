@@ -3,6 +3,7 @@ import { render, screen } from '@testing-library/react';
 import '@testing-library/jest-dom/vitest';
 import { describe, expect, it } from 'vitest';
 
+import { SOURCES_LABEL } from '@/lib/copy';
 import type { ChatMessage } from '../useChatStream';
 import { MessageBubble } from '.';
 
@@ -61,6 +62,7 @@ describe('MessageBubble', () => {
     // '[n]' chips — a reader no longer has to hover to learn what a citation points to.
     const link = screen.getByRole('link', { name: '[1] Roth IRA Basics' });
     expect(link).toHaveAttribute('href', '/content/roth-ira-basics');
+    expect(screen.getByRole('region', { name: SOURCES_LABEL })).toBeInTheDocument();
   });
 
   it('renders the message in a status region when the assistant message is flagged as a refusal', () => {
@@ -86,6 +88,42 @@ describe('MessageBubble', () => {
     render(<MessageBubble message={message} />);
 
     expect(screen.queryByRole('status')).not.toBeInTheDocument();
+  });
+
+  // vrf t02: a refusal never advertises Sources, even when retrieval returned a near-miss chunk.
+  it('renders no Sources region for a refusal even when citations are present (near miss)', () => {
+    const message: ChatMessage = {
+      role: 'assistant',
+      text: 'No published guidance covers this.',
+      citations: [{ content_id: 'c-1', title: 'ISOs and NSOs', slug: 'isos-and-nsos' }],
+      refusal: true,
+    };
+
+    render(<MessageBubble message={message} />);
+
+    expect(screen.queryByRole('region', { name: SOURCES_LABEL })).not.toBeInTheDocument();
+    expect(screen.getByRole('status')).toBeInTheDocument();
+  });
+
+  // cw t01 (PRD §5.3/§7.5 amended): a props-level pin that `MessageBubble` already satisfies
+  // today — it renders off `message.refusal` directly (Component.tsx:75, `message.refusal ?`),
+  // never off `citations.length === 0`. Task 02's small-talk reply is the real case this
+  // documents: zero citations is not, on its own, a refusal. Expected to PASS at RED (see
+  // t01-test-author.md's RED evidence for confirmation) — no production change needed for this
+  // one; it exists to guard the behavior task 02 depends on, and to catch a future regression
+  // that reintroduces a `citations.length === 0` inference here.
+  it('renders a plain bubble for zero citations when refusal is false', () => {
+    const message: ChatMessage = {
+      role: 'assistant',
+      text: 'Hi!',
+      citations: [],
+      refusal: false,
+    };
+
+    render(<MessageBubble message={message} />);
+
+    expect(screen.queryByRole('status')).not.toBeInTheDocument();
+    expect(screen.queryByRole('region', { name: 'Sources' })).not.toBeInTheDocument();
   });
 
   // phase-8 task-03 (DESIGN.md §A2): assistant answers switch the shared Markdown renderer to

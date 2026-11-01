@@ -189,20 +189,25 @@ def call_tool(
 
 
 def list_tool_schemas() -> list[dict[str, Any]]:
-    """Return `{name, description, inputSchema}` for every registered tool.
+    """Return `{name, description, inputSchema, annotations}` for every registered tool.
 
     Feeds the agent loop (task-03, which model the tool schemas are given
     to) and `scripts/export_mcp_tools.py`'s committed baseline. Internal
     schema-field shape is deliberately not pinned by any test beyond "some
     dict-shaped field besides name/description" (controller decision, see
     `tests/test_mcp_read_tools.py`) — `inputSchema` is used here because
-    it's the MCP wire protocol's own field name for it.
+    it's the MCP wire protocol's own field name for it. `annotations` carries the tool's
+    `readOnlyHint`/`destructiveHint` (MCP wire casing); the agent's OpenAI adapter drops it.
     """
     return [
         {
             "name": tool.name,
             "description": tool.description,
             "inputSchema": tool.args_model.model_json_schema(),
+            "annotations": {
+                "readOnlyHint": tool.hints.read_only,
+                "destructiveHint": tool.hints.destructive,
+            },
         }
         for tool in _ALL_TOOLS
     ]

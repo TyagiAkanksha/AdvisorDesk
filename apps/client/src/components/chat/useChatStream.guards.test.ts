@@ -206,7 +206,7 @@ describe('useChatStream — M-7 hook half: citations with no preceding token', (
       'fetch',
       vi.fn().mockResolvedValue(
         streamResponse([
-          { event: 'citations', data: { citations: [] } },
+          { event: 'citations', data: { citations: [], refusal: true } },
           { event: 'done', data: { session_id: 's', message_id: 'm' } },
         ]),
       ),

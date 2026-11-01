@@ -44,7 +44,7 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 from sqlalchemy.orm import Session
 
-from app.mcp.tool_spec import ToolSpec, pipeline_from_session
+from app.mcp.tool_spec import ToolHints, ToolSpec, pipeline_from_session
 from app.services import content as content_service
 from app.services.tags import tags_for_contents
 
@@ -225,6 +225,7 @@ WRITE_TOOLS: tuple[ToolSpec, ...] = (
         ),
         args_model=CreateDraftArgs,
         handler=_create_draft,
+        hints=ToolHints(read_only=False, destructive=False),
     ),
     ToolSpec(
         name="edit_content",
@@ -234,6 +235,7 @@ WRITE_TOOLS: tuple[ToolSpec, ...] = (
         ),
         args_model=EditContentArgs,
         handler=_edit_content,
+        hints=ToolHints(read_only=False, destructive=True),
     ),
     ToolSpec(
         name="delete_content",
@@ -243,6 +245,7 @@ WRITE_TOOLS: tuple[ToolSpec, ...] = (
         ),
         args_model=ContentIdArgs,
         handler=_delete_content,
+        hints=ToolHints(read_only=False, destructive=True),
     ),
     ToolSpec(
         name="tag_content",
@@ -252,17 +255,20 @@ WRITE_TOOLS: tuple[ToolSpec, ...] = (
         ),
         args_model=TagContentArgs,
         handler=_tag_content,
+        hints=ToolHints(read_only=False, destructive=False),
     ),
     ToolSpec(
         name="publish",
         description="Publish a content item: runs the full publish transaction (§4).",
         args_model=ContentIdArgs,
         handler=_publish,
+        hints=ToolHints(read_only=False, destructive=False),
     ),
     ToolSpec(
         name="archive",
         description="Archive a content item: status -> archived, removes its chunks.",
         args_model=ContentIdArgs,
         handler=_archive,
+        hints=ToolHints(read_only=False, destructive=True),
     ),
 )

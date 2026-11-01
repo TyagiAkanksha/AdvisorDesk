@@ -31,7 +31,11 @@ describe('ContentListScreen', () => {
     render(<ContentListScreen items={items} tags={tags} selectedTag={null} />);
 
     expect(screen.getByRole('heading', { level: 1, name: 'Articles' })).toBeInTheDocument();
-    expect(screen.getByText(/Plain-English explainers/)).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        'Plain-English explainers on taxes, retirement, equity compensation, investing, insurance, estate planning and college savings.',
+      ),
+    ).toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'Ask a question' })).toHaveAttribute('href', '/chat');
   });
 

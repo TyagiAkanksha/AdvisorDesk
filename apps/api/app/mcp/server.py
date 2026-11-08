@@ -77,7 +77,7 @@ from starlette.requests import Request
 from starlette.routing import Route
 from starlette.types import Receive, Scope, Send
 
-from app.auth.deps import AdminPrincipal, resolve_admin
+from app.auth.deps import AdminPrincipal, resolve_allowlisted_admin
 from app.auth.oauth_discovery import www_authenticate_challenge
 from app.auth.tokens import resolve_bearer_token
 from app.config import Settings
@@ -405,13 +405,14 @@ def _require_admin_with_challenge(request: Request) -> AdminPrincipal:
         request: the incoming request; forwarded to both `resolve_admin` and `_auth_required`.
 
     Raises:
-        AuthRequiredError: no/invalid/expired cookie, unknown or soft-deleted user, or a stale
-            session epoch (see `resolve_admin`'s own docstring) — always carries the
+        AuthRequiredError: no/invalid/expired cookie, unknown or soft-deleted user, a stale
+            session epoch, or an owner no longer in `ADMIN_EMAILS` (see
+            `resolve_allowlisted_admin`) — always carries the
             `WWW-Authenticate` challenge here, unlike `require_admin`'s own headerless raise.
         RuntimeError: the app was built without a `session_factory` (`resolve_admin`'s own
             DB-less guard) — propagates unchanged, not wrapped.
     """
-    principal = resolve_admin(request)
+    principal = resolve_allowlisted_admin(request)
     if principal is None:
         raise _auth_required(request)
     return principal

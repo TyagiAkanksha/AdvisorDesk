@@ -486,10 +486,12 @@ export interface paths {
          * Oauth Authorize Decision
          * @description Handle the consent page's Approve/Deny submission (mcp-oauth plan, task 06).
          *
-         *     docs/plans/mcp-oauth/task-06-consent-screen.md: guarded by `require_admin` (raise-on-failure),
-         *     NOT `resolve_admin` (which `oauth_authorize_continue` uses to bridge to a 307 login redirect) —
-         *     a session that vanished between rendering the consent page and submitting the form must answer
-         *     401, never loop back through Google login (task-06 controller carry-over, t05 review context).
+         *     docs/plans/mcp-oauth/task-06-consent-screen.md: a missing session raises the same 401
+         *     `require_admin` gives (via `resolve_admin` + a raise on `None`, so a de-listed admin still
+         *     reaches this route's own `access_denied` check below), never `oauth_authorize_continue`'s
+         *     307 login redirect — a session that vanished between rendering the consent page and
+         *     submitting the form must answer 401, never loop back through Google login (task-06
+         *     controller carry-over, t05 review context).
          *     The submitted `nonce` is compared against the pending request's own `PendingAuthorization.
          *     nonce` with `hmac.compare_digest` — an absent `nonce` is rejected up front (never passed to
          *     `compare_digest` as `None`), and a non-ASCII `nonce` is rejected the same way before reaching
@@ -516,8 +518,8 @@ export interface paths {
          *             final fix round 1, finding F-12 — mirrors `oauth_authorize_continue`'s own check).
          *         OAuthRedirectError: the resolved admin's email is not in `settings.admin_email_set`
          *             (`"access_denied"`) — redirects to the pending request's own `redirect_uri`.
-         *         AuthRequiredError: no valid admin session (`require_admin`) — 401 §9 `auth_required`
-         *             envelope.
+         *         AuthRequiredError: no valid admin session (`resolve_admin` returned `None`) — 401 §9
+         *             `auth_required` envelope.
          */
         post: operations["oauth_authorize_decision"];
         delete?: never;

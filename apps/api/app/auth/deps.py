@@ -112,6 +112,37 @@ def resolve_admin(request: Request) -> AdminPrincipal | None:
     return AdminPrincipal(user_id=user.id, email=user.email, name=user.name)
 
 
+def resolve_allowlisted_admin(request: Request) -> AdminPrincipal | None:
+    """`resolve_admin`, plus a re-check of the LIVE `ADMIN_EMAILS` allowlist on every request.
+
+    A session cookie lives for days, so it can outlast its owner's removal from `ADMIN_EMAILS`.
+    `resolve_admin` only proves the session is valid (signature, user row, epoch); this also
+    proves the owner is STILL allowlisted, the same rule `resolve_bearer_token` applies to the MCP
+    bearer path. Every cookie-gated surface that acts as an admin (`require_admin`, so every REST
+    admin route and `/agent/chat`, plus the MCP endpoint's cookie path) goes through here, so
+    removing an admin takes effect on their very next request.
+
+    The OAuth authorize routes keep calling `resolve_admin` directly on purpose: they run their
+    own allowlist check so a de-listed admin gets an OAuth `access_denied` redirect back to the
+    connecting client rather than a bare 401.
+
+    Args:
+        request: the incoming request; forwarded to `resolve_admin` unchanged.
+
+    Returns:
+        The principal, or `None` when `resolve_admin` returns `None` or the principal's email is
+        no longer in `settings.admin_email_set`.
+    """
+    principal = resolve_admin(request)
+    if principal is None:
+        return None
+    settings = cast(Settings, request.app.state.settings)
+    if principal.email.strip().lower() not in settings.admin_email_set:
+        logger.warning("Login rejected: user_id=%s reason=not-allowlisted", principal.user_id)
+        return None
+    return principal
+
+
 def require_admin(request: Request) -> AdminPrincipal:
     """Resolve the signed session cookie into an `AdminPrincipal`, or raise `AuthRequiredError`.
 
@@ -127,12 +158,13 @@ def require_admin(request: Request) -> AdminPrincipal:
     Raises:
         AuthRequiredError: no/invalid/expired cookie, unknown user id, a
             soft-deleted user row, or a cookie epoch stale relative to
-            `User.session_epoch` (revoked by a since-run `/auth/logout`).
+            `User.session_epoch` (revoked by a since-run `/auth/logout`), or an
+            owner who is no longer in `ADMIN_EMAILS` (`resolve_allowlisted_admin`).
         RuntimeError: the app was built without a `session_factory` (a
             DB-less `create_app()`) — this dependency must fail loudly
             rather than silently skip the auth check.
     """
-    principal = resolve_admin(request)
+    principal = resolve_allowlisted_admin(request)
     if principal is None:
         raise AuthRequiredError("Sign in required.")
     return principal

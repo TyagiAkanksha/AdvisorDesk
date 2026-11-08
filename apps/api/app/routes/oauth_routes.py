@@ -45,7 +45,7 @@ from fastapi import APIRouter, Depends, Form, Request, Response
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from sqlalchemy.orm import Session
 
-from app.auth.deps import AdminPrincipal, require_admin, resolve_admin
+from app.auth.deps import AdminPrincipal, resolve_admin
 from app.auth.oauth_authorize import validate_authorize_request
 from app.auth.oauth_request import (
     AUTHORIZE_COOKIE_NAME,
@@ -65,7 +65,7 @@ from app.models.schemas.oauth import (
 from app.routes.deps import get_oauth_token_session, get_rate_limiter, get_session, get_settings
 from app.routes.oauth_consent_html import consent_csp, render_consent_page
 from app.routes.ratelimit import RateLimiter
-from app.services.errors import OAuthError, OAuthRedirectError
+from app.services.errors import AuthRequiredError, OAuthError, OAuthRedirectError
 from app.services.oauth_clients import (
     count_clients,
     get_client,
@@ -466,10 +466,12 @@ def oauth_authorize_decision(
 ) -> Response:
     """Handle the consent page's Approve/Deny submission (mcp-oauth plan, task 06).
 
-    docs/plans/mcp-oauth/task-06-consent-screen.md: guarded by `require_admin` (raise-on-failure),
-    NOT `resolve_admin` (which `oauth_authorize_continue` uses to bridge to a 307 login redirect) —
-    a session that vanished between rendering the consent page and submitting the form must answer
-    401, never loop back through Google login (task-06 controller carry-over, t05 review context).
+    docs/plans/mcp-oauth/task-06-consent-screen.md: a missing session raises the same 401
+    `require_admin` gives (via `resolve_admin` + a raise on `None`, so a de-listed admin still
+    reaches this route's own `access_denied` check below), never `oauth_authorize_continue`'s
+    307 login redirect — a session that vanished between rendering the consent page and
+    submitting the form must answer 401, never loop back through Google login (task-06
+    controller carry-over, t05 review context).
     The submitted `nonce` is compared against the pending request's own `PendingAuthorization.
     nonce` with `hmac.compare_digest` — an absent `nonce` is rejected up front (never passed to
     `compare_digest` as `None`), and a non-ASCII `nonce` is rejected the same way before reaching
@@ -496,8 +498,8 @@ def oauth_authorize_decision(
             final fix round 1, finding F-12 — mirrors `oauth_authorize_continue`'s own check).
         OAuthRedirectError: the resolved admin's email is not in `settings.admin_email_set`
             (`"access_denied"`) — redirects to the pending request's own `redirect_uri`.
-        AuthRequiredError: no valid admin session (`require_admin`) — 401 §9 `auth_required`
-            envelope.
+        AuthRequiredError: no valid admin session (`resolve_admin` returned `None`) — 401 §9
+            `auth_required` envelope.
     """
     client_ip = request.client.host if request.client is not None else "unknown"
     limiter.check_oauth_request(client_ip)
@@ -506,7 +508,12 @@ def oauth_authorize_decision(
     if pending is None:
         raise OAuthError("invalid_request", "No pending authorization request.")
 
-    principal = require_admin(request)
+    # `resolve_admin`, not `require_admin`: `require_admin` now also rejects a de-listed admin
+    # with a bare 401, but this route wants to answer that case with the OAuth `access_denied`
+    # redirect below, so the connecting client gets a proper error.
+    principal = resolve_admin(request)
+    if principal is None:
+        raise AuthRequiredError("Sign in required.")
 
     if principal.email.lower() not in settings.admin_email_set:
         raise OAuthRedirectError(

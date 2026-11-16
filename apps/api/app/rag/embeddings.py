@@ -140,6 +140,11 @@ class OpenAICompatibleEmbedder:
         this same client on the public chat path where first-token latency
         matters.
         """
+        if settings.embedding_provider == "local":
+            raise ValueError(
+                "OpenAICompatibleEmbedder.from_settings cannot be used with "
+                "EMBEDDING_PROVIDER=local; use app.rag.embedder_factory.build_embedder instead."
+            )
         api_key = settings.embedding_api_key.get_secret_value() or "unset"
         client = OpenAI(
             api_key=api_key,

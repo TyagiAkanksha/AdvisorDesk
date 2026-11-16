@@ -26,6 +26,8 @@ _PROVIDER_DEFAULT_BASE_URLS: dict[str, str] = {
 
 
 _ANTHROPIC_DEFAULT_MODEL = "claude-haiku-5-5"
+# bge-small scores off-domain questions 0.52-0.77, so OpenAI's 0.5 would never refuse.
+_LOCAL_DEFAULT_SIMILARITY_THRESHOLD = 0.65
 
 
 def _check_model_family(setting: str, model: str, provider: str) -> None:
@@ -121,8 +123,17 @@ class Settings(BaseSettings):
     llm_effort: Literal["low", "medium", "high", "xhigh", "max"] = "low"
 
     # Which provider embeds text. Independent of `llm_provider` because Anthropic has no
-    # embeddings API: `llm_provider="anthropic"` still embeds through OpenAI.
-    embedding_provider: Literal["openai", "nvidia"] = "openai"
+    # embeddings API: `llm_provider="anthropic"` embeds through OpenAI or, with `"local"`,
+    # in-process (`app.rag.local_embeddings`, no key needed).
+    embedding_provider: Literal["openai", "nvidia", "local"] = "openai"
+    # `embedding_provider="local"` settings (fastembed/ONNX). The model's vectors are
+    # zero-padded up to `embedding_dimensions`.
+    local_embedding_model: str = "BAAI/bge-small-en-v1.5"
+    local_embedding_query_prefix: str = "Represent this sentence for searching relevant passages: "
+    local_embedding_cache_dir: str | None = None
+    # True = never touch the network for the model (cache must already hold it).
+    local_embedding_offline: bool = False
+    local_embedding_threads: int = Field(default=2, gt=0)
 
     # OpenAI-compatible base URL (PRD §7.2). Defaults to OpenAI's own
     # endpoint (v1.6); pointed at NVIDIA NIM's compatible endpoint
@@ -330,7 +341,10 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def _apply_provider_model_defaults_and_guard(self) -> Settings:
-        """Provider-aware `chat_model`/`judge_model` defaults plus a fail-fast family guard.
+        """Provider-aware model/threshold defaults plus a fail-fast family guard.
+
+        `similarity_threshold` defaults to 0.65 (not 0.5) under `embedding_provider="local"`:
+        bge-small scores off-domain questions higher than OpenAI does. An explicit value wins.
 
         The fields keep their gpt defaults; when the value was not explicitly supplied (kwarg OR
         env, i.e. absent from `model_fields_set`) and the governing provider is Anthropic, the
@@ -340,11 +354,15 @@ class Settings(BaseSettings):
         rejected. Messages name the setting only, never a credential.
         """
         explicit = set(self.model_fields_set)
+        if "similarity_threshold" not in explicit and self.embedding_provider == "local":
+            self.similarity_threshold = _LOCAL_DEFAULT_SIMILARITY_THRESHOLD
         if "chat_model" not in explicit and self.llm_provider == "anthropic":
             self.chat_model = _ANTHROPIC_DEFAULT_MODEL
         if "judge_model" not in explicit and self.effective_judge_provider == "anthropic":
             self.judge_model = _ANTHROPIC_DEFAULT_MODEL
-        self.model_fields_set.difference_update({"chat_model", "judge_model"} - explicit)
+        self.model_fields_set.difference_update(
+            {"chat_model", "judge_model", "similarity_threshold"} - explicit
+        )
         _check_model_family("chat_model", self.chat_model, self.llm_provider)
         _check_model_family("judge_model", self.judge_model, self.effective_judge_provider)
         return self
@@ -404,14 +422,25 @@ class Settings(BaseSettings):
     @property
     def embedding_api_key(self) -> SecretStr:
         """The credential for `embedding_provider` (never the Anthropic key)."""
+        if self.embedding_provider == "local":
+            return SecretStr("")
         if self.embedding_provider == "openai":
             return self.openai_api_key
         return self.nvidia_api_key
 
     @property
+    def effective_embedding_model(self) -> str:
+        """The embedding model in use: the local model under `local`, else `embedding_model`."""
+        if self.embedding_provider == "local":
+            return self.local_embedding_model
+        return self.embedding_model
+
+    @property
     def embedding_base_url(self) -> str:
         """Embedding endpoint: `llm_base_url` when it serves the same provider, else the
-        embedding provider's own default."""
+        embedding provider's own default (`""` for local: no endpoint)."""
+        if self.embedding_provider == "local":
+            return ""
         if self.embedding_provider == self.llm_provider:
             return self.llm_base_url
         return _PROVIDER_DEFAULT_BASE_URLS[self.embedding_provider]

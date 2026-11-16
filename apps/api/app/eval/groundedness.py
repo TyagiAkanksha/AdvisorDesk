@@ -66,7 +66,8 @@ from app.eval.questions import EvalQuestion, load_questions, resolve_expected_ch
 from app.eval.taxonomy import classify_failure, failure_distribution
 from app.models import EvalRun
 from app.rag.chat_provider import build_chat_llm
-from app.rag.embeddings import Embedder, OpenAICompatibleEmbedder
+from app.rag.embedder_factory import build_embedder
+from app.rag.embeddings import Embedder
 from app.rag.retrieval import retrieve
 from app.rag.synthesis import SYSTEM_PROMPT, ChatLLM
 from app.seed_paths import seed_data_dir
@@ -1258,7 +1259,7 @@ def _run_from_cli(
             f"invocation, so there is nothing new to compare against {args.compare_to!r}."
         )
     settings = Settings()
-    embedder = OpenAICompatibleEmbedder.from_settings(settings)
+    embedder = build_embedder(settings)
     chat_llm = build_chat_llm(settings)
     from app.eval.judge_factory import build_judge  # local: judge_factory imports this module
 
@@ -1302,7 +1303,7 @@ def _run_from_cli(
                     session,
                     report,
                     label=args.label,
-                    embedding_model=settings.embedding_model,
+                    embedding_model=settings.effective_embedding_model,
                     chat_model=settings.chat_model,
                     judge_model=settings.judge_model,
                     similarity_threshold=settings.similarity_threshold,

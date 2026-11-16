@@ -23,7 +23,7 @@ services:
       OAUTH_ISSUER_URL: https://api.advisordesk.tyagiakanksha.com
       # LLM provider — switched to OpenAI 2026-09-06 (NVIDIA NIM embedding + chat
       # models both reached end-of-life Aug 2026). Boot guard (app/main.py) validates
-      # OPENAI_API_KEY.
+      # OPENAI_API_KEY only when an OpenAI provider is selected.
       #
       # p9 fix wave A1 (final-review C1): CHAT_MODEL/JUDGE_MODEL/EMBEDDING_MODEL are
       # deliberately NOT pinned here. Compose's `environment:` takes precedence over
@@ -38,12 +38,22 @@ services:
       # Anthropic provider ACTIVE since 2026-11-16 (owner decision): chat + agent run on
       # claude-haiku-5-5 (the code default when LLM_PROVIDER=anthropic — CHAT_MODEL is deliberately
       # not pinned). ANTHROPIC_API_KEY comes from env_file (SSM /advisordesk/ANTHROPIC_API_KEY).
-      # Embeddings stay on OpenAI, so OPENAI_API_KEY is still required. Rollback: set this line
-      # back to `openai` and `docker compose up -d`.
+      #
+      # Embeddings run IN-PROCESS since 2026-11-16 (owner decision; the shared OpenAI account ran
+      # out of credit): BAAI/bge-small-en-v1.5 via fastembed, ~300 MB RAM, 384 dims zero-padded to
+      # the existing vector(1024) column (no migration). The model is baked into the image, so
+      # OPENAI_API_KEY is no longer required at boot. Local similarity is scaled differently, hence
+      # SIMILARITY_THRESHOLD 0.65. Rollback/switch: edit the image tag + `EMBEDDING_PROVIDER` +
+      # `SIMILARITY_THRESHOLD` together (`openai` + "0.5"; an image older than this change, e.g.
+      # dde124e, rejects `local` at boot), then `docker compose stop api`, `docker compose run
+      # --rm --no-deps api python scripts/reembed.py` (the box has ~1 GB and no swap, so never
+      # alongside a running api; with the api up before it finishes every chat question is
+      # refused), then `docker compose up -d api`. See ../README.md runbook.
+      EMBEDDING_PROVIDER: local
       LLM_PROVIDER: anthropic
       LLM_BASE_URL: https://api.openai.com/v1
       EMBEDDING_DIMENSIONS: "1024"
-      SIMILARITY_THRESHOLD: "0.5"
+      SIMILARITY_THRESHOLD: "0.65"
       RATE_LIMIT_PER_MIN: "10"
       RATE_LIMIT_PER_DAY: "50"
       SESSION_CREATE_PER_DAY: "20"

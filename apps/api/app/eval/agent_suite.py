@@ -38,7 +38,7 @@ import yaml
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.agent.llm import OpenAICompatibleAgentLLM
+from app.agent.llm_factory import build_agent_llm
 from app.agent.loop import AgentLLM, Done, Error, Token, ToolCall, run_agent
 from app.config import Settings
 from app.db import make_engine, make_session_factory
@@ -751,7 +751,7 @@ def _run_from_cli(argv: list[str] | None = None) -> None:
 
     tasks = load_agent_tasks(args.tasks)
 
-    llm = OpenAICompatibleAgentLLM.from_settings(settings)
+    llm = build_agent_llm(settings).new_conversation()
     embedder = OpenAICompatibleEmbedder.from_settings(settings)
     pipeline = EmbeddingChunkPipeline(embedder)
 

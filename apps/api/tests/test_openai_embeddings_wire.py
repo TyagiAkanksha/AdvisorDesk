@@ -181,6 +181,7 @@ def test_from_settings_falls_back_to_the_nvidia_key_when_provider_is_nvidia() ->
     """
     settings = Settings(
         llm_provider="nvidia",
+        embedding_provider="nvidia",
         openai_api_key="sk-should-not-be-used",
         nvidia_api_key="nvapi-test-key",
     )

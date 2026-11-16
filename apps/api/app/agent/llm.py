@@ -261,6 +261,12 @@ class OpenAICompatibleAgentLLM:
         them (its own docstring): both budgets bound a single provider call/attempt regardless
         of which OpenAI-compatible endpoint it targets.
         """
+        if settings.llm_provider == "anthropic":
+            raise ValueError(
+                "OpenAICompatibleAgentLLM.from_settings cannot be used with LLM_PROVIDER=anthropic "
+                "(it would send the Anthropic key to an OpenAI-compatible endpoint); "
+                "use app.agent.llm_factory.build_agent_llm instead."
+            )
         api_key = settings.llm_api_key.get_secret_value() or "unset"
         client = OpenAI(
             api_key=api_key,

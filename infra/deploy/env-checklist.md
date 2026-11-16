@@ -14,6 +14,7 @@ a file in this repo.
 | Variable | Secret? | Production value / source |
 |---|---|---|
 | `OPENAI_API_KEY` | **Y** | Your OpenAI API key — platform.openai.com → API keys. Required for `LLM_PROVIDER=openai` (the default) — every embedding and chat call fails without it. |
+| `ANTHROPIC_API_KEY` | **Y** — optional | Anthropic API key (`CLAUDE_API_KEY` is accepted as an alias). Only needed for `LLM_PROVIDER=anthropic`; SSM param `/advisordesk/ANTHROPIC_API_KEY` is optional and `fetch-secrets.sh` skips it if absent. Embeddings stay on OpenAI, so `OPENAI_API_KEY` is still required. |
 | `NVIDIA_API_KEY` | N — legacy/optional | Your NVIDIA NIM API key — build.nvidia.com → API Keys. Only needed if `LLM_PROVIDER` is explicitly set to `nvidia` (back-compat/future-re-enable branch); not used in the current deployed configuration. |
 | `DATABASE_URL` | **Y** | Supabase pooler connection string — Supabase dashboard → your project (`qfsknrtxibdtjyxxeykv`) → Connect → "Connection string" (pooled/session mode is recommended for a serverless-style container workload). |
 | `GOOGLE_CLIENT_ID` | N (not marked secret in code — see note below) | Google Cloud Console → APIs & Services → Credentials → your OAuth 2.0 Client ID. |
@@ -21,6 +22,9 @@ a file in this repo.
 | `SESSION_SECRET` | **Y** | Generate: `python3 -c "import secrets; print(secrets.token_urlsafe(48))"` (README's own quickstart command — reuse it here, run it fresh for production; never reuse the local-dev value). |
 | `ADMIN_EMAILS` | N (personal, not a credential) | Comma-separated allowlist — the real Google account email(s) you'll sign into the admin app with. |
 | `LLM_PROVIDER` | N | `openai` (`.env.example` default — selects which credential field/`.env.example` block `llm_api_key` resolves to; set to `nvidia` only to fall back to the legacy NVIDIA NIM path). |
+| `LLM_MAX_TOKENS` | N | `2048` (default — output-token cap for the Anthropic chat/agent/judge calls; positive integer). |
+| `LLM_EFFORT` | N | `low` (default — Claude effort sent as `output_config.effort`; one of `low`, `medium`, `high`, `xhigh`, `max`). |
+| `JUDGE_PROVIDER` | N | Offline eval judge only (not read at API boot). Unset = follow `LLM_PROVIDER`; `openai` + `JUDGE_MODEL=gpt-5.4` keeps eval scores comparable to the recorded baselines while chat/agent run on Claude. |
 | `LLM_BASE_URL` | N | `https://api.openai.com/v1` (`.env.example` default — the NVIDIA equivalent, `https://integrate.api.nvidia.com/v1`, only applies when `LLM_PROVIDER=nvidia`). |
 | `EMBEDDING_MODEL` | N | `text-embedding-3-small` (`.env.example` default; was `nvidia/nv-embedqa-e5-v5` before the 2026-09-06 OpenAI switch). |
 | `EMBEDDING_DIMENSIONS` | N | `1024` (`.env.example` default — must match the `chunks.embedding` column width, migration `0002`; unchanged by the OpenAI switch since `text-embedding-3-small` is requested at 1024 dims). |
@@ -38,6 +42,18 @@ a file in this repo.
 | `MCP_HTTP_ENABLED` | N — **pinned** | `true` — owner decision 2026-08-08 supersedes the task-02 brief's original `false` pin: the MCP endpoint is exposed for Claude connectors at the deployed site, gated by bearer auth (task-04) behind the 401 checks in `VERIFY.md`. |
 | `OAUTH_ISSUER_URL` | N — **pinned** | `https://api.advisordesk.tyagiakanksha.com` — set in `docker-compose.yml`'s `api` `environment:` block (mcp-oauth plan). This is the OAuth 2.1 issuer/canonical-resource root (`Settings.mcp_resource_url == f"{OAUTH_ISSUER_URL}/api/v1/mcp"`) that the `/.well-known/*` discovery documents and the MCP `WWW-Authenticate` challenge advertise. The five paired TTL/limit vars (`OAUTH_ACCESS_TOKEN_TTL_MINUTES`, `OAUTH_REFRESH_TOKEN_TTL_DAYS`, `OAUTH_AUTH_CODE_TTL_SECONDS`, `OAUTH_RATE_LIMIT_PER_MIN`, `OAUTH_MAX_CLIENTS`) keep their `.env.example` defaults (60 min / 30 days / 60 s / 30 per min / 200 clients) — not set explicitly in `docker-compose.yml`. |
 | `FORWARDED_ALLOW_IPS` | N — **`172.16.0.0/12` (Docker bridge range) since 2026-09-11; was `*`** | Not an `app/config.py` setting; uvicorn itself reads this env var natively when `--forwarded-allow-ips` isn't on the command line (verified, uvicorn 0.51.0 `Config.__init__`). Purpose: make the rate limiter (`apps/api/app/routes/ratelimit.py`) key on the real client IP from `X-Forwarded-For` instead of the reverse proxy's address. In the deployed single-host topology `*` is safe **because of two properties together** (see `ec2-single-host.md`): the Caddyfile *overwrites* `X-Forwarded-For` with `{remote_host}` (client-supplied chains are discarded, not appended to), and the api container is not host-published (only Caddy can reach it). Verified live by `VERIFY.md` check 2b (forged XFF stays 429). If either property ever changes, re-derive the value — `apprunner-api.md` step 2's escalation ladder explains the appending-ingress hazard that makes blind `*` unsafe elsewhere. |
+
+### Anthropic (Haiku 5.5) option — not active in prod
+
+Legacy `LLM_PROVIDER=nvidia` deployments now also need `EMBEDDING_PROVIDER=nvidia` (embeddings no longer follow `LLM_PROVIDER`).
+
+Prod stays on `LLM_PROVIDER=openai` until the owner flips it after an eval. To switch: set
+`LLM_PROVIDER=anthropic` (pinned in `docker-compose.yml`, which overrides the box `.env`, so edit
+that line), `ANTHROPIC_API_KEY` (or `CLAUDE_API_KEY`), `CHAT_MODEL=claude-haiku-5-5`,
+`JUDGE_MODEL=claude-haiku-5-5` in the box `.env`. Embeddings stay on OpenAI
+(`EMBEDDING_PROVIDER=openai`), so keep `OPENAI_API_KEY`. Haiku 5.5 rejects `temperature`; the code
+omits it. Rollback: `LLM_PROVIDER=openai` and restore the previous `CHAT_MODEL`/`JUDGE_MODEL`
+names (e.g. `gpt-5.4-mini`/`gpt-5.4`).
 
 `GOOGLE_CLIENT_ID` note: `apps/api/app/config.py`'s `Settings` class marks `openai_api_key`,
 `nvidia_api_key`, `database_url`, `google_client_secret`, and `session_secret` as `SecretStr` (so a stray

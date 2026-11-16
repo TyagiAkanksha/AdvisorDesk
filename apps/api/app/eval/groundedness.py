@@ -65,9 +65,10 @@ from app.eval.metrics import (
 from app.eval.questions import EvalQuestion, load_questions, resolve_expected_chunks
 from app.eval.taxonomy import classify_failure, failure_distribution
 from app.models import EvalRun
+from app.rag.chat_provider import build_chat_llm
 from app.rag.embeddings import Embedder, OpenAICompatibleEmbedder
 from app.rag.retrieval import retrieve
-from app.rag.synthesis import SYSTEM_PROMPT, ChatLLM, OpenAICompatibleChatLLM
+from app.rag.synthesis import SYSTEM_PROMPT, ChatLLM
 from app.seed_paths import seed_data_dir
 from app.services.eval_runs import compare_runs, latest_runs, record_run
 
@@ -79,6 +80,7 @@ __all__ = [
     "EvalRow",
     "GroundednessJudge",
     "MetricsJudge",
+    "JudgeBase",
     "OpenAIJudge",
     "run_eval",
 ]
@@ -285,119 +287,25 @@ def _strip_code_fence(content: str) -> str:
     return match.group(1).strip() if match else stripped
 
 
-class OpenAIJudge:
-    """The real `GroundednessJudge`/`MetricsJudge`, built from `Settings` (task-02 brief
-    Interfaces; task-05 Interfaces for the three rubric methods).
-
-    Mirrors `app.rag.synthesis.OpenAICompatibleChatLLM`'s client construction
-    (`from_settings`, `settings.llm_api_key`/`settings.llm_base_url`, the reused
-    `embedding_timeout_seconds` request timeout) — but the model is `settings.judge_model`
-    (DESIGN D7: a STRONGER model than the answerer's `settings.chat_model`), and the retry budget
-    is its OWN dedicated `settings.judge_max_retries` (fix wave D1), not the reused
-    `embedding_max_retries` the other two clients share,
-    not `chat_model` itself. This moves the recorded groundedness number relative to every run
-    before this task (see the implementer report). Judges at `temperature=settings.
-    judge_temperature` (`0.0` by default — deterministic verdicts; phase-9 task-05d brief, ruling
-    4: `None` omits the request's `temperature` parameter entirely, for a judge model that only
-    accepts its own default sampling temperature). Only exercised in the real recorded run
-    (`_run_from_cli`) — never in unit tests, which inject `ScriptedJudge`/`FakeMetricsJudge`
-    instead.
+class JudgeBase:
+    """Provider-neutral judge logic: prompts, user-message building and reply parsing. A
+    subclass supplies only `_ask(system, user) -> str` (the one provider wire call, returning
+    the stripped reply text). `OpenAIJudge` below and `app.eval.anthropic_judge.AnthropicJudge`
+    are the two subclasses.
     """
 
-    def __init__(self, *, client: OpenAI, model: str, temperature: float | None = 0.0) -> None:
-        self._client = client
-        self._model = model
-        self._temperature = temperature
-
-    @classmethod
-    def from_settings(cls, settings: Settings) -> OpenAIJudge:
-        """Build the real client from `Settings` — the one non-test constructor.
-
-        Fix wave D1: `max_retries=settings.judge_max_retries` — a DEDICATED retry budget for the
-        judge client, not the reused `embedding_max_retries` (task 09's incident needed
-        `EMBEDDING_MAX_RETRIES=12` as an env override to survive the judge's own rate limit, which
-        only worked because this constructor happened to reuse that setting — the correctly-named
-        fix is `judge_max_retries`, config.py's own comment on the field). `timeout` still reuses
-        `embedding_timeout_seconds`, which is a per-request budget with no judge-specific reason
-        to diverge.
-        """
-        api_key = settings.llm_api_key.get_secret_value() or "unset"
-        client = OpenAI(
-            api_key=api_key,
-            base_url=settings.llm_base_url,
-            timeout=settings.embedding_timeout_seconds,
-            max_retries=settings.judge_max_retries,
-        )
-        return cls(
-            client=client, model=settings.judge_model, temperature=settings.judge_temperature
-        )
+    def _ask(self, system: str, user: str) -> str:
+        raise NotImplementedError
 
     def is_supported(self, claim_text: str, chunk_texts: Sequence[str]) -> bool:
-        """Ask the judge model whether `claim_text` is supported by `chunk_texts`.
-
-        Phase-9 task-05d brief, ruling 4: `temperature=self._temperature` is sent only when it is
-        not `None` — omitted from the request entirely otherwise, mirroring
-        `app.rag.embeddings.OpenAICompatibleEmbedder.embed_texts`'s own two-full-calls style for a
-        conditional request parameter (never a sentinel value passed through).
-        """
+        """Ask the judge model whether `claim_text` is supported by `chunk_texts`."""
         sources = (
             "\n\n".join(f"[{i + 1}] {text}" for i, text in enumerate(chunk_texts))
             if chunk_texts
             else "(no source passages)"
         )
         user_message = f"SOURCES:\n{sources}\n\nCLAIM: {claim_text}\n\nIs the claim supported?"
-        # The message list is a literal at EACH call site (never hoisted into a shared variable)
-        # so mypy's bidirectional inference can match it against the SDK's TypedDict union — the
-        # same reason `OpenAICompatibleEmbedder.embed_texts` repeats `input=list(texts)` verbatim
-        # in both of its own provider branches instead of factoring it out.
-        if self._temperature is None:
-            response = self._client.chat.completions.create(
-                model=self._model,
-                messages=[
-                    {"role": "system", "content": _JUDGE_SYSTEM_PROMPT},
-                    {"role": "user", "content": user_message},
-                ],
-            )
-        else:
-            response = self._client.chat.completions.create(
-                model=self._model,
-                temperature=self._temperature,
-                messages=[
-                    {"role": "system", "content": _JUDGE_SYSTEM_PROMPT},
-                    {"role": "user", "content": user_message},
-                ],
-            )
-        content = response.choices[0].message.content or ""
-        return content.strip().upper().startswith("YES")
-
-    def _ask(self, system: str, user: str) -> str:
-        """One `chat.completions.create` call — the shared call site for `is_answer_relevant`,
-        `is_chunk_relevant`, `is_claim_covered`, `is_refusal` (via `_ask_yes_no`) and
-        `rank_chunk_relevance`. `temperature=self._temperature` is sent only when it is not `None`
-        (phase-9 task-05d brief, ruling 4 — same rule as `is_supported`'s own call site above);
-        returns the stripped content.
-        """
-        # See `is_supported`'s own comment above: the message list stays a literal at each call
-        # site rather than a shared variable, for mypy's benefit.
-        if self._temperature is None:
-            response = self._client.chat.completions.create(
-                model=self._model,
-                messages=[
-                    {"role": "system", "content": system},
-                    {"role": "user", "content": user},
-                ],
-            )
-        else:
-            response = self._client.chat.completions.create(
-                model=self._model,
-                temperature=self._temperature,
-                messages=[
-                    {"role": "system", "content": system},
-                    {"role": "user", "content": user},
-                ],
-            )
-        content = response.choices[0].message.content or ""
-        return content.strip()
+        return self._ask(_JUDGE_SYSTEM_PROMPT, user_message).upper().startswith("YES")
 
     def _ask_yes_no(self, system: str, user: str) -> bool:
         """Call `_ask`, parse its first line as the YES/NO verdict, and log the reason line at
@@ -504,6 +412,89 @@ class OpenAIJudge:
             logger.warning("context-precision judge returned malformed verdicts: %r", content)
             return None
         return [bool(verdict) for verdict in verdicts]
+
+
+class OpenAIJudge(JudgeBase):
+    """The real `GroundednessJudge`/`MetricsJudge`, built from `Settings` (task-02 brief
+    Interfaces; task-05 Interfaces for the three rubric methods).
+
+    Mirrors `app.rag.synthesis.OpenAICompatibleChatLLM`'s client construction
+    (`from_settings`, `settings.llm_api_key`/`settings.llm_base_url`, the reused
+    `embedding_timeout_seconds` request timeout) — but the model is `settings.judge_model`
+    (DESIGN D7: a STRONGER model than the answerer's `settings.chat_model`), and the retry budget
+    is its OWN dedicated `settings.judge_max_retries` (fix wave D1), not the reused
+    `embedding_max_retries` the other two clients share,
+    not `chat_model` itself. This moves the recorded groundedness number relative to every run
+    before this task (see the implementer report). Judges at `temperature=settings.
+    judge_temperature` (`0.0` by default — deterministic verdicts; phase-9 task-05d brief, ruling
+    4: `None` omits the request's `temperature` parameter entirely, for a judge model that only
+    accepts its own default sampling temperature). Only exercised in the real recorded run
+    (`_run_from_cli`) — never in unit tests, which inject `ScriptedJudge`/`FakeMetricsJudge`
+    instead.
+    """
+
+    def __init__(self, *, client: OpenAI, model: str, temperature: float | None = 0.0) -> None:
+        self._client = client
+        self._model = model
+        self._temperature = temperature
+
+    @classmethod
+    def from_settings(cls, settings: Settings) -> OpenAIJudge:
+        """Build the real client from `Settings` — the one non-test constructor.
+
+        Fix wave D1: `max_retries=settings.judge_max_retries` — a DEDICATED retry budget for the
+        judge client, not the reused `embedding_max_retries` (task 09's incident needed
+        `EMBEDDING_MAX_RETRIES=12` as an env override to survive the judge's own rate limit, which
+        only worked because this constructor happened to reuse that setting — the correctly-named
+        fix is `judge_max_retries`, config.py's own comment on the field). `timeout` still reuses
+        `embedding_timeout_seconds`, which is a per-request budget with no judge-specific reason
+        to diverge.
+        """
+        if settings.effective_judge_provider == "anthropic":
+            raise ValueError(
+                "OpenAIJudge.from_settings cannot be used with an anthropic judge provider "
+                "(it would send the Anthropic key to an OpenAI-compatible endpoint); "
+                "use app.eval.judge_factory.build_judge instead."
+            )
+        api_key = settings.judge_api_key.get_secret_value() or "unset"
+        client = OpenAI(
+            api_key=api_key,
+            base_url=settings.judge_base_url,
+            timeout=settings.embedding_timeout_seconds,
+            max_retries=settings.judge_max_retries,
+        )
+        return cls(
+            client=client, model=settings.judge_model, temperature=settings.judge_temperature
+        )
+
+    def _ask(self, system: str, user: str) -> str:
+        """One `chat.completions.create` call — the shared call site for `is_answer_relevant`,
+        `is_chunk_relevant`, `is_claim_covered`, `is_refusal` (via `_ask_yes_no`) and
+        `rank_chunk_relevance`. `temperature=self._temperature` is sent only when it is not `None`
+        (phase-9 task-05d brief, ruling 4);
+        returns the stripped content.
+        """
+        # The message list stays a literal at each call site rather than a shared variable,
+        # for mypy's benefit.
+        if self._temperature is None:
+            response = self._client.chat.completions.create(
+                model=self._model,
+                messages=[
+                    {"role": "system", "content": system},
+                    {"role": "user", "content": user},
+                ],
+            )
+        else:
+            response = self._client.chat.completions.create(
+                model=self._model,
+                temperature=self._temperature,
+                messages=[
+                    {"role": "system", "content": system},
+                    {"role": "user", "content": user},
+                ],
+            )
+        content = response.choices[0].message.content or ""
+        return content.strip()
 
 
 def _dedupe_preserve_order(texts: Iterable[str]) -> list[str]:
@@ -1268,8 +1259,10 @@ def _run_from_cli(
         )
     settings = Settings()
     embedder = OpenAICompatibleEmbedder.from_settings(settings)
-    chat_llm = OpenAICompatibleChatLLM.from_settings(settings)
-    judge = OpenAIJudge.from_settings(settings)
+    chat_llm = build_chat_llm(settings)
+    from app.eval.judge_factory import build_judge  # local: judge_factory imports this module
+
+    judge = build_judge(settings)
 
     owns_session = session_factory is None
     engine = None

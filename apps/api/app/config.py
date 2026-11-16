@@ -9,7 +9,7 @@ from __future__ import annotations
 import logging
 from typing import Literal
 
-from pydantic import SecretStr, field_validator, model_validator
+from pydantic import AliasChoices, Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings
 
 logger = logging.getLogger(__name__)
@@ -74,6 +74,13 @@ class Settings(BaseSettings):
     # Empty-`SecretStr` default and repr-hiding mirror every other secret
     # field, `nvidia_api_key` included.
     openai_api_key: SecretStr = SecretStr("")
+    # Anthropic (Claude) credential — used only when `llm_provider="anthropic"`. The field name
+    # is in the choices so `Settings(anthropic_api_key=...)` works; `CLAUDE_API_KEY` is the name
+    # the repo's `.env` already uses.
+    anthropic_api_key: SecretStr = Field(
+        default=SecretStr(""),
+        validation_alias=AliasChoices("anthropic_api_key", "ANTHROPIC_API_KEY", "CLAUDE_API_KEY"),
+    )
     database_url: SecretStr = SecretStr("")
     google_client_id: str = ""
     google_client_secret: SecretStr = SecretStr("")
@@ -87,7 +94,17 @@ class Settings(BaseSettings):
     # future-re-enable branch (a 2048-dim NVIDIA embedding model exists but
     # would need a migration + full corpus re-embed — deliberately deferred,
     # not ruled out).
-    llm_provider: Literal["openai", "nvidia"] = "openai"
+    llm_provider: Literal["openai", "nvidia", "anthropic"] = "openai"
+
+    # Output-token cap sent by the Anthropic chat/agent/judge adapters (env LLM_MAX_TOKENS).
+    llm_max_tokens: int = Field(default=2048, gt=0)
+
+    # Claude effort level sent as `output_config.effort` (env LLM_EFFORT).
+    llm_effort: Literal["low", "medium", "high", "xhigh", "max"] = "low"
+
+    # Which provider embeds text. Independent of `llm_provider` because Anthropic has no
+    # embeddings API: `llm_provider="anthropic"` still embeds through OpenAI.
+    embedding_provider: Literal["openai", "nvidia"] = "openai"
 
     # OpenAI-compatible base URL (PRD §7.2). Defaults to OpenAI's own
     # endpoint (v1.6); pointed at NVIDIA NIM's compatible endpoint
@@ -138,6 +155,9 @@ class Settings(BaseSettings):
     # `gpt-4o`'s 30,000 TPM. Judges in ~1.1s on this account. Zero-env constructible like every
     # other setting (CONVENTIONS.md §5).
     judge_model: str = "gpt-5.4"
+    # Which provider runs the eval judge. None = follow `llm_provider`. Set `openai` (with
+    # JUDGE_MODEL=gpt-5.4) to keep scores comparable to baselines while chat runs on Claude.
+    judge_provider: Literal["openai", "nvidia", "anthropic"] | None = None
 
     # Phase-9 task-05d brief, ruling 4 (owner decision 2026-09-13): the judge's sampling
     # temperature, independently overridable from the answerer's — the answerer stays hard-pinned
@@ -308,6 +328,8 @@ class Settings(BaseSettings):
         (an operator flipped `llm_provider` and forgot the companion fields) — never for a
         custom/self-hosted URL, which by construction matches neither literal default.
         """
+        if self.llm_provider == "anthropic":
+            return self  # Anthropic uses its own SDK; `llm_base_url` is not consulted.
         other_provider = "nvidia" if self.llm_provider == "openai" else "openai"
         if self.llm_base_url == _PROVIDER_DEFAULT_BASE_URLS[other_provider]:
             logger.warning(
@@ -334,9 +356,50 @@ class Settings(BaseSettings):
         `.get_secret_value()` must not leak a real key, same as every other
         secret field.
         """
+        if self.llm_provider == "anthropic":
+            return self.anthropic_api_key
         if self.llm_provider == "openai":
             return self.openai_api_key
         return self.nvidia_api_key
+
+    @property
+    def embedding_api_key(self) -> SecretStr:
+        """The credential for `embedding_provider` (never the Anthropic key)."""
+        if self.embedding_provider == "openai":
+            return self.openai_api_key
+        return self.nvidia_api_key
+
+    @property
+    def embedding_base_url(self) -> str:
+        """Embedding endpoint: `llm_base_url` when it serves the same provider, else the
+        embedding provider's own default."""
+        if self.embedding_provider == self.llm_provider:
+            return self.llm_base_url
+        return _PROVIDER_DEFAULT_BASE_URLS[self.embedding_provider]
+
+    @property
+    def effective_judge_provider(self) -> Literal["openai", "nvidia", "anthropic"]:
+        """`judge_provider` when set, else `llm_provider`."""
+        return self.judge_provider or self.llm_provider
+
+    @property
+    def judge_api_key(self) -> SecretStr:
+        """The credential for the effective judge provider."""
+        provider = self.effective_judge_provider
+        if provider == "anthropic":
+            return self.anthropic_api_key
+        if provider == "openai":
+            return self.openai_api_key
+        return self.nvidia_api_key
+
+    @property
+    def judge_base_url(self) -> str:
+        """`llm_base_url` when the judge shares the chat provider, else the judge provider's
+        own default (only used by OpenAI-compatible judges)."""
+        provider = self.effective_judge_provider
+        if provider == self.llm_provider:
+            return self.llm_base_url
+        return _PROVIDER_DEFAULT_BASE_URLS.get(provider, self.llm_base_url)
 
     @property
     def cors_origin_list(self) -> list[str]:

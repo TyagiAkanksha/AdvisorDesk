@@ -34,6 +34,11 @@ services:
       # to `gpt-5.4-mini`. EMBEDDING_DIMENSIONS stays pinned (`vector(1024)` is a schema
       # fact, not a model choice — a model swap that changes dimensionality needs a
       # migration regardless of where the model name itself is set).
+      #
+      # Anthropic option (not active): ANTHROPIC_API_KEY, CHAT_MODEL, JUDGE_MODEL and
+      # EMBEDDING_PROVIDER reach the container via `env_file` above (the box .env), so no
+      # entry is needed here. LLM_PROVIDER IS pinned below and beats env_file — prod stays
+      # on openai until the owner changes this line to `anthropic` after an eval.
       LLM_PROVIDER: openai
       LLM_BASE_URL: https://api.openai.com/v1
       EMBEDDING_DIMENSIONS: "1024"

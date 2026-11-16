@@ -342,6 +342,7 @@ def test_inactive_openai_api_key_does_not_raise_in_production_under_nvidia_provi
         {
             "LLM_PROVIDER": "nvidia",
             "NVIDIA_API_KEY": "test-nvidia-api-key",
+            "EMBEDDING_PROVIDER": "nvidia",
             "OPENAI_API_KEY": "",
             "ENVIRONMENT": "production",
         },

@@ -4,7 +4,8 @@
 `docs/plans/phase-6-remediation/task-14-openai-provider-swap.md` (P0 production outage: both
 pinned NVIDIA models are EOL/410 Gone; owner picked OpenAI). Pins design pin #1 exactly:
 
-  - `llm_provider: Literal["openai", "nvidia"] = "openai"` — the new provider switch. OpenAI is
+  - `llm_provider: Literal["openai", "nvidia", "anthropic"] = "openai"` (anthropic added later;
+    this file pins only the openai/nvidia behaviour) — the new provider switch. OpenAI is
     now the default (both NVIDIA models this app was pinned to are dead); `"nvidia"` stays
     selectable as a back-compat/future-re-enable branch.
   - `openai_api_key: SecretStr = SecretStr("")` (env `OPENAI_API_KEY`) — the new credential
@@ -96,7 +97,7 @@ def test_llm_provider_rejects_an_unrecognized_value(clean_llm_env: None) -> None
     once `llm_provider` is genuinely a `Literal["openai", "nvidia"]` field.
     """
     with pytest.raises(ValidationError) as exc_info:
-        Settings(llm_provider="anthropic")
+        Settings(llm_provider="bogus")
 
     assert exc_info.value.errors()[0]["type"] == "literal_error"
 

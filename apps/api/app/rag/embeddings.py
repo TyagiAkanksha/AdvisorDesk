@@ -140,10 +140,10 @@ class OpenAICompatibleEmbedder:
         this same client on the public chat path where first-token latency
         matters.
         """
-        api_key = settings.llm_api_key.get_secret_value() or "unset"
+        api_key = settings.embedding_api_key.get_secret_value() or "unset"
         client = OpenAI(
             api_key=api_key,
-            base_url=settings.llm_base_url,
+            base_url=settings.embedding_base_url,
             timeout=settings.embedding_timeout_seconds,
             max_retries=settings.embedding_max_retries,
         )
@@ -151,7 +151,7 @@ class OpenAICompatibleEmbedder:
             client=client,
             model=settings.embedding_model,
             dimensions=settings.embedding_dimensions,
-            provider=settings.llm_provider,
+            provider=settings.embedding_provider,
         )
 
     def embed_texts(

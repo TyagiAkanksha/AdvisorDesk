@@ -78,8 +78,17 @@ to match — so at any point in time this file names exactly what's running.
   deliberately NOT set in the compose file since the phase-9 deploy (`ca4e634`, 2026-09-13): the
   code defaults apply (`gpt-5.4-mini` / `text-embedding-3-small` / `gpt-5.4`), and
   `tests/test_prod_config_pins.py` fails if a pin reappears in `environment:`.
-- **Anthropic Haiku 5.5 option** — NOT active; prod stays on `LLM_PROVIDER=openai` until the
-  owner flips it after an eval. `fetch-secrets.sh` fetches `ANTHROPIC_API_KEY` as an OPTIONAL
+- **Anthropic Haiku 5.5** — ACTIVE since 2026-11-16 (owner decision; deploy `dde124e`): compose pins
+  `LLM_PROVIDER: anthropic`, chat + agent run on `claude-haiku-5-5`, embeddings stay on OpenAI.
+  The key was added to the box `.env` as a single appended `ANTHROPIC_API_KEY` line (backup
+  `.env.bak-2026-11-16`), NOT by re-running `fetch-secrets.sh`: SSM `/advisordesk/ADMIN_EMAILS`
+  (2026-08-09) is older than the hand-edited box value (2026-09-11), so a full re-fetch would
+  drop an admin — update that SSM parameter before the next full `fetch-secrets.sh` run.
+  Verified live 2026-11-16: boot checks clean, all four endpoints 200, one Claude call from inside
+  the api container returned a cited answer. NOTE: public chat still needs one OpenAI embedding
+  call per question — on deploy day it was failing with OpenAI `credit_balance_exhausted`
+  (independent of this change); it recovers when the OpenAI account has credit again.
+  `fetch-secrets.sh` fetches `ANTHROPIC_API_KEY` as an OPTIONAL
   SSM param (skipped, never written empty, if `/advisordesk/ANTHROPIC_API_KEY` is absent). It
   reaches the container via `env_file`, as do `CHAT_MODEL`/`JUDGE_MODEL`/`EMBEDDING_PROVIDER`
   (not pinned in compose). To switch: change the pinned `LLM_PROVIDER` line in

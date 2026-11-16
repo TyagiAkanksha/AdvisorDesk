@@ -43,11 +43,12 @@ a file in this repo.
 | `OAUTH_ISSUER_URL` | N — **pinned** | `https://api.advisordesk.tyagiakanksha.com` — set in `docker-compose.yml`'s `api` `environment:` block (mcp-oauth plan). This is the OAuth 2.1 issuer/canonical-resource root (`Settings.mcp_resource_url == f"{OAUTH_ISSUER_URL}/api/v1/mcp"`) that the `/.well-known/*` discovery documents and the MCP `WWW-Authenticate` challenge advertise. The five paired TTL/limit vars (`OAUTH_ACCESS_TOKEN_TTL_MINUTES`, `OAUTH_REFRESH_TOKEN_TTL_DAYS`, `OAUTH_AUTH_CODE_TTL_SECONDS`, `OAUTH_RATE_LIMIT_PER_MIN`, `OAUTH_MAX_CLIENTS`) keep their `.env.example` defaults (60 min / 30 days / 60 s / 30 per min / 200 clients) — not set explicitly in `docker-compose.yml`. |
 | `FORWARDED_ALLOW_IPS` | N — **`172.16.0.0/12` (Docker bridge range) since 2026-09-11; was `*`** | Not an `app/config.py` setting; uvicorn itself reads this env var natively when `--forwarded-allow-ips` isn't on the command line (verified, uvicorn 0.51.0 `Config.__init__`). Purpose: make the rate limiter (`apps/api/app/routes/ratelimit.py`) key on the real client IP from `X-Forwarded-For` instead of the reverse proxy's address. In the deployed single-host topology `*` is safe **because of two properties together** (see `ec2-single-host.md`): the Caddyfile *overwrites* `X-Forwarded-For` with `{remote_host}` (client-supplied chains are discarded, not appended to), and the api container is not host-published (only Caddy can reach it). Verified live by `VERIFY.md` check 2b (forged XFF stays 429). If either property ever changes, re-derive the value — `apprunner-api.md` step 2's escalation ladder explains the appending-ingress hazard that makes blind `*` unsafe elsewhere. |
 
-### Anthropic (Haiku 5.5) option — not active in prod
+### Anthropic (Haiku 5.5) — ACTIVE in prod since 2026-11-16
 
 Legacy `LLM_PROVIDER=nvidia` deployments now also need `EMBEDDING_PROVIDER=nvidia` (embeddings no longer follow `LLM_PROVIDER`).
 
-Prod stays on `LLM_PROVIDER=openai` until the owner flips it after an eval. To switch: set
+Prod runs `LLM_PROVIDER=anthropic` since 2026-11-16 (owner decision; deploy `dde124e`; chat + agent on
+`claude-haiku-5-5`, embeddings on OpenAI). What the switch consists of: set
 `LLM_PROVIDER=anthropic` (pinned in `docker-compose.yml`, which overrides the box `.env`, so edit
 that line), `ANTHROPIC_API_KEY` (or `CLAUDE_API_KEY`) in the box `.env`. `CHAT_MODEL`/`JUDGE_MODEL` are now
 OPTIONAL under `LLM_PROVIDER=anthropic` (default `claude-haiku-5-5`; the judge default follows

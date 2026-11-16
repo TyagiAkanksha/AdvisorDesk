@@ -19,6 +19,7 @@ dependencies = [
     "mcp>=2.0.0",
     "python-multipart>=0.0.20",
     "anthropic>=2.8.0",
+    "fastembed>=0.9.1",
 ]
 
 [dependency-groups]

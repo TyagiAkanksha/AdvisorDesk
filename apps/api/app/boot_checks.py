@@ -2,7 +2,8 @@
 
 `missing_api_key_errors` validates the ACTIVE `llm_provider`'s key and the ACTIVE
 `embedding_provider`'s key (they differ under `llm_provider="anthropic"`, which still embeds
-through OpenAI). Dev is exempt: the offline path boots with every key blank.
+through OpenAI) and `embedding_provider="local"` needs no embedding key. Dev is exempt: the
+offline path boots with every key blank.
 """
 
 from __future__ import annotations
@@ -35,7 +36,7 @@ def missing_api_key_errors(settings: Settings) -> list[str]:
     errors: list[str] = []
     if not settings.llm_api_key.get_secret_value():
         errors.append(_message(settings.llm_provider))
-    if not settings.embedding_api_key.get_secret_value():
+    if settings.embedding_provider != "local" and not settings.embedding_api_key.get_secret_value():
         message = _message(settings.embedding_provider)
         if message not in errors:
             errors.append(message)

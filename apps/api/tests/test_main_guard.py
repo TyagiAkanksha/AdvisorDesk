@@ -72,6 +72,9 @@ _VALID_ENV = {
     # `test_main_imports_cleanly_when_all_required_vars_are_set` below).
     "LLM_PROVIDER": "openai",
     "OPENAI_API_KEY": "test-openai-api-key",
+    # Pin the embedding provider so a developer shell exporting
+    # `EMBEDDING_PROVIDER=local` cannot make these tests load the real model.
+    "EMBEDDING_PROVIDER": "openai",
 }
 
 

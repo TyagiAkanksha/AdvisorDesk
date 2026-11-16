@@ -1,7 +1,7 @@
 # AdvisorDesk — Product Requirements Document (PRD)
 
 **AI-Powered Advisory Content Platform**
-Version 1.5 · Owner: Akanksha Tyagi
+Version 1.8 · Owner: Akanksha Tyagi
 Status: Approved for implementation · Scope: full production-quality build
 
 > **Purpose:** a complete, self-contained spec that an implementing agent can execute end-to-end with zero outside context. All decisions from the pre-implementation review are merged inline — no companion documents are required.
@@ -261,7 +261,7 @@ All routes prefixed `/api/v1`. JSON in/out; streaming endpoints use SSE with the
 ### 5.3 Public (client app)
 - `GET  /public/content` — published and non-deleted only; list with tags
 - `GET  /public/content/{slug}` — published and non-deleted only; detail (a deleted item's slug 404s and is never reassigned, §4.1)
-- `POST /public/chat` — body `{session_id?, message}`. If `session_id` is absent or unknown, the server creates a session (subject to the per-IP creation cap, §9) and returns its id in the `done` event; the client stores it in `localStorage` and sends it on subsequent requests. No cookies are used for client sessions. SSE response:
+- `POST /public/chat` — body `{session_id?, message}`; `message` is 1–4000 characters (longer is rejected with the standard 422 validation error, before any embedder or LLM call). If `session_id` is absent or unknown, the server creates a session (subject to the per-IP creation cap, §9) and returns its id in the `done` event; the client stores it in `localStorage` and sends it on subsequent requests. No cookies are used for client sessions. SSE response:
 
 ```
 event: token       data: {"text": "..."}                                  (repeated)
@@ -311,9 +311,10 @@ All tools read and write non-deleted rows only (§4.1) — a `content_id` addres
 ## 7. RAG pipeline (client assistant)
 
 1. **Chunking:** split `body_md` by markdown headings, then to ~400-token chunks with 50-token overlap (v1.5: lowered from 500 — the embedding model's input window is 512 of *its* tokens, and tokenizers differ; 400 keeps a safe margin). Store `chunk_index`.
-2. **Embedding:** provider is config-driven via `LLM_PROVIDER` (v1.6). Default **`openai`**: `text-embedding-3-small` at `dimensions=1024` (controller-verified live — a drop-in for the existing `chunks.embedding vector(1024)` column, no migration) via OpenAI's own `/v1/embeddings` endpoint; this model is **symmetric**, so `input_type` is accepted for interface compatibility but never reaches the wire. Back-compat branch **`nvidia`**: `nvidia/nv-embedqa-e5-v5` (1024 dims) over NVIDIA NIM's OpenAI-compatible endpoint — **EOL'd 2026-08-25 (410 Gone)**, kept selectable but not recommended for new deployments. The NVIDIA model is **asymmetric**: pass `input_type="passage"` when embedding chunks at publish time and `input_type="query"` when embedding user questions at retrieval time; send `truncate="END"` as a defense against over-length input — both are now NVIDIA-branch-specific, not sent to OpenAI. Batch per content item. Model/dims/base-URL/provider are env-configurable (`LLM_PROVIDER`, `EMBEDDING_MODEL`, `EMBEDDING_DIMENSIONS`, `LLM_BASE_URL`) so a provider swap never touches code.
+2. **Embedding:** provider is selected by `EMBEDDING_PROVIDER` (independent of `LLM_PROVIDER` since v1.8; config-driven since v1.6). Default **`openai`**: `text-embedding-3-small` at `dimensions=1024` (controller-verified live — a drop-in for the existing `chunks.embedding vector(1024)` column, no migration) via OpenAI's own `/v1/embeddings` endpoint; this model is **symmetric**, so `input_type` is accepted for interface compatibility but never reaches the wire. Back-compat branch **`nvidia`**: `nvidia/nv-embedqa-e5-v5` (1024 dims) over NVIDIA NIM's OpenAI-compatible endpoint — **EOL'd 2026-08-25 (410 Gone)**, kept selectable but not recommended for new deployments. The NVIDIA model is **asymmetric**: pass `input_type="passage"` when embedding chunks at publish time and `input_type="query"` when embedding user questions at retrieval time; send `truncate="END"` as a defense against over-length input — both are now NVIDIA-branch-specific, not sent to OpenAI. Batch per content item. Model/dims/base-URL/provider are env-configurable (`LLM_PROVIDER`, `EMBEDDING_MODEL`, `EMBEDDING_DIMENSIONS`, `LLM_BASE_URL`) so a provider swap never touches code.
+   **Local option (v1.8):** `EMBEDDING_PROVIDER=local` runs `BAAI/bge-small-en-v1.5` in-process via fastembed (no key, no outside service). It is asymmetric: queries get the prefix `Represent this sentence for searching relevant passages: `, passages none. Its 384-dim vectors are right-padded with zeros to the `vector(1024)` column (cosine similarity is unchanged; no migration), and the `SIMILARITY_THRESHOLD` default becomes `0.65`. Switching provider requires re-embedding all chunks (`scripts/reembed.py`).
 3. **Retrieval:** embed the user query → nearest neighbors over `chunks` via the HNSW index → top 6 → threshold filter.
-   **Similarity convention (implementation trap — read carefully):** pgvector's `<=>` operator returns cosine **distance**. Define once in the retrieval module: `similarity = 1 - (embedding <=> query_embedding)`. Apply `SIMILARITY_THRESHOLD` (default `0.5` since the 2026-09-06 OpenAI provider switch — see §14; env-configurable) to that **similarity** value — chunks below it are dropped. A unit test pins this conversion (§9). The default is model-dependent: it was `0.35` under the original NVIDIA `nv-embedqa-e5-v5` model, retuned to `0.5` for `text-embedding-3-small` after measuring the eval set's answerable/unanswerable similarity distributions (answerable 0.645–0.806, unanswerable 0.356–0.403). A provider or embedding-model change should re-measure and re-tune this value.
+   **Similarity convention (implementation trap — read carefully):** pgvector's `<=>` operator returns cosine **distance**. Define once in the retrieval module: `similarity = 1 - (embedding <=> query_embedding)`. Apply `SIMILARITY_THRESHOLD` (default `0.5` for OpenAI/NVIDIA embeddings since the 2026-09-06 OpenAI provider switch, `0.65` when `EMBEDDING_PROVIDER=local` — similarity scales differ per model — see §14; env-configurable) to that **similarity** value — chunks below it are dropped. A unit test pins this conversion (§9). The default is model-dependent: it was `0.35` under the original NVIDIA `nv-embedqa-e5-v5` model, retuned to `0.5` for `text-embedding-3-small` after measuring the eval set's answerable/unanswerable similarity distributions (answerable 0.645–0.806, unanswerable 0.356–0.403). A provider or embedding-model change should re-measure and re-tune this value.
 4. **Retrieval outcome recording:** when persisting the assistant message, set `top_similarity` to the best similarity observed (null if the index returned nothing) and `retrieval_found = false` iff no chunk cleared the threshold.
 5. **Answer synthesis:** same config-driven provider as embedding (v1.6). Default **`openai`**: `gpt-4o-mini` (controller-verified live — responds, supports tool-calling for the admin agent) over OpenAI's chat-completions API. Back-compat branch **`nvidia`**: the NVIDIA-hosted instruct model pinned in the phase-4 plan (`meta/llama-3.1-8b-instruct`) — **EOL'd 2026-08-26 (410 Gone)**. `CHAT_MODEL` env-configurable either way; the chat-completions wire shape carries no provider-specific parameters, so it is identical for both branches. System prompt (verbatim intent, wording adjustable):
    - Answer ONLY from the provided context chunks.
@@ -431,6 +432,12 @@ Definition of done: a stranger can follow the README, run the demo script end to
 
 ## 14. Changelog
 
+- **v1.8** — Two additive provider options (2026-11-16); also caps the public chat `message` at 4000 characters. (1) Optional Anthropic provider (PR #59):
+  `LLM_PROVIDER=anthropic` runs chat, agent and eval judge on `claude-haiku-5-5` via the official
+  SDK; embeddings are independent via `EMBEDDING_PROVIDER`. (2) `EMBEDDING_PROVIDER=local`
+  (§7.2 step 2): `BAAI/bge-small-en-v1.5` via fastembed, in-process, 384 dims zero-padded to the
+  existing `vector(1024)` column (no migration), query-side prefix, local similarity threshold
+  default `0.65`.
 - **v1.7** — A refusal renders without a Sources list in the client, even when retrieval returned a
   near-miss chunk (§7 step 5; video-review fixes t02, 2026-10-31); the `citations` event's
   `refusal` flag (§5.3) is what the client keys on.

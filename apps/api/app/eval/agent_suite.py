@@ -44,7 +44,7 @@ from app.config import Settings
 from app.db import make_engine, make_session_factory
 from app.eval.groundedness import _git_sha
 from app.models import Content, ContentTag, Tag, User
-from app.rag.embeddings import OpenAICompatibleEmbedder
+from app.rag.embedder_factory import build_embedder
 from app.rag.pipeline import EmbeddingChunkPipeline
 from app.seed_paths import seed_data_dir
 from app.services.eval_runs import record_run
@@ -752,7 +752,7 @@ def _run_from_cli(argv: list[str] | None = None) -> None:
     tasks = load_agent_tasks(args.tasks)
 
     llm = build_agent_llm(settings).new_conversation()
-    embedder = OpenAICompatibleEmbedder.from_settings(settings)
+    embedder = build_embedder(settings)
     pipeline = EmbeddingChunkPipeline(embedder)
 
     engine = make_engine(args.database_url)
@@ -785,7 +785,7 @@ def _run_from_cli(argv: list[str] | None = None) -> None:
                 report,
                 label=args.label,
                 kind="agent",
-                embedding_model=settings.embedding_model,
+                embedding_model=settings.effective_embedding_model,
                 chat_model=settings.chat_model,
                 judge_model=settings.judge_model,
                 similarity_threshold=settings.similarity_threshold,

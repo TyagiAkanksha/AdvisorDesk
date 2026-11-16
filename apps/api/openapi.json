@@ -225,6 +225,7 @@
         "description": "`POST /public/chat`'s request body (PRD \u00a75.3, exact field set).\n\n`session_id` absent or referencing an unknown session both mean \"start a new session\" (\u00a75.3)\n\u2014 `app.services.chat.get_or_create_session` handles both cases identically once this schema\nhas parsed a syntactically valid UUID (or `None`) out of the request body.\n\n`message` is `min_length=1` plus a whitespace-only rejection (review round 1, finding M-5) \u2014\nmirrors `app.models.schemas.content.ContentCreate.title`'s established two-guard pattern\nexactly: `min_length=1` alone still lets a whitespace-only string (`\"   \"`) through, since\nPydantic's length check counts characters, not content. An empty/blank message would otherwise\nstill burn an LLM call and a \u00a79 rate-limit slot, and poison phase-7's `report_content_gaps`\nwith empty \"questions\" (probe P7).",
         "properties": {
           "message": {
+            "maxLength": 4000,
             "minLength": 1,
             "title": "Message",
             "type": "string"

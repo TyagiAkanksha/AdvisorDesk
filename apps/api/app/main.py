@@ -60,7 +60,8 @@ from app.db import make_engine, make_session_factory
 from app.factory import create_app
 from app.models import embedding_column_dims
 from app.rag.chat_provider import build_chat_llm
-from app.rag.embeddings import OpenAICompatibleEmbedder
+from app.rag.embedder_factory import build_embedder
+from app.rag.embeddings import Embedder
 from app.rag.pipeline import EmbeddingChunkPipeline
 from app.rag.synthesis import ChatLLM
 from app.routes.ratelimit import RateLimiter
@@ -212,12 +213,12 @@ engine: Engine = make_engine(settings.database_url.get_secret_value())
 session_factory: sessionmaker[Session] = make_session_factory(engine)
 oauth_client: GoogleOAuthClient = HttpxGoogleOAuthClient.from_settings(settings)
 
-# Phase-4 task-02: one `OpenAICompatibleEmbedder` shared by `EmbeddingChunkPipeline` (publish-
+# Phase-4 task-02: one embedder (`build_embedder`) shared by `EmbeddingChunkPipeline` (publish-
 # time chunk embedding, `input_type="passage"`) and the request-time `embedder` seam
 # `app.rag.retrieval.retrieve()` uses to embed the user's question (`input_type="query"`) — the
 # `Embedder` protocol's own asymmetric-model docstring already covers both call shapes on one
 # client, so there is no reason to build two.
-embedder: OpenAICompatibleEmbedder = OpenAICompatibleEmbedder.from_settings(settings)
+embedder: Embedder = build_embedder(settings)
 chunk_pipeline: EmbeddingChunkPipeline = EmbeddingChunkPipeline(embedder)
 chat_llm: ChatLLM = build_chat_llm(settings)
 # Phase-5 task-03 (fix round 1, finding C-3): the real agent LLM (PRD §5.4/§6, v1.5) — same

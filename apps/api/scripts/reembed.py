@@ -11,7 +11,7 @@ content rows themselves are never touched, only their `Chunk` rows are deleted a
 item's transaction at a time within the caller's session boundary.
 
 Mirrors `app/seed.py`'s `_run_from_cli` wiring (`Settings()` -> `make_engine` ->
-`make_session_factory`, `OpenAICompatibleEmbedder.from_settings` -> `EmbeddingChunkPipeline`) —
+`make_session_factory`, `build_embedder` -> `EmbeddingChunkPipeline`) —
 unlike `scripts/mint_mcp_token.py` (which deliberately reads only `DATABASE_URL` straight from
 `os.environ` to avoid demanding every other env var a one-shot token CLI never needs), this script
 genuinely needs the full LLM provider configuration (`LLM_PROVIDER`, the active provider's API
@@ -24,7 +24,7 @@ chunk_count)` function with no CLI/env/provider dependency of its own — so `te
 script.py` can drive it directly against a throwaway-schema DB and a fake, no-network pipeline
 (mirroring `app/seed.py::seed_all`'s identical test-vs-`main()` split). `main()` is the only thing
 that reads `DATABASE_URL`, builds a real engine/session, or constructs a real
-`OpenAICompatibleEmbedder` — no test in this codebase ever makes a real embedding call through
+embedder — no test in this codebase ever makes a real embedding call through
 this module.
 
 Usage:
@@ -37,7 +37,7 @@ from sqlalchemy.orm import Session
 
 from app.config import Settings
 from app.db import make_engine, make_session_factory
-from app.rag.embeddings import OpenAICompatibleEmbedder
+from app.rag.embedder_factory import build_embedder
 from app.rag.pipeline import EmbeddingChunkPipeline
 from app.services.content import list_published_content
 from app.services.lifecycle import ChunkPipeline
@@ -61,7 +61,7 @@ def reembed_all(session: Session, pipeline: ChunkPipeline) -> tuple[int, int]:
             `pipeline.rebuild_chunks`) — it never `commit()`s or `rollback()`s; the caller (`main`
             below, for a real run) owns the transaction boundary.
         pipeline: the `ChunkPipeline` to rebuild through — the real
-            `EmbeddingChunkPipeline(OpenAICompatibleEmbedder.from_settings(...))` when run via
+            `EmbeddingChunkPipeline(build_embedder(...))` when run via
             `main()`, a fake (`FakeEmbedder`-backed) one in tests.
 
     Returns:
@@ -101,7 +101,7 @@ def main() -> None:
 
     engine = make_engine(database_url)
     session_factory = make_session_factory(engine)
-    embedder = OpenAICompatibleEmbedder.from_settings(settings)
+    embedder = build_embedder(settings)
     pipeline = EmbeddingChunkPipeline(embedder)
 
     session = session_factory()

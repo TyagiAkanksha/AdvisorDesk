@@ -23,7 +23,7 @@ class ChatRequest(BaseModel):
     """
 
     session_id: uuid.UUID | None = None
-    message: str = Field(min_length=1)
+    message: str = Field(min_length=1, max_length=4000)
 
     @field_validator("message")
     @classmethod

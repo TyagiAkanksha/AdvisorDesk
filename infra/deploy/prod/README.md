@@ -71,7 +71,7 @@ to match — so at any point in time this file names exactly what's running.
   shipped — removed from there as of this pass (p7 review finding M-1).
 - **OpenAI provider switch** (6R-14) — DONE. `docker-compose.yml`'s `api` service sets
   `LLM_PROVIDER=openai`, `LLM_BASE_URL=https://api.openai.com/v1`, `EMBEDDING_DIMENSIONS="1024"`,
-  `SIMILARITY_THRESHOLD="0.5"`; `fetch-secrets.sh` fetches
+  `SIMILARITY_THRESHOLD="0.5"` (superseded 2026-11-16, see below); `fetch-secrets.sh` fetches
   `OPENAI_API_KEY` from SSM. Both NVIDIA NIM models (embedding + chat) reached end-of-life in
   August 2026; `NVIDIA_API_KEY` is fetched only for back-compat and unused while
   `LLM_PROVIDER=openai`. The model NAMES (`CHAT_MODEL`, `EMBEDDING_MODEL`, `JUDGE_MODEL`) are
@@ -79,15 +79,15 @@ to match — so at any point in time this file names exactly what's running.
   code defaults apply (`gpt-5.4-mini` / `text-embedding-3-small` / `gpt-5.4`), and
   `tests/test_prod_config_pins.py` fails if a pin reappears in `environment:`.
 - **Anthropic Haiku 5.5** — ACTIVE since 2026-11-16 (owner decision; deploy `dde124e`): compose pins
-  `LLM_PROVIDER: anthropic`, chat + agent run on `claude-haiku-5-5`, embeddings stay on OpenAI.
+  `LLM_PROVIDER: anthropic`, chat + agent run on `claude-haiku-5-5`, embeddings run locally (see below).
   The key was added to the box `.env` as a single appended `ANTHROPIC_API_KEY` line (backup
   `.env.bak-2026-11-16`), NOT by re-running `fetch-secrets.sh`: SSM `/advisordesk/ADMIN_EMAILS`
   (2026-08-09) is older than the hand-edited box value (2026-09-11), so a full re-fetch would
   drop an admin — update that SSM parameter before the next full `fetch-secrets.sh` run.
   Verified live 2026-11-16: boot checks clean, all four endpoints 200, one Claude call from inside
-  the api container returned a cited answer. NOTE: public chat still needs one OpenAI embedding
-  call per question — on deploy day it was failing with OpenAI `credit_balance_exhausted`
-  (independent of this change); it recovers when the OpenAI account has credit again.
+  the api container returned a cited answer. NOTE: until 2026-11-16 each chat question needed one OpenAI
+  embedding call (the cause of the 2026-11-16 chat outage when the account ran out of credit); since then
+  embeddings run in-process (see the local-embeddings section).
   `fetch-secrets.sh` fetches `ANTHROPIC_API_KEY` as an OPTIONAL
   SSM param (skipped, never written empty, if `/advisordesk/ANTHROPIC_API_KEY` is absent). It
   reaches the container via `env_file`, as do `CHAT_MODEL`/`JUDGE_MODEL`/`EMBEDDING_PROVIDER`
@@ -95,9 +95,37 @@ to match — so at any point in time this file names exactly what's running.
   `docker-compose.yml` to `anthropic` and set in the box `.env`: `ANTHROPIC_API_KEY`
   (`CLAUDE_API_KEY` accepted). `CHAT_MODEL`/`JUDGE_MODEL` are OPTIONAL under anthropic (default
   `claude-haiku-5-5`; judge default follows `JUDGE_PROVIDER`) and a mismatched explicit name
-  (e.g. a leftover `gpt-*`) fails at boot. Embeddings stay on OpenAI, so `OPENAI_API_KEY` is still required. Haiku 5.5 rejects
+  (e.g. a leftover `gpt-*`) fails at boot. Embeddings are independent of the LLM provider (see below). Haiku 5.5 rejects
   `temperature`; the code omits it. Rollback: `LLM_PROVIDER=openai` and restore the previous
-  model names. See `../env-checklist.md`.
+  model names. Rolling back to OpenAI embeddings additionally needs `OPENAI_API_KEY` present on the box AND
+  credit on that account, plus a re-embed (see the runbook below). See `../env-checklist.md`.
+
+- **Local embeddings** — `EMBEDDING_PROVIDER=local` (compose-pinned since 2026-11-16, owner
+  decision: the shared OpenAI account ran out of credit). `BAAI/bge-small-en-v1.5` via fastembed
+  runs inside the api process (~300 MB RAM), baked into the image at `/app/.fastembed-cache`
+  (`LOCAL_EMBEDDING_CACHE_DIR`, `LOCAL_EMBEDDING_OFFLINE=true`). 384 dims are zero-padded to the
+  existing `vector(1024)` column, so no migration. `SIMILARITY_THRESHOLD` is `"0.65"` for local.
+  Other settings: `LOCAL_EMBEDDING_MODEL`, `LOCAL_EMBEDDING_QUERY_PREFIX`,
+  `LOCAL_EMBEDDING_THREADS`. See `../env-checklist.md`.
+
+### Switching embedding provider (runbook)
+
+1. Edit `docker-compose.yml`: the `api` image tag, `EMBEDDING_PROVIDER` and `SIMILARITY_THRESHOLD`
+   together (`local` + `"0.65"`, or `openai` + `"0.5"`).
+2. `docker compose stop api`.
+3. `docker compose run --rm --no-deps api python scripts/reembed.py`.
+4. `docker compose up -d api`, wait for healthy, then ask one chat question and check it returns a
+   cited answer.
+
+Why the api is stopped first: the box has about 1 GB available and no swap, and the re-embed is a
+second ~350 MB process with its own copy of the model, so running it next to the api risks an OOM
+kill. And if the api is up before the re-embed finishes, every chat question is refused, because
+query vectors (new provider) and stored vectors (old provider) come from different models.
+
+Rollback changes the image tag AND the env together: an image older than this change (e.g.
+`dde124e`) rejects `EMBEDDING_PROVIDER=local` at boot, so roll back the tag and set
+`EMBEDDING_PROVIDER` in the same edit, then re-embed (steps 2-4). Rolling back to OpenAI
+embeddings also needs `OPENAI_API_KEY` on the box and credit on that account.
 
 ## Staged follow-up (NOT applied in this task)
 

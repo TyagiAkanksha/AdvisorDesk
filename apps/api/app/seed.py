@@ -45,8 +45,8 @@ support this via their `actor_id: uuid.UUID | None` parameter; this module simpl
 
 Runnable directly: `python -m app.seed` (the `__main__` block below) wires the real `Settings`,
 a real `Engine`/session factory (`app.db`, mirroring `app/main.py`'s own wiring), and a real
-`EmbeddingChunkPipeline` backed by `OpenAICompatibleEmbedder` — the only place in this module a real
-provider is ever touched. Tests (`tests/test_seed.py`) call `seed_all` directly against a fake
+`EmbeddingChunkPipeline` backed by the `build_embedder` embedder — the only place in this module a
+real provider is ever touched. Tests (`tests/test_seed.py`) call `seed_all` directly against a fake
 `EmbeddingChunkPipeline(FakeEmbedder())`, so no test in this codebase ever makes a real embedding
 call through this module.
 """
@@ -66,7 +66,7 @@ from sqlalchemy.orm import Session
 from app.config import Settings
 from app.db import make_engine, make_session_factory
 from app.models import Chunk, Content
-from app.rag.embeddings import OpenAICompatibleEmbedder
+from app.rag.embedder_factory import build_embedder
 from app.rag.pipeline import EmbeddingChunkPipeline
 from app.seed_paths import seed_data_dir
 from app.services.content import create_draft, publish_content
@@ -217,7 +217,7 @@ def seed_all(
             the transaction boundary (the `__main__` block below, for a real run).
         pipeline: the `ChunkPipeline` `publish_content` chunks and embeds through — a fake in tests
             (`tests/test_seed.py`'s `FakeEmbedder`-backed `EmbeddingChunkPipeline`), the real
-            `EmbeddingChunkPipeline(OpenAICompatibleEmbedder(...))` when run via `__main__`.
+            `EmbeddingChunkPipeline(build_embedder(...))` when run via `__main__`.
         content_dir: the directory of `*.md` seed files to load. Defaults to
             `seed/sample_content` relative to the process's current working directory.
 
@@ -261,7 +261,7 @@ def _run_from_cli() -> None:
     """Entry point for `python -m app.seed`: wires real settings/engine/pipeline, then seeds.
 
     Mirrors `app/main.py`'s own wiring (`Settings()` -> `make_engine` -> `make_session_factory`,
-    `OpenAICompatibleEmbedder.from_settings` -> `EmbeddingChunkPipeline`) but scoped to only what
+    `build_embedder` -> `EmbeddingChunkPipeline`) but scoped to only what
     seeding needs — no FastAPI app, no OAuth client, no chat LLM, no rate limiter. Commits once on
     success (the whole run is one transaction, matching how `app.routes.deps.get_session` commits a
     real request) and rolls back on any error, so a failure partway through never leaves a partially
@@ -282,7 +282,7 @@ def _run_from_cli() -> None:
 
     engine = make_engine(database_url)
     session_factory = make_session_factory(engine)
-    embedder = OpenAICompatibleEmbedder.from_settings(settings)
+    embedder = build_embedder(settings)
     pipeline = EmbeddingChunkPipeline(embedder)
 
     session = session_factory()

@@ -11,7 +11,7 @@ x-logging: &default-logging
 
 services:
   api:
-    image: 181040156847.dkr.ecr.us-east-1.amazonaws.com/advisordesk/api:769a03b
+    image: 181040156847.dkr.ecr.us-east-1.amazonaws.com/advisordesk/api:dde124e
     env_file:
       - /opt/advisordesk/.env
     environment:
@@ -35,11 +35,12 @@ services:
       # fact, not a model choice — a model swap that changes dimensionality needs a
       # migration regardless of where the model name itself is set).
       #
-      # Anthropic option (not active): ANTHROPIC_API_KEY, CHAT_MODEL, JUDGE_MODEL and
-      # EMBEDDING_PROVIDER reach the container via `env_file` above (the box .env), so no
-      # entry is needed here. LLM_PROVIDER IS pinned below and beats env_file — prod stays
-      # on openai until the owner changes this line to `anthropic` after an eval.
-      LLM_PROVIDER: openai
+      # Anthropic provider ACTIVE since 2026-11-16 (owner decision): chat + agent run on
+      # claude-haiku-5-5 (the code default when LLM_PROVIDER=anthropic — CHAT_MODEL is deliberately
+      # not pinned). ANTHROPIC_API_KEY comes from env_file (SSM /advisordesk/ANTHROPIC_API_KEY).
+      # Embeddings stay on OpenAI, so OPENAI_API_KEY is still required. Rollback: set this line
+      # back to `openai` and `docker compose up -d`.
+      LLM_PROVIDER: anthropic
       LLM_BASE_URL: https://api.openai.com/v1
       EMBEDDING_DIMENSIONS: "1024"
       SIMILARITY_THRESHOLD: "0.5"
@@ -64,7 +65,7 @@ services:
     restart: unless-stopped
 
   admin:
-    image: 181040156847.dkr.ecr.us-east-1.amazonaws.com/advisordesk/admin:769a03b
+    image: 181040156847.dkr.ecr.us-east-1.amazonaws.com/advisordesk/admin:dde124e
     environment:
       HOSTNAME: 0.0.0.0
       PORT: "3000"
@@ -74,7 +75,7 @@ services:
     restart: unless-stopped
 
   client:
-    image: 181040156847.dkr.ecr.us-east-1.amazonaws.com/advisordesk/client:769a03b
+    image: 181040156847.dkr.ecr.us-east-1.amazonaws.com/advisordesk/client:dde124e
     environment:
       HOSTNAME: 0.0.0.0
       PORT: "3000"

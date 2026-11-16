@@ -49,8 +49,9 @@ Legacy `LLM_PROVIDER=nvidia` deployments now also need `EMBEDDING_PROVIDER=nvidi
 
 Prod stays on `LLM_PROVIDER=openai` until the owner flips it after an eval. To switch: set
 `LLM_PROVIDER=anthropic` (pinned in `docker-compose.yml`, which overrides the box `.env`, so edit
-that line), `ANTHROPIC_API_KEY` (or `CLAUDE_API_KEY`), `CHAT_MODEL=claude-haiku-5-5`,
-`JUDGE_MODEL=claude-haiku-5-5` in the box `.env`. Embeddings stay on OpenAI
+that line), `ANTHROPIC_API_KEY` (or `CLAUDE_API_KEY`) in the box `.env`. `CHAT_MODEL`/`JUDGE_MODEL` are now
+OPTIONAL under `LLM_PROVIDER=anthropic` (default `claude-haiku-5-5`; the judge default follows
+`JUDGE_PROVIDER`); an explicit mismatched name (e.g. a leftover `gpt-*`) fails at boot. Embeddings stay on OpenAI
 (`EMBEDDING_PROVIDER=openai`), so keep `OPENAI_API_KEY`. Haiku 5.5 rejects `temperature`; the code
 omits it. Rollback: `LLM_PROVIDER=openai` and restore the previous `CHAT_MODEL`/`JUDGE_MODEL`
 names (e.g. `gpt-5.4-mini`/`gpt-5.4`).

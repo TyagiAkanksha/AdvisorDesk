@@ -25,6 +25,24 @@ _PROVIDER_DEFAULT_BASE_URLS: dict[str, str] = {
 }
 
 
+_ANTHROPIC_DEFAULT_MODEL = "claude-haiku-5-5"
+
+
+def _check_model_family(setting: str, model: str, provider: str) -> None:
+    """Reject a model name whose family contradicts `provider` (fail fast at boot)."""
+    lowered = model.strip().lower()
+    if provider == "anthropic" and lowered.startswith("gpt-"):
+        raise ValueError(
+            f"{setting}={model!r} is an OpenAI model but its provider is anthropic; "
+            f"set {setting.upper()} to a claude-* model or leave it unset."
+        )
+    if provider != "anthropic" and lowered.startswith("claude-"):
+        raise ValueError(
+            f"{setting}={model!r} is a Claude model but its provider is {provider}; "
+            f"set the provider to anthropic or {setting.upper()} to a matching model."
+        )
+
+
 class Settings(BaseSettings):
     """Application configuration sourced from environment variables (PRD §9).
 
@@ -309,6 +327,27 @@ class Settings(BaseSettings):
         if any(char.isspace() for char in value):
             raise ValueError(f"oauth_issuer_url must not contain whitespace, got {value!r}.")
         return value.rstrip("/")
+
+    @model_validator(mode="after")
+    def _apply_provider_model_defaults_and_guard(self) -> Settings:
+        """Provider-aware `chat_model`/`judge_model` defaults plus a fail-fast family guard.
+
+        The fields keep their gpt defaults; when the value was not explicitly supplied (kwarg OR
+        env, i.e. absent from `model_fields_set`) and the governing provider is Anthropic, the
+        default becomes `claude-haiku-5-5`. `chat_model` follows `llm_provider`; `judge_model`
+        follows `effective_judge_provider`. An explicit value is never rewritten; a model family
+        that contradicts its provider (claude-* under openai/nvidia, gpt-* under anthropic) is
+        rejected. Messages name the setting only, never a credential.
+        """
+        explicit = set(self.model_fields_set)
+        if "chat_model" not in explicit and self.llm_provider == "anthropic":
+            self.chat_model = _ANTHROPIC_DEFAULT_MODEL
+        if "judge_model" not in explicit and self.effective_judge_provider == "anthropic":
+            self.judge_model = _ANTHROPIC_DEFAULT_MODEL
+        self.model_fields_set.difference_update({"chat_model", "judge_model"} - explicit)
+        _check_model_family("chat_model", self.chat_model, self.llm_provider)
+        _check_model_family("judge_model", self.judge_model, self.effective_judge_provider)
+        return self
 
     @model_validator(mode="after")
     def _warn_on_provider_base_url_mismatch(self) -> Settings:

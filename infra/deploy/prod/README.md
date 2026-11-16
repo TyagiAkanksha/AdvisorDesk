@@ -84,8 +84,9 @@ to match — so at any point in time this file names exactly what's running.
   reaches the container via `env_file`, as do `CHAT_MODEL`/`JUDGE_MODEL`/`EMBEDDING_PROVIDER`
   (not pinned in compose). To switch: change the pinned `LLM_PROVIDER` line in
   `docker-compose.yml` to `anthropic` and set in the box `.env`: `ANTHROPIC_API_KEY`
-  (`CLAUDE_API_KEY` accepted), `CHAT_MODEL=claude-haiku-5-5`, `JUDGE_MODEL=claude-haiku-5-5`.
-  Embeddings stay on OpenAI, so `OPENAI_API_KEY` is still required. Haiku 5.5 rejects
+  (`CLAUDE_API_KEY` accepted). `CHAT_MODEL`/`JUDGE_MODEL` are OPTIONAL under anthropic (default
+  `claude-haiku-5-5`; judge default follows `JUDGE_PROVIDER`) and a mismatched explicit name
+  (e.g. a leftover `gpt-*`) fails at boot. Embeddings stay on OpenAI, so `OPENAI_API_KEY` is still required. Haiku 5.5 rejects
   `temperature`; the code omits it. Rollback: `LLM_PROVIDER=openai` and restore the previous
   model names. See `../env-checklist.md`.
 

@@ -110,8 +110,12 @@ to match — so at any point in time this file names exactly what's running.
 
 ### Switching embedding provider (runbook)
 
+First run 2026-11-16 (deploy `7f610d8`): 46 published items, 316 chunks re-embedded; api back to
+healthy in about 36 s; api container about 370 MB afterwards with about 900 MB still available.
+
 1. Edit `docker-compose.yml`: the `api` image tag, `EMBEDDING_PROVIDER` and `SIMILARITY_THRESHOLD`
-   together (`local` + `"0.65"`, or `openai` + `"0.5"`).
+   together (`local` + `"0.65"`, or `openai` + `"0.5"`). Then `docker compose pull api` while the
+   old api is still serving, so an expired ECR login fails here and not with the api already down.
 2. `docker compose stop api`.
 3. `docker compose run --rm --no-deps api python scripts/reembed.py`.
 4. `docker compose up -d api`, wait for healthy, then ask one chat question and check it returns a

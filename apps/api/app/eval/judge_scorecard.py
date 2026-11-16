@@ -38,7 +38,7 @@ from sqlalchemy.orm import Session
 
 from app.config import Settings
 from app.db import make_engine, make_session_factory
-from app.eval.groundedness import OpenAIJudge
+from app.eval.judge_factory import build_judge
 from app.eval.metrics import GroundednessJudge, split_sentences, strip_citation_markers
 from app.models import Chunk, EvalResult
 from app.seed_paths import seed_data_dir
@@ -501,7 +501,7 @@ def _run_from_cli(argv: list[str] | None = None) -> None:
     judge_settings = settings.model_copy(
         update={"judge_model": judge_model, "judge_temperature": judge_temperature}
     )
-    judge = OpenAIJudge.from_settings(judge_settings)
+    judge = build_judge(judge_settings)
     card = score_judge(judge, labels, repeats=args.repeats, sample=args.sample)
     _print_scorecard(card, model=judge_model, temperature=judge_temperature, total=len(labels))
 

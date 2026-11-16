@@ -52,15 +52,17 @@ from fastapi import FastAPI
 from sqlalchemy import Engine
 from sqlalchemy.orm import Session, sessionmaker
 
-from app.agent.llm import OpenAICompatibleAgentLLM
+from app.agent.llm_factory import AgentLLMBuilder, build_agent_llm
 from app.auth.oauth import GoogleOAuthClient, HttpxGoogleOAuthClient
+from app.boot_checks import missing_api_key_errors
 from app.config import Settings
 from app.db import make_engine, make_session_factory
 from app.factory import create_app
 from app.models import embedding_column_dims
+from app.rag.chat_provider import build_chat_llm
 from app.rag.embeddings import OpenAICompatibleEmbedder
 from app.rag.pipeline import EmbeddingChunkPipeline
-from app.rag.synthesis import OpenAICompatibleChatLLM
+from app.rag.synthesis import ChatLLM
 from app.routes.ratelimit import RateLimiter
 
 logger = logging.getLogger(__name__)
@@ -155,16 +157,10 @@ if not settings.is_dev:
     # `OpenAICompatibleAgentLLM`'s `from_settings` all tolerate the empty
     # value at construction time — see their docstrings — so this is purely
     # a request-time failure, not a boot-time one, when left unset in dev).
-    _llm_api_key_env_var, _llm_api_key_settings_attr = (
-        ("OPENAI_API_KEY", "openai_api_key")
-        if settings.llm_provider == "openai"
-        else ("NVIDIA_API_KEY", "nvidia_api_key")
-    )
-    _require_nonempty(
-        settings.llm_api_key.get_secret_value(),
-        _llm_api_key_env_var,
-        _llm_api_key_settings_attr,
-    )
+    # Provider-aware (active LLM key + active embedding key) via `app.boot_checks`.
+    _key_errors = missing_api_key_errors(settings)
+    if _key_errors:
+        raise RuntimeError(" ".join(_key_errors))
     # Final review, finding C-6: an empty ADMIN_EMAILS in production boots
     # cleanly but locks EVERY Google identity out of `/auth/callback`
     # (`ForbiddenError` on every login attempt, PRD §5.1) — no admin could
@@ -223,7 +219,7 @@ oauth_client: GoogleOAuthClient = HttpxGoogleOAuthClient.from_settings(settings)
 # client, so there is no reason to build two.
 embedder: OpenAICompatibleEmbedder = OpenAICompatibleEmbedder.from_settings(settings)
 chunk_pipeline: EmbeddingChunkPipeline = EmbeddingChunkPipeline(embedder)
-chat_llm: OpenAICompatibleChatLLM = OpenAICompatibleChatLLM.from_settings(settings)
+chat_llm: ChatLLM = build_chat_llm(settings)
 # Phase-5 task-03 (fix round 1, finding C-3): the real agent LLM (PRD §5.4/§6, v1.5) — same
 # `from_settings` construction pattern as `chat_llm`/`embedder` above, EXACTLY ONE
 # `OpenAICompatibleAgentLLM` built at boot, holding the shared, thread-safe `openai.OpenAI`
@@ -234,7 +230,7 @@ chat_llm: OpenAICompatibleChatLLM = OpenAICompatibleChatLLM.from_settings(settin
 # `client`/`model`) is wired below as `agent_llm_factory`, called fresh by
 # `app.routes.deps.get_agent_llm` on every `/agent/chat` request — see `app.agent.llm`'s module
 # docstring for the full rationale.
-agent_llm_builder: OpenAICompatibleAgentLLM = OpenAICompatibleAgentLLM.from_settings(settings)
+agent_llm_builder: AgentLLMBuilder = build_agent_llm(settings)
 # Phase-4 task-03: one process-lifetime `RateLimiter` shared by every `/public/chat` request
 # (PRD §9) — same explicit-wiring pattern as `chat_llm`/`embedder` above, even though
 # `create_app`'s own `rate_limiter=None` default would already build an equivalent instance

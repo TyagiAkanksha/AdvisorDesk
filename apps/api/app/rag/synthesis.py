@@ -179,6 +179,12 @@ class OpenAICompatibleChatLLM:
         pair would be a reasonable follow-up if the two endpoints ever need materially different
         budgets in practice; nothing here forecloses adding one later.
         """
+        if settings.llm_provider == "anthropic":
+            raise ValueError(
+                "OpenAICompatibleChatLLM.from_settings cannot be used with LLM_PROVIDER=anthropic "
+                "(it would send the Anthropic key to an OpenAI-compatible endpoint); "
+                "use app.rag.chat_provider.build_chat_llm instead."
+            )
         api_key = settings.llm_api_key.get_secret_value() or "unset"
         client = OpenAI(
             api_key=api_key,

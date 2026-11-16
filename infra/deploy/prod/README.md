@@ -78,6 +78,17 @@ to match — so at any point in time this file names exactly what's running.
   deliberately NOT set in the compose file since the phase-9 deploy (`ca4e634`, 2026-09-13): the
   code defaults apply (`gpt-5.4-mini` / `text-embedding-3-small` / `gpt-5.4`), and
   `tests/test_prod_config_pins.py` fails if a pin reappears in `environment:`.
+- **Anthropic Haiku 5.5 option** — NOT active; prod stays on `LLM_PROVIDER=openai` until the
+  owner flips it after an eval. `fetch-secrets.sh` fetches `ANTHROPIC_API_KEY` as an OPTIONAL
+  SSM param (skipped, never written empty, if `/advisordesk/ANTHROPIC_API_KEY` is absent). It
+  reaches the container via `env_file`, as do `CHAT_MODEL`/`JUDGE_MODEL`/`EMBEDDING_PROVIDER`
+  (not pinned in compose). To switch: change the pinned `LLM_PROVIDER` line in
+  `docker-compose.yml` to `anthropic` and set in the box `.env`: `ANTHROPIC_API_KEY`
+  (`CLAUDE_API_KEY` accepted). `CHAT_MODEL`/`JUDGE_MODEL` are OPTIONAL under anthropic (default
+  `claude-haiku-5-5`; judge default follows `JUDGE_PROVIDER`) and a mismatched explicit name
+  (e.g. a leftover `gpt-*`) fails at boot. Embeddings stay on OpenAI, so `OPENAI_API_KEY` is still required. Haiku 5.5 rejects
+  `temperature`; the code omits it. Rollback: `LLM_PROVIDER=openai` and restore the previous
+  model names. See `../env-checklist.md`.
 
 ## Staged follow-up (NOT applied in this task)
 
